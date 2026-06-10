@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1a1d2e"/>
+      <stop offset="100%" style="stop-color:#14161f"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#818cf8"/>
+      <stop offset="100%" style="stop-color:#6366f1"/>
+    </linearGradient>
+    <linearGradient id="accent2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#34d399"/>
+      <stop offset="100%" style="stop-color:#10b981"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background rounded square -->
+  <rect x="32" y="32" width="448" height="448" rx="96" ry="96" fill="url(#bg)"/>
+
+  <!-- Subtle grid lines for texture -->
+  <line x1="32" y1="200" x2="480" y2="200" stroke="#2a2d3a" stroke-width="1" opacity="0.3"/>
+  <line x1="32" y1="312" x2="480" y2="312" stroke="#2a2d3a" stroke-width="1" opacity="0.3"/>
+
+  <!-- L shape - indigo -->
+  <path d="M 140 120 L 140 400 L 260 400" stroke="url(#accent)" stroke-width="36" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+
+  <!-- P shape - green -->
+  <path d="M 290 400 L 290 160 C 290 130 380 130 380 220 C 380 310 290 310 290 260" stroke="url(#accent2)" stroke-width="36" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+
+  <!-- Small accent dots -->
+  <circle cx="140" cy="120" r="12" fill="#818cf8" opacity="0.8"/>
+  <circle cx="380" cy="160" r="8" fill="#34d399" opacity="0.6"/>
+</svg>

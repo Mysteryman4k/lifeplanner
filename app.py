@@ -648,8 +648,16 @@ def manifest():
         "display": "standalone",
         "background_color": "#0f1117",
         "theme_color": "#6366f1",
-        "icons": [{"src":"/static/icon-192.png","sizes":"192x192","type":"image/png"},
-                  {"src":"/static/icon-512.png","sizes":"512x512","type":"image/png"}]
+        "icons": [
+            {"src":"/static/icon-16.png","sizes":"16x16","type":"image/png"},
+            {"src":"/static/icon-32.png","sizes":"32x32","type":"image/png"},
+            {"src":"/static/icon-48.png","sizes":"48x48","type":"image/png"},
+            {"src":"/static/icon-64.png","sizes":"64x64","type":"image/png"},
+            {"src":"/static/icon-128.png","sizes":"128x128","type":"image/png"},
+            {"src":"/static/icon-192.png","sizes":"192x192","type":"image/png"},
+            {"src":"/static/icon-256.png","sizes":"256x256","type":"image/png"},
+            {"src":"/static/icon-512.png","sizes":"512x512","type":"image/png"}
+        ]
     }
 
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
