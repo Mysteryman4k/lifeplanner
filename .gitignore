@@ -27,3 +27,7 @@ Thumbs.db
 
 # Env
 .env
+
+# PyInstaller
+build/
+dist/
