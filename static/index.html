@@ -591,6 +591,74 @@ body {
   .stat-card .stat-value { font-size: 20px; }
   .tab-link { padding: 8px 10px; font-size: 12px; }
 }
+/* ═══════ ANIMATIONS ═══════ */
+@keyframes fadeIn { from { opacity:0; transform: translateY(8px); } to { opacity:1; transform: translateY(0); } }
+@keyframes slideIn { from { opacity:0; transform: translateX(-12px); } to { opacity:1; transform: translateX(0); } }
+.content > * { animation: fadeIn 0.25s ease-out; }
+.task-card { animation: slideIn 0.2s ease-out; }
+.task-card:nth-child(1) { animation-delay: 0.02s; }
+.task-card:nth-child(2) { animation-delay: 0.04s; }
+.task-card:nth-child(3) { animation-delay: 0.06s; }
+.task-card:nth-child(4) { animation-delay: 0.08s; }
+.task-card:nth-child(5) { animation-delay: 0.10s; }
+
+/* ═══════ SMOOTH INTERACTIONS ═══════ */
+.btn { transition: all 0.18s cubic-bezier(0.4,0,0.2,1); }
+.btn:active { transform: scale(0.96) !important; }
+.task-card { transition: all 0.2s cubic-bezier(0.4,0,0.2,1); }
+.task-card:hover { transform: translateX(4px); box-shadow: var(--shadow); }
+.task-card:active { transform: scale(0.99); }
+.nav-item { transition: all 0.18s cubic-bezier(0.4,0,0.2,1); position:relative; overflow:hidden; }
+.nav-item::after {
+  content:''; position:absolute; inset:0;
+  background:radial-gradient(circle at var(--mx,50%) var(--my,50%), rgba(255,255,255,0.08) 0%, transparent 60%);
+  opacity:0; transition: opacity 0.3s;
+}
+.nav-item:hover::after { opacity:1; }
+.stat-card { transition: all 0.25s cubic-bezier(0.4,0,0.2,1); }
+.stat-card:hover { transform: translateY(-3px); box-shadow: 0 12px 32px rgba(0,0,0,0.25); }
+.kanban-column { transition: all 0.2s ease; }
+.job-card { transition: all 0.18s cubic-bezier(0.4,0,0.2,1); }
+.job-card:hover { transform: translateY(-2px); box-shadow: var(--shadow); }
+input:focus, select:focus, textarea:focus { box-shadow: 0 0 0 3px var(--primary-glow); }
+.modal-overlay { backdrop-filter: blur(4px); }
+.modal { animation: fadeIn 0.2s ease-out; }
+
+/* ═══════ SETTINGS ═══════ */
+.settings-container { max-width:680px; display:flex; flex-direction:column; gap:20px; }
+.settings-card {
+  background:var(--bg-card); border:1px solid var(--border);
+  border-radius:var(--radius); padding:24px;
+  transition: border-color var(--transition);
+}
+.settings-card:hover { border-color:var(--primary); }
+.setting-row {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:12px 0; border-bottom:1px solid var(--border);
+}
+.setting-row:last-child { border-bottom:none; }
+
+/* ═══════ SMOOTH SCROLL ═══════ */
+.content { scroll-behavior: smooth; }
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
+
+/* ═══════ BETTER FOCUS ═══════ */
+*:focus-visible { outline:2px solid var(--primary); outline-offset:2px; border-radius:4px; }
+button:focus-visible, .btn:focus-visible { outline:2px solid var(--primary); outline-offset:2px; }
+
+/* ═══════ TOAST ═══════ */
+.toast {
+  position:fixed; bottom:24px; right:24px; z-index:300;
+  padding:12px 20px; border-radius:var(--radius-xs);
+  font-size:13px; font-weight:600; color:white;
+  animation: fadeIn 0.2s ease-out;
+  box-shadow: var(--shadow-lg); pointer-events:none;
+}
+.toast.success { background:var(--success); }
+.toast.error { background:var(--danger); }
 </style>
 </head>
 <body>
@@ -760,6 +828,8 @@ const API = '';
 let tasks = [], categories = [], subjects = [], jobs = [], budgets = [], transactions = [];
 let currentTab = 'academic';
 let currentAcademicPage = 'dashboard';
+let currentJobsFilter = 'all';
+let financePage = 'overview';
 let editingTaskId = null;
 let editingJobId = null;
 let editingBudgetId = null;
@@ -855,6 +925,7 @@ function renderAcademic() {
     case 'subjects': renderSubjectsPage(); break;
     case 'tasks': renderAcademicTasks(); break;
     case 'calendar': renderCalendar(); break;
+    case 'settings': renderSettingsPage(); break;
   }
 }
 
@@ -1029,10 +1100,11 @@ function buildAcademicSidebar() {
   sb.innerHTML = `
     <div class="logo"><span>🌿</span> <span>LifePlanner</span></div>
     <div class="nav-section">Academic</div>
-    <button class="nav-item active" data-academic-page="dashboard"><span class="icon">📊</span> <span>Dashboard</span></button>
+    <button class="nav-item" data-academic-page="dashboard"><span class="icon">📊</span> <span>Dashboard</span></button>
     <button class="nav-item" data-academic-page="tasks"><span class="icon">✅</span> <span>All Tasks</span></button>
     <button class="nav-item" data-academic-page="subjects"><span class="icon">📖</span> <span>Subjects & Units</span></button>
     <button class="nav-item" data-academic-page="calendar"><span class="icon">📅</span> <span>Calendar</span></button>
+    <button class="nav-item" data-academic-page="settings"><span class="icon">⚙️</span> <span>Settings</span></button>
     <button class="theme-toggle" id="themeToggle"><span class="icon">🌙</span> <span id="themeLabel">Dark Mode</span></button>`;
   bindSidebarClicks();
 }
@@ -1042,7 +1114,7 @@ function buildJobsSidebar() {
   sb.innerHTML = `
     <div class="logo"><span>🌿</span> <span>LifePlanner</span></div>
     <div class="nav-section">Job Tracker</div>
-    <button class="nav-item active" data-jobs-filter="all"><span class="icon">💼</span> <span>All Applications</span></button>
+    <button class="nav-item" data-jobs-filter="all"><span class="icon">💼</span> <span>All Applications</span></button>
     <button class="nav-item" data-jobs-filter="interviewing"><span class="icon">🎯</span> <span>Active (Interviewing)</span></button>
     <button class="nav-item" data-jobs-filter="offer"><span class="icon">🏆</span> <span>Offers</span></button>
     <button class="nav-item" data-jobs-filter="rejected"><span class="icon">❌</span> <span>Closed</span></button>
@@ -1055,7 +1127,7 @@ function buildFinanceSidebar() {
   sb.innerHTML = `
     <div class="logo"><span>🌿</span> <span>LifePlanner</span></div>
     <div class="nav-section">Finance</div>
-    <button class="nav-item active" data-finance-page="overview"><span class="icon">📊</span> <span>Overview</span></button>
+    <button class="nav-item" data-finance-page="overview"><span class="icon">📊</span> <span>Overview</span></button>
     <button class="nav-item" data-finance-page="transactions"><span class="icon">💳</span> <span>Transactions</span></button>
     <button class="nav-item" data-finance-page="budgets"><span class="icon">📋</span> <span>Budget Manager</span></button>
     <button class="theme-toggle" id="themeToggle"><span class="icon">🌙</span> <span id="themeLabel">Dark Mode</span></button>`;
@@ -1072,14 +1144,25 @@ function bindSidebarClicks() {
       renderAcademic();
     });
   });
+  // Restore active academic item
+  const activeAcademic = document.querySelector(`[data-academic-page="${currentAcademicPage}"]`);
+  if (activeAcademic) activeAcademic.classList.add('active');
+  else document.querySelector('[data-academic-page="dashboard"]')?.classList.add('active');
+
   // Jobs nav
   document.querySelectorAll('[data-jobs-filter]').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('[data-jobs-filter]').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
+      currentJobsFilter = btn.dataset.jobsFilter;
       renderJobs(btn.dataset.jobsFilter);
     });
   });
+  // Restore active jobs item
+  const activeJobs = document.querySelector(`[data-jobs-filter="${currentJobsFilter}"]`);
+  if (activeJobs) activeJobs.classList.add('active');
+  else document.querySelector('[data-jobs-filter="all"]')?.classList.add('active');
+
   // Finance nav
   document.querySelectorAll('[data-finance-page]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -1088,6 +1171,10 @@ function bindSidebarClicks() {
       renderFinance(btn.dataset.financePage);
     });
   });
+  // Restore active finance item
+  const activeFinance = document.querySelector(`[data-finance-page="${financePage}"]`);
+  if (activeFinance) activeFinance.classList.add('active');
+  else document.querySelector('[data-finance-page="overview"]')?.classList.add('active');
   // Theme toggle
   const tt = document.getElementById('themeToggle');
   if (tt) {
@@ -1638,8 +1725,6 @@ document.getElementById('jobModal').addEventListener('click', (e) => { if (e.tar
 // FINANCE SECTION
 // ═══════════════════════════════════════════════════════
 
-let financePage = 'overview';
-
 async function renderFinance(page = 'overview') {
   financePage = page;
   buildFinanceSidebar();
@@ -1914,6 +1999,99 @@ document.getElementById('budgetFormDelete').addEventListener('click', async () =
   closeBudgetModal();
 });
 document.getElementById('budgetModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeBudgetModal(); });
+
+// ═══════════════════════════════════════════════════════
+// SETTINGS & INFO PAGE
+// ═══════════════════════════════════════════════════════
+
+function renderSettingsPage() {
+  document.getElementById('pageTitle').textContent = 'Settings';
+  document.getElementById('headerActions').innerHTML = '';
+  const c = document.getElementById('contentArea');
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  
+  c.innerHTML = `
+    <div class="settings-container">
+      <div class="settings-card">
+        <h3 style="font-size:15px;font-weight:700;margin-bottom:16px;">🎨 Appearance</h3>
+        <div class="setting-row">
+          <div>
+            <div style="font-weight:600;font-size:13px;">Theme</div>
+            <div style="font-size:11px;color:var(--text-muted);">Switch between dark and light mode</div>
+          </div>
+          <button class="btn btn-secondary btn-sm" onclick="toggleTheme();renderSettingsPage()">
+            ${isDark ? '☀️ Light Mode' : '🌙 Dark Mode'}
+          </button>
+        </div>
+      </div>
+
+      <div class="settings-card">
+        <h3 style="font-size:15px;font-weight:700;margin-bottom:16px;">💾 Data</h3>
+        <div class="setting-row">
+          <div>
+            <div style="font-weight:600;font-size:13px;">Database</div>
+            <div style="font-size:11px;color:var(--text-muted);">SQLite — stored locally in planner.db</div>
+          </div>
+          <span style="font-size:12px;color:var(--text-muted);">🔒 Local only</span>
+        </div>
+        <div class="setting-row">
+          <div>
+            <div style="font-weight:600;font-size:13px;">Tasks</div>
+            <div style="font-size:11px;color:var(--text-muted);">${tasks.length} tasks tracked</div>
+          </div>
+          <span style="font-size:12px;color:var(--text-muted);">📋</span>
+        </div>
+        <div class="setting-row">
+          <div>
+            <div style="font-weight:600;font-size:13px;">Job Applications</div>
+            <div style="font-size:11px;color:var(--text-muted);">${jobs.length} applications tracked</div>
+          </div>
+          <span style="font-size:12px;color:var(--text-muted);">💼</span>
+        </div>
+        <div class="setting-row">
+          <div>
+            <div style="font-weight:600;font-size:13px;">Transactions</div>
+            <div style="font-size:11px;color:var(--text-muted);">${transactions.length} transactions this month</div>
+          </div>
+          <span style="font-size:12px;color:var(--text-muted);">💰</span>
+        </div>
+      </div>
+
+      <div class="settings-card">
+        <h3 style="font-size:15px;font-weight:700;margin-bottom:16px;">ℹ️ About LifePlanner</h3>
+        <div style="display:flex;align-items:center;gap:16px;margin-bottom:16px;">
+          <div style="width:64px;height:64px;border-radius:16px;background:var(--bg-card);display:flex;align-items:center;justify-content:center;font-size:32px;border:1px solid var(--border);">🌿</div>
+          <div>
+            <div style="font-weight:700;font-size:16px;">LifePlanner v2.0</div>
+            <div style="font-size:12px;color:var(--text-muted);">Built with FastAPI + PyQt5 + Chart.js</div>
+            <div style="font-size:11px;color:var(--text-dim);margin-top:4px;">Local-first • Zero login • Your data stays on your machine</div>
+          </div>
+        </div>
+        <div class="setting-row">
+          <div><div style="font-weight:600;font-size:13px;">Backend</div><div style="font-size:11px;color:var(--text-muted);">FastAPI + SQLite</div></div>
+          <span style="font-size:11px;color:var(--success);font-weight:600;">Python 3.12</span>
+        </div>
+        <div class="setting-row">
+          <div><div style="font-weight:600;font-size:13px;">Desktop Framework</div><div style="font-size:11px;color:var(--text-muted);">PyQt5 + pywebview</div></div>
+          <span style="font-size:11px;color:var(--success);font-weight:600;">Native</span>
+        </div>
+        <div class="setting-row">
+          <div><div style="font-weight:600;font-size:13px;">Charts</div><div style="font-size:11px;color:var(--text-muted);">Chart.js 4.4</div></div>
+          <span style="font-size:11px;color:var(--success);font-weight:600;">Canvas</span>
+        </div>
+        <div class="setting-row">
+          <div><div style="font-weight:600;font-size:13px;">Icons</div><div style="font-size:11px;color:var(--text-muted);">Custom SVG + emoji system</div></div>
+          <span style="font-size:11px;color:var(--text-muted);">🎨</span>
+        </div>
+        <div style="margin-top:16px;padding:12px;background:var(--bg-card);border-radius:var(--radius-xs);border:1px solid var(--border);">
+          <div style="font-size:11px;color:var(--text-dim);text-align:center;">
+            Built with ❤️ by Hermes Agent + Mysteryman4k<br>
+            <span style="color:var(--primary);">github.com/Mysteryman4k/lifeplanner</span>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
 
 // ═══════════════════════════════════════════════════════
 // CONFETTI
