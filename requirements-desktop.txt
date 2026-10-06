@@ -1,0 +1,2 @@
+# Native window. If this fails to install, the app opens in your browser instead.
+pywebview>=5.0

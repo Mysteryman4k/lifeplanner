@@ -1,61 +1,81 @@
-# 📚 Student Planner
+# LifePlanner
 
-A beautiful, professional daily planner for students — track assignments, projects, and deadlines with smart auto-planning. Runs locally with zero login required.
+A personal planner for students: assignments and study tasks, job applications and monthly money, all in one place. It runs on your own computer, needs no account and keeps your data offline.
 
-## ✨ Features
+## Features
 
-- **📊 Dashboard** — Stats overview: total tasks, completion rate, upcoming deadlines, category breakdown
-- **✅ Task Management** — Create, edit, complete, and delete tasks with full details
-- **🎯 Smart Auto-Plan** — Enter a due date + estimated hours, and the planner generates a spaced study schedule
-- **📅 Calendar View** — Monthly calendar with color-coded task dots
-- **🔍 Search & Filter** — Search by title, filter by priority, status, or category
-- **🏷 Categories** — 6 default categories with colored badges (Assignment, Exam, Project, Reading, Personal, Other)
-- **⚡ Priority Levels** — Low, Medium, High, Urgent with visual badges
-- **📈 Progress Tracking** — 0-100% progress bar for each task
-- **🎉 Completion Celebration** — Confetti animation when you mark a task done
-- **🌙 Dark/Light Theme** — Toggle between dark and light modes, saved across sessions
-- **⌨️ Keyboard Shortcuts** — Ctrl+N for new task, Esc to close modals
-- **🔔 Smart Status** — Tasks automatically marked overdue when past their due date
+- **Today**: what's overdue and due this week, your workload for the next 7 days, job follow-ups and how much budget is left
+- **Tasks**: grouped by Overdue, Today, Next 7 days and Later; search and filter by subject or priority
+- **Plan sessions**: splits a task's estimated hours into study sessions before the due date
+- **Calendar**: month view with tasks on each day (weeks start on Monday)
+- **Subjects**: your units with their weeks or topics and open task counts
+- **Jobs**: a board from Applied to Offer, follow-up reminders and a list of closed applications
+- **Money**: money in and out by month, budgets with progress bars and remaining amounts
+- **Settings**: light, dark or system theme, and a one-click JSON backup
 
-## 🚀 Quick Start
+## Run it
+
+**Windows:** double-click `start.bat`. The first run creates a virtual environment and installs the dependencies, which takes about a minute.
+
+**macOS / Linux:**
 
 ```bash
-cd /home/sean/hermes-workspace/student-planner
-./start.sh
+./start.sh            # desktop window
+./start.sh --browser  # or serve on http://127.0.0.1:8585
 ```
 
-Then open **http://localhost:8585** in your browser.
+**Manually:**
 
-## 🛠 Tech Stack
-
-- **Backend:** Python 3.12 + FastAPI + SQLite
-- **Frontend:** Vanilla HTML/CSS/JS (no framework, no build step)
-- **Design:** Custom design system with CSS variables for theming
-- **Database:** SQLite (zero configuration, stored locally)
-
-## 📁 Project Structure
-
-```
-student-planner/
-├── app.py              # FastAPI backend + API endpoints
-├── planner.db          # SQLite database (auto-created)
-├── start.sh            # Launch script
-├── venv/               # Python virtual environment
-└── static/
-    └── index.html      # Complete frontend SPA
+```bash
+python -m venv venv
+venv\Scripts\activate        # Windows  (macOS/Linux: source venv/bin/activate)
+pip install -r requirements.txt -r requirements-desktop.txt
+python desktop.py            # or: python app.py  then open http://127.0.0.1:8585
 ```
 
-## 🔌 API Endpoints
+On Windows the desktop window uses Microsoft Edge WebView2, which is built into Windows 10 and 11. If the native window (`pywebview`) can't be installed on your Python version, `desktop.py` opens the app in your default browser instead.
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/tasks` | List tasks (filter by status, category, priority, search) |
-| POST | `/api/tasks` | Create task |
-| GET | `/api/tasks/{id}` | Get single task |
-| PUT | `/api/tasks/{id}` | Update task |
-| DELETE | `/api/tasks/{id}` | Delete task |
-| POST | `/api/tasks/{id}/auto-plan` | Generate smart completion plan |
-| GET | `/api/categories` | List categories |
-| POST | `/api/categories` | Create category |
-| DELETE | `/api/categories/{id}` | Delete category |
-| GET | `/api/stats` | Get dashboard statistics |
+## Where your data lives
+
+| System  | Location |
+|---------|----------|
+| Windows | `%APPDATA%\LifePlanner\planner.db` |
+| macOS   | `~/Library/Application Support/LifePlanner/planner.db` |
+| Linux   | `~/.local/share/LifePlanner/planner.db` |
+
+Set `LIFEPLANNER_DATA_DIR` to use a different folder. If an older version left a `planner.db` next to `app.py`, it's copied across automatically the first time you run this version.
+
+## Build a standalone app
+
+```bash
+pip install -r requirements-dev.txt
+pyinstaller LifePlanner.spec          # output: dist/LifePlanner(.exe)
+```
+
+## Tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest -q
+```
+
+## Project layout
+
+```
+app.py              FastAPI backend + SQLite (all API routes)
+desktop.py          Opens the app in a native window (pywebview)
+static/index.html   Page shell
+static/styles.css   Design system (colours, type, components, light/dark)
+static/app.js       Views, forms and state
+static/icons.js     Line icons and the logo
+static/fonts/       Manrope + Instrument Serif (SIL Open Font License)
+tests/              API tests
+```
+
+## Renaming the app
+
+Change `APP_NAME` and `APP_SLUG` at the top of `app.py`. The window title, page title and sidebar all read it from there. Changing `APP_SLUG` also changes the data folder name, so move your `planner.db` across when you do.
+
+---
+
+© 2026 Mysteryman4k. All rights reserved.
