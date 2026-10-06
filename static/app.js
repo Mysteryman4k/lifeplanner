@@ -47,6 +47,7 @@ const state = {
   calMonth: todayStr().slice(0, 7), calSel: todayStr(),
   drawer: null,
   update: null, updateSettings: { auto_check: true }, updateDismissed: false, checkingUpdate: false,
+  startup: { intro: true },
 };
 
 // ── API ───────────────────────────────────────────────────────────
@@ -77,6 +78,7 @@ async function loadAll() {
     api('/api/tasks'), api('/api/categories'), api('/api/subjects'), api('/api/jobs'), api('/api/info'),
     api('/api/settings/appearance').catch(() => null),
   ]);
+  api('/api/settings/startup').then(st => { state.startup = st; }).catch(() => {});
   // The database copy is the source of truth (localStorage only avoids a flash on start-up)
   if (appearance && JSON.stringify(appearance) !== JSON.stringify(window.__appearance)) {
     saveAppearanceLocal(applyAppearance(appearance));
@@ -542,6 +544,8 @@ const VIEWS = {
             </div>
             <div class="appearance-head"><div><div class="setting-title">Light or dark</div><div class="setting-desc">System follows your computer's setting.</div></div>
               <div class="segmented">${mode('system', 'System', 'monitor')}${mode('light', 'Light', 'sun')}${mode('dark', 'Dark', 'moon')}</div></div>
+            <div class="appearance-head"><div><div class="setting-title">Intro animation</div><div class="setting-desc">Plays when the desktop app opens. Turn off for a quicker, plain loading screen.</div></div>
+              <button class="switch ${state.startup.intro ? 'on' : ''}" role="switch" aria-checked="${state.startup.intro}" data-action="toggle-intro" aria-label="Intro animation"><i></i></button></div>
           </div>
           <div class="appearance">
             <div class="appearance-head"><div class="setting-title">Colour theme</div><span class="small muted">${esc(THEMES[ap.theme]?.name || '')}</span></div>
@@ -1041,6 +1045,13 @@ const ACTIONS = {
       toast('Backup downloaded');
     } catch (e) { toast(e.message, 'error'); }
   },
+  async 'toggle-intro'() {
+    try {
+      state.startup = await api('/api/settings/startup', { method: 'PUT', body: { intro: !state.startup.intro } });
+      $('#content').classList.add('still'); VIEWS.settings();
+      toast(state.startup.intro ? 'Intro animation on' : 'Intro animation off');
+    } catch (e) { toast(e.message, 'error'); }
+  },
   'check-updates': () => checkForUpdates(true),
   'dismiss-update': () => { state.updateDismissed = true; renderUpdateBanner(); },
   async 'toggle-auto-update'() {
@@ -1104,6 +1115,15 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden && to
 setInterval(() => { if (todayStr() !== lastDay) { lastDay = todayStr(); render(); } }, 60000);
 
 // ── Start ─────────────────────────────────────────────────────────
+/** Fade out the start-up overlay that continues the desktop splash animation. */
+function finishIntro() {
+  const el = $('#intro');
+  if (!el || el.hidden) return;
+  requestAnimationFrame(() => el.classList.add('leaving'));
+  setTimeout(() => { el.hidden = true; el.classList.remove('leaving'); }, 650);
+  history.replaceState(null, '', location.pathname + location.hash);   // drop ?from=splash&ap=…
+}
+
 (async function init() {
   $('.brand-mark').innerHTML = BRAND_MARK;
   // Make rows reachable by keyboard
@@ -1113,8 +1133,10 @@ setInterval(() => { if (todayStr() !== lastDay) { lastDay = todayStr(); render()
     await loadAll();
   } catch (e) {
     $('#content').innerHTML = `<div class="card">${emptyState('alert', "Couldn't load your data", esc(e.message))}</div>`;
+    finishIntro();
     return;
   }
   render();
+  finishIntro();
   checkForUpdates(false);
 })();

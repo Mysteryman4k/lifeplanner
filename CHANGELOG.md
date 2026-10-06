@@ -6,6 +6,19 @@ PATCH for fixes. Pushing a tag like `v3.2.0` publishes that version's section as
 
 ## [Unreleased]
 
+## [3.3.0] - 2026-10-06
+
+### Added
+
+- Animated intro when the desktop app opens: the logo builds itself, the tick draws in, and the name slides up over a drifting aurora in your colour theme, then dissolves into the app
+- The intro uses your chosen colour theme, text style and light/dark mode
+- A loading bar appears if start-up takes longer than the animation
+- Option in Settings → Appearance to turn the intro off for a quicker, plain loading screen
+
+### Changed
+
+- The app window appears immediately on launch instead of after the local server has started
+
 ## [3.2.0] - 2026-10-06
 
 ### Added

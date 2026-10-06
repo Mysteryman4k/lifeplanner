@@ -113,4 +113,13 @@ function saveAppearanceLocal(p) {
 // Follow the computer's light/dark setting live when mode is "system"
 systemDark.addEventListener?.('change', () => { if ((window.__appearance || {}).mode === 'system') applyAppearance(window.__appearance); });
 
-applyAppearance(readAppearance());
+// The desktop splash passes the saved look in the URL, so the very first frame is right
+// even when this browser profile has nothing stored yet.
+(function () {
+  let pref = readAppearance();
+  try {
+    const fromSplash = new URLSearchParams(location.search).get('ap');
+    if (fromSplash) { pref = { ...pref, ...JSON.parse(fromSplash) }; saveAppearanceLocal(pref); }
+  } catch (_) {}
+  applyAppearance(pref);
+})();

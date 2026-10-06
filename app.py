@@ -896,6 +896,10 @@ class UpdateSettings(BaseModel):
     auto_check: bool = True
 
 
+class StartupSettings(BaseModel):
+    intro: bool = True        # play the animated intro when the desktop app opens
+
+
 def _get_setting(key, model):
     with db() as conn:
         row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
@@ -916,6 +920,19 @@ def set_update_settings(u: UpdateSettings):
         conn.execute("INSERT INTO settings (key, value) VALUES ('updates', ?) "
                      "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (u.model_dump_json(),))
     return u.model_dump()
+
+
+@app.get("/api/settings/startup")
+def get_startup_settings():
+    return _get_setting("startup", StartupSettings).model_dump()
+
+
+@app.put("/api/settings/startup")
+def set_startup_settings(st: StartupSettings):
+    with db() as conn:
+        conn.execute("INSERT INTO settings (key, value) VALUES ('startup', ?) "
+                     "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (st.model_dump_json(),))
+    return st.model_dump()
 
 
 @app.get("/api/update/check")

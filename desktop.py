@@ -6,12 +6,16 @@ Uses pywebview, which picks the right engine for each system:
   macOS   -> WebKit
   Linux   -> GTK or Qt WebKit (whichever is installed)
 """
+import base64
+import json
 import os
 import socket
 import sys
 import threading
 import time
+import urllib.parse
 import urllib.request
+from pathlib import Path
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, APP_DIR)
@@ -58,6 +62,50 @@ def wait_until_ready(url: str, timeout: float = 15.0) -> bool:
     return False
 
 
+# Display font for each text style (must match FONTS in static/theme.js)
+STYLE_FONTS = {
+    "rounded": ("Outfit", "outfit-latin-wght-normal.woff2"),
+    "modern": ("Plus Jakarta Sans", "plus-jakarta-sans-latin-wght-normal.woff2"),
+    "expressive": ("Bricolage Grotesque", "bricolage-grotesque-latin-wght-normal.woff2"),
+    "techy": ("Space Grotesk", "space-grotesk-latin-wght-normal.woff2"),
+    "classic": ("Fraunces", "fraunces-latin-wght-normal.woff2"),
+}
+INTRO_SECONDS = 2.7      # length of the intro animation
+QUICK_SECONDS = 0.45     # minimum time for the plain loading screen
+
+
+def build_splash_html(static_dir, appearance: dict, intro: bool, version: str) -> str:
+    """The start-up screen, self-contained (inline CSS, font and theme) so it shows instantly,
+    before the local server is running. Uses the same colours and font as the user's theme."""
+    static_dir = Path(static_dir)
+    font_name, font_file = STYLE_FONTS.get(appearance.get("font"), STYLE_FONTS["rounded"])
+    font_b64 = base64.b64encode((static_dir / "fonts" / font_file).read_bytes()).decode()
+    html = (static_dir / "splash.html").read_text(encoding="utf-8")
+    for key, value in {
+        "{{FONT_NAME}}": font_name,
+        "{{FONT_B64}}": font_b64,
+        "{{INTRO_CSS}}": (static_dir / "intro.css").read_text(encoding="utf-8"),
+        "{{THEME_JS}}": (static_dir / "theme.js").read_text(encoding="utf-8"),
+        "{{PREF}}": json.dumps(appearance),
+        "{{MODE_CLASS}}": "play" if intro else "quick",
+        "{{BAR_AFTER_MS}}": str(int((INTRO_SECONDS if intro else 0.2) * 1000)),
+        "{{VERSION}}": version,
+    }.items():
+        html = html.replace(key, value)
+    return html
+
+
+def system_prefers_dark() -> bool:
+    if os.name != "nt":
+        return False
+    try:
+        import winreg
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
+        return winreg.QueryValueEx(key, "AppsUseLightTheme")[0] == 0
+    except OSError:
+        return False
+
+
 def run_in_browser(url: str):
     """Fallback when pywebview isn't available: open the app in the default browser."""
     import webbrowser
@@ -75,31 +123,52 @@ def main():
     from app import APP_NAME, APP_VERSION
     print(f"--- {APP_NAME} {APP_VERSION} starting {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
+    started = time.time()
     port = free_port()
     url = f"http://127.0.0.1:{port}/"
-    threading.Thread(target=start_server, args=(port,), daemon=True).start()
-    if not wait_until_ready(url):
-        print("Error: the local server didn't start.", file=sys.stderr)
-        sys.exit(1)
+    threading.Thread(target=start_server, args=(port,), daemon=True).start()   # starts while the splash plays
 
     try:
         import webview
     except Exception:
+        if not wait_until_ready(url):
+            print("Error: the local server didn't start.", file=sys.stderr)
+            sys.exit(1)
         run_in_browser(url)
         return
 
+    from app import STATIC, get_appearance, get_startup_settings
+    appearance = get_appearance()
+    intro = get_startup_settings()["intro"]
+    dark = appearance["mode"] == "dark" or (appearance["mode"] == "system" and system_prefers_dark())
+
     webview.settings["ALLOW_DOWNLOADS"] = True                   # for "Download backup"
     webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = True    # job ad / GitHub links open in your browser
-    webview.create_window(
+    window = webview.create_window(
         title=APP_NAME,
-        url=url,
+        html=build_splash_html(STATIC, appearance, intro, APP_VERSION),
         width=1280,
         height=820,
         min_size=(380, 600),
-        background_color="#FFF7F2",
+        background_color="#140F16" if dark else "#FFF7F2",
         text_select=True,
     )
-    webview.start(private_mode=False)
+
+    def hand_over(win):
+        """Wait for the server and the intro, then switch the window to the app."""
+        if not wait_until_ready(url):
+            print("Error: the local server didn't start.", file=sys.stderr)
+            win.evaluate_js("splashError()")
+            return
+        remaining = (INTRO_SECONDS if intro else QUICK_SECONDS) - (time.time() - started)
+        if remaining > 0:
+            time.sleep(remaining)
+        win.evaluate_js("finishSplash()")
+        elapsed_ms = int((time.time() - started) * 1000)
+        query = urllib.parse.urlencode({"from": "splash", "t": elapsed_ms, "ap": json.dumps(appearance)})
+        win.load_url(f"{url}?{query}#/today")
+
+    webview.start(hand_over, window, private_mode=False)
 
 
 if __name__ == "__main__":

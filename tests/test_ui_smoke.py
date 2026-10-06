@@ -79,3 +79,17 @@ def test_change_theme_is_saved(server, page):
     page.reload()
     page.wait_for_function("document.documentElement.dataset.theme === 'ocean'")
     assert page.errors == [], page.errors
+
+
+def test_splash_hand_off_fades_into_the_app(server, page):
+    """Launched from the desktop splash: the overlay shows in the passed-in theme, then gets out of the way."""
+    import json
+    from urllib.parse import urlencode
+    ap = {"theme": "berry", "font": "techy", "mode": "dark"}
+    # In the real app the splash passes the saved look, so save it first to match
+    assert page.request.put(f"{server}/api/settings/appearance", data=ap).ok
+    page.goto(f"{server}/?{urlencode({'from': 'splash', 't': 2700, 'ap': json.dumps(ap)})}#/today")
+    assert page.evaluate("document.documentElement.dataset.theme") == "berry"     # right look on the first frame
+    page.wait_for_selector("#intro", state="hidden", timeout=5000)
+    assert "from=splash" not in page.url
+    assert page.errors == [], page.errors

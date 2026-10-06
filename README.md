@@ -14,7 +14,7 @@ A personal planner for students: assignments and study tasks, job applications a
 - **Subjects**: your units with their weeks or topics and open task counts
 - **Jobs**: a board from Applied to Offer, follow-up reminders and a list of closed applications
 - **Money**: money in and out by month, budgets with progress bars and remaining amounts
-- **Make it yours**: 6 colour themes (Sunset is the default), 5 text styles, and light, dark or system mode
+- **Make it yours**: 6 colour themes (Sunset is the default), 5 text styles, light, dark or system mode, and an animated intro (can be turned off)
 - **Backup**: one-click JSON export of everything
 
 ## Install (Windows)
@@ -107,6 +107,8 @@ CHANGELOG.md        What changed in each version
 installer/          Inno Setup script for the Windows installer
 .github/workflows/  Tests on every push; builds and publishes releases on version tags
 static/index.html   Page shell
+static/splash.html  Desktop start-up screen (filled in by desktop.py, shown before the server is ready)
+static/intro.css    Intro animation, shared by the splash and the app's hand-off overlay
 static/theme.js     Colour themes, text styles and light/dark (applied before first paint)
 static/styles.css   Components and layout, all driven by theme variables
 static/app.js       Views, forms and state

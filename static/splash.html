@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<!-- Desktop start-up screen. desktop.py fills in the double-brace placeholders and shows this
+     instantly while the local server starts, then hands over to index.html. -->
+<html lang="en-AU">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trackademic</title>
+<style>
+@font-face { font-family: '{{FONT_NAME}}'; src: url(data:font/woff2;base64,{{FONT_B64}}) format('woff2'); font-weight: 100 900; }
+html, body { margin: 0; height: 100%; background: var(--bg); }
+{{INTRO_CSS}}
+</style>
+<script>
+{{THEME_JS}}
+applyAppearance({{PREF}});
+</script>
+</head>
+<body>
+<div class="intro {{MODE_CLASS}}" id="intro">
+  <!-- intro:start -->
+  <div class="intro-aurora" aria-hidden="true"><i class="intro-blob a"></i><i class="intro-blob b"></i><i class="intro-blob c"></i></div>
+  <div class="intro-grain" aria-hidden="true"></div>
+  <div class="intro-group">
+    <div class="intro-logo">
+      <svg viewBox="0 0 32 32" aria-hidden="true">
+        <defs><linearGradient id="intro-g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" style="stop-color:var(--grad-a)"/><stop offset="1" style="stop-color:var(--grad-b)"/></linearGradient></defs>
+        <rect class="intro-tile" x="1.5" y="1.5" width="29" height="29" rx="9" fill="url(#intro-g)"/>
+        <path class="intro-check" pathLength="1" d="M8.5 16.5l4.5 4.5 10-10.5" fill="none" style="stroke:var(--accent-ink)" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+        <path class="intro-arrow" pathLength="1" d="M18.5 10.5h5v5" fill="none" style="stroke:var(--accent-ink)" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <span class="intro-ring" aria-hidden="true"></span>
+      <span class="intro-sparks" aria-hidden="true"><i style="--dx:-6px;--dy:-33px"></i><i style="--dx:3px;--dy:-48px"></i><i style="--dx:18px;--dy:-59px"></i><i style="--dx:17px;--dy:-29px"></i><i style="--dx:34px;--dy:-34px"></i><i style="--dx:53px;--dy:-33px"></i><i style="--dx:32px;--dy:-11px"></i><i style="--dx:48px;--dy:-4px"></i><i style="--dx:61px;--dy:10px"></i><i style="--dx:31px;--dy:13px"></i><i style="--dx:39px;--dy:28px"></i><i style="--dx:40px;--dy:47px"></i></span>
+    </div>
+    <div class="intro-word" role="img" aria-label="Trackademic"><span style="--i:0">T</span><span style="--i:1">r</span><span style="--i:2">a</span><span style="--i:3">c</span><span style="--i:4">k</span><span class="g" style="--i:5;background-size:3.6em 100%;background-position:0.00em 0">a</span><span class="g" style="--i:6;background-size:3.6em 100%;background-position:-0.60em 0">d</span><span class="g" style="--i:7;background-size:3.6em 100%;background-position:-1.20em 0">e</span><span class="g" style="--i:8;background-size:3.6em 100%;background-position:-1.80em 0">m</span><span class="g" style="--i:9;background-size:3.6em 100%;background-position:-2.40em 0">i</span><span class="g" style="--i:10;background-size:3.6em 100%;background-position:-3.00em 0">c</span></div>
+    <div class="intro-tag">Plan &middot; Track &middot; Achieve</div>
+    <div class="intro-bar" aria-hidden="true"></div>
+  </div>
+  <div class="intro-version"></div>
+  <!-- intro:end -->
+</div>
+<script>
+  document.querySelector('.intro-version').textContent = 'Version {{VERSION}}';
+  const intro = document.getElementById('intro');
+  // Show a loading bar if the app takes longer than the animation
+  setTimeout(() => intro.classList.add('loading'), {{BAR_AFTER_MS}});
+  // Called by desktop.py once the app is ready
+  window.finishSplash = () => { intro.classList.remove('loading'); };
+  window.splashError = (msg) => {
+    intro.classList.remove('loading');
+    document.querySelector('.intro-tag').textContent = msg || "Trackademic couldn't start";
+  };
+</script>
+</body>
+</html>

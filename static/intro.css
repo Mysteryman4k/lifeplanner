@@ -1,0 +1,129 @@
+/* ═══════════════════════════════════════════════════════════════
+   Trackademic — intro / loading screen
+   Shared by the desktop splash (splash.html, shown while the app starts)
+   and the hand-off overlay in index.html, so the two line up exactly.
+   Colours come from theme.js variables.
+   ═══════════════════════════════════════════════════════════════ */
+
+.intro {
+  position: fixed; inset: 0; z-index: 200; overflow: hidden;
+  display: grid; place-items: center;
+  background: var(--bg); color: var(--ink);
+  font-family: var(--display, system-ui), system-ui, sans-serif;
+  user-select: none; cursor: default;
+}
+.intro[hidden] { display: none; }
+
+/* Aurora: soft blobs in the theme's gradient colours, slowly drifting */
+.intro-aurora { position: absolute; inset: -20%; pointer-events: none; }
+.intro-blob {
+  position: absolute; width: 62vmax; height: 62vmax; border-radius: 50%;
+  filter: blur(80px); opacity: .5;
+  animation: intro-drift 14s ease-in-out infinite alternate;
+  animation-delay: var(--t-offset, 0s);
+}
+.intro-blob.a { background: var(--grad-a); top: -18%; left: -12%; }
+.intro-blob.b { background: var(--grad-b); bottom: -24%; right: -14%; animation-duration: 17s; animation-direction: alternate-reverse; }
+.intro-blob.c { background: color-mix(in srgb, var(--grad-a) 50%, var(--grad-b)); top: 30%; left: 38%; width: 40vmax; height: 40vmax; opacity: .28; animation-duration: 11s; }
+:root[data-mode="light"] .intro-blob { opacity: .22; }
+:root[data-mode="light"] .intro-blob.c { opacity: .14; }
+@keyframes intro-drift {
+  0%   { transform: translate(0, 0) scale(1); }
+  50%  { transform: translate(6vmax, 4vmax) scale(1.12); }
+  100% { transform: translate(-4vmax, 7vmax) scale(.94); }
+}
+/* Fine grain so the gradients don't band */
+.intro-grain {
+  position: absolute; inset: 0; opacity: .06; pointer-events: none; mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* Centre group: logo, wordmark, tagline */
+.intro-group { position: relative; display: flex; flex-direction: column; align-items: center; gap: 22px; }
+.intro-logo { position: relative; width: 112px; height: 112px; }
+.intro-logo svg { width: 100%; height: 100%; overflow: visible; filter: drop-shadow(0 18px 34px color-mix(in srgb, var(--grad-b) 45%, transparent)); }
+.intro-ring {
+  position: absolute; inset: -6px; border-radius: 36px; border: 2px solid var(--grad-b);
+  opacity: 0; pointer-events: none;
+}
+.intro-sparks { position: absolute; left: 74%; top: 26%; width: 0; height: 0; }
+.intro-sparks i {
+  position: absolute; width: 6px; height: 6px; margin: -3px; border-radius: 2px; opacity: 0;
+  background: var(--grad-b);
+}
+.intro-sparks i:nth-child(odd) { background: var(--grad-a); width: 4px; height: 4px; margin: -2px; border-radius: 50%; }
+
+.intro-word {
+  font-weight: var(--display-weight, 700); letter-spacing: var(--display-track, -0.03em);
+  font-size: 46px; line-height: 1; display: flex; white-space: nowrap;
+}
+.intro-word span { display: inline-block; }
+.intro-word .g { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; padding-bottom: 4px; }
+.intro-tag {
+  font-size: 13px; font-weight: 700;
+  letter-spacing: .32em; text-transform: uppercase; color: var(--muted); margin-top: -8px;
+}
+.intro-bar {
+  position: absolute; left: 50%; bottom: -46px; width: 148px; height: 3px; margin-left: -74px;
+  border-radius: 3px; overflow: hidden; background: color-mix(in srgb, var(--ink) 10%, transparent); opacity: 0;
+  transition: opacity .3s;
+}
+.intro-bar::after {
+  content: ''; position: absolute; inset: 0; width: 40%; border-radius: 3px; background: var(--grad);
+  animation: intro-load 1.1s cubic-bezier(.6, 0, .4, 1) infinite;
+}
+@keyframes intro-load { from { transform: translateX(-110%); } to { transform: translateX(260%); } }
+.intro-version { position: absolute; bottom: 22px; left: 0; right: 0; text-align: center; font-family: var(--font, system-ui), system-ui, sans-serif; font-size: 11.5px; font-weight: 600; color: var(--muted); opacity: .8; }
+
+/* ── Entrance (desktop splash with intro animation on) ────────── */
+.intro.play .intro-blob { opacity: 0; animation: intro-fade-blob 1.4s ease-out forwards, intro-drift 14s ease-in-out 0s infinite alternate; }
+.intro.play .intro-blob.b { animation: intro-fade-blob 1.6s .15s ease-out forwards, intro-drift 17s ease-in-out 0s infinite alternate-reverse; }
+.intro.play .intro-blob.c { animation: intro-fade-blob-c 1.6s .3s ease-out forwards, intro-drift 11s ease-in-out 0s infinite alternate; }
+@keyframes intro-fade-blob { to { opacity: .5; } }
+@keyframes intro-fade-blob-c { to { opacity: .28; } }
+:root[data-mode="light"] .intro.play .intro-blob { animation-name: intro-fade-blob-l, intro-drift; }
+:root[data-mode="light"] .intro.play .intro-blob.c { animation-name: intro-fade-blob-cl, intro-drift; }
+@keyframes intro-fade-blob-l { to { opacity: .22; } }
+@keyframes intro-fade-blob-cl { to { opacity: .14; } }
+
+.intro.play .intro-tile { transform-origin: 50% 50%; transform-box: fill-box; animation: intro-tile .8s cubic-bezier(.2, 1.4, .4, 1) .1s both; }
+@keyframes intro-tile {
+  0%   { transform: scale(.2) rotate(-24deg); opacity: 0; }
+  60%  { opacity: 1; }
+  100% { transform: scale(1) rotate(0); opacity: 1; }
+}
+.intro.play .intro-check { stroke-dasharray: 1; animation: intro-draw .42s cubic-bezier(.6, 0, .3, 1) .62s both; }
+.intro.play .intro-arrow { stroke-dasharray: 1; animation: intro-draw .3s cubic-bezier(.4, 0, .2, 1) 1.0s both; }
+/* Hidden until drawing starts, so the round line cap doesn't show as a dot */
+@keyframes intro-draw { 0% { stroke-dashoffset: 1; opacity: 0; } 1% { opacity: 1; } 100% { stroke-dashoffset: 0; opacity: 1; } }
+.intro.play .intro-logo svg { animation: intro-nudge .55s cubic-bezier(.3, 1.6, .5, 1) 1.12s; }
+@keyframes intro-nudge { 40% { transform: translate(3px, -3px) scale(1.05); } }
+.intro.play .intro-ring { animation: intro-ring .9s cubic-bezier(.1, .6, .3, 1) 1.15s forwards; }
+@keyframes intro-ring { 0% { opacity: .9; transform: scale(.9); } 100% { opacity: 0; transform: scale(1.7); } }
+.intro.play .intro-sparks i { animation: intro-spark .8s cubic-bezier(.1, .7, .3, 1) 1.15s forwards; }
+@keyframes intro-spark {
+  0% { opacity: 1; transform: translate(0, 0) scale(1); }
+  100% { opacity: 0; transform: translate(var(--dx), var(--dy)) scale(.3) rotate(160deg); }
+}
+.intro.play .intro-word span { opacity: 0; transform: translateY(22px); animation: intro-letter .6s cubic-bezier(.2, .9, .3, 1) forwards; animation-delay: calc(1.05s + var(--i) * 38ms); }
+@keyframes intro-letter { to { opacity: 1; transform: none; } }
+.intro.play .intro-tag { opacity: 0; letter-spacing: .9em; animation: intro-tag .9s cubic-bezier(.2, .8, .2, 1) 1.55s forwards; }
+@keyframes intro-tag { to { opacity: 1; letter-spacing: .32em; } }
+.intro.play .intro-version { opacity: 0; animation: intro-fade .6s 1.8s forwards; }
+@keyframes intro-fade { to { opacity: .8; } }
+
+/* Quick start (intro animation off): just a short fade */
+.intro.quick .intro-group { animation: intro-quick .25s ease-out both; }
+@keyframes intro-quick { from { opacity: 0; transform: scale(.97); } }
+
+.intro.loading .intro-bar { opacity: 1; }
+
+/* Hand-off to the app: the overlay in index.html starts on the same frame and fades away */
+.intro.leaving { animation: intro-leave .55s cubic-bezier(.4, 0, .2, 1) forwards; pointer-events: none; }
+.intro.leaving .intro-group { animation: intro-leave-group .55s cubic-bezier(.4, 0, .2, 1) forwards; }
+@keyframes intro-leave { to { opacity: 0; } }
+@keyframes intro-leave-group { to { transform: scale(1.08); filter: blur(6px); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .intro *, .intro { animation-duration: .01ms !important; animation-delay: 0s !important; transition: none !important; }
+}
