@@ -1,256 +1,438 @@
 #!/usr/bin/env python3
 """
-LifePlanner — Student planner + job tracker + finance manager.
+Trackademic — student planner, job tracker and money manager.
 FastAPI backend + SQLite database.
+
+Run directly:  python app.py        (serves on http://127.0.0.1:8585)
+Desktop app:   python desktop.py
 """
+import os
+import shutil
 import sqlite3
+import sys
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Optional, List
+from typing import Literal, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
-# ── App Setup ──────────────────────────────────────────────────────────────
+# ── App identity (change the name here when renaming the app) ─────────────
+APP_NAME = "Trackademic"
+APP_SLUG = "Trackademic"          # folder name used for user data
+APP_VERSION = "3.1.0"
+PREVIOUS_SLUGS = ["LifePlanner"]  # data folders of earlier names, migrated automatically
 
 BASE = Path(__file__).resolve().parent
-DB_PATH = BASE / "planner.db"
+STATIC = BASE / "static"
 
-app = FastAPI(title="LifePlanner", version="2.0.0")
+
+def _user_data_root() -> Path:
+    if os.name == "nt":
+        return Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support"
+    return Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+
+
+def data_dir() -> Path:
+    """Per-user folder that survives updates and the packaged .exe being closed."""
+    override = os.environ.get("TRACKADEMIC_DATA_DIR") or os.environ.get("LIFEPLANNER_DATA_DIR")
+    base = Path(override) if override else _user_data_root() / APP_SLUG
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+
+DB_PATH = data_dir() / "planner.db"
+
+
+def _migrate_old_data():
+    """Bring across data from earlier versions (old app name, or stored next to app.py)."""
+    if DB_PATH.exists():
+        return
+    candidates = [_user_data_root() / slug / "planner.db" for slug in PREVIOUS_SLUGS] + [BASE / "planner.db"]
+    for old in candidates:
+        if old.exists() and old.stat().st_size > 0:
+            src = sqlite3.connect(str(old))
+            dst = sqlite3.connect(str(DB_PATH))
+            with dst:
+                src.backup(dst)          # safe copy even if the old file is in WAL mode
+            src.close()
+            dst.close()
+            return
+
+
+if not (os.environ.get("TRACKADEMIC_DATA_DIR") or os.environ.get("LIFEPLANNER_DATA_DIR")):
+    _migrate_old_data()
+
+app = FastAPI(title=APP_NAME, version=APP_VERSION)
 
 # ── Database ───────────────────────────────────────────────────────────────
 
-def get_db():
-    conn = sqlite3.connect(str(DB_PATH))
+
+def _connect() -> sqlite3.Connection:
+    conn = sqlite3.connect(str(DB_PATH), timeout=10)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
 
+
+@contextmanager
+def db():
+    """Open a connection, commit on success, roll back on error, always close.
+
+    Older versions leaked the connection whenever a query failed, which kept the
+    database locked and made the next requests hang and fail.
+    """
+    conn = _connect()
+    try:
+        yield conn
+        conn.commit()
+    except sqlite3.IntegrityError as e:
+        conn.rollback()
+        raise HTTPException(400, _friendly_integrity(e))
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def _friendly_integrity(e: Exception) -> str:
+    msg = str(e)
+    if "UNIQUE" in msg:
+        return "That name is already used."
+    if "FOREIGN KEY" in msg:
+        return "A linked item no longer exists."
+    return "That value isn't allowed."
+
+
 def init_db():
-    db = get_db()
-    db.executescript("""
-        CREATE TABLE IF NOT EXISTS categories (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE,
-            color TEXT NOT NULL DEFAULT '#6366f1',
-            icon TEXT DEFAULT '📚'
-        );
+    with db() as conn:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS categories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                color TEXT NOT NULL DEFAULT '#6366f1',
+                icon TEXT DEFAULT ''
+            );
+            CREATE TABLE IF NOT EXISTS subjects (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                color TEXT NOT NULL DEFAULT '#6366f1',
+                icon TEXT DEFAULT ''
+            );
+            CREATE TABLE IF NOT EXISTS units (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+                name TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                description TEXT DEFAULT '',
+                due_date TEXT,
+                planned_start_date TEXT,
+                planned_end_date TEXT,
+                priority TEXT DEFAULT 'medium' CHECK(priority IN ('low','medium','high','urgent')),
+                status TEXT DEFAULT 'not_started' CHECK(status IN ('not_started','in_progress','completed','overdue')),
+                category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+                subject_id INTEGER REFERENCES subjects(id) ON DELETE SET NULL,
+                unit_id INTEGER REFERENCES units(id) ON DELETE SET NULL,
+                target_grade TEXT DEFAULT '',
+                progress INTEGER DEFAULT 0 CHECK(progress >= 0 AND progress <= 100),
+                estimated_hours REAL,
+                actual_hours REAL DEFAULT 0,
+                notes TEXT DEFAULT '',
+                is_recurring INTEGER DEFAULT 0,
+                recurrence_pattern TEXT DEFAULT '',
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                updated_at TEXT DEFAULT (datetime('now','localtime'))
+            );
+            CREATE TABLE IF NOT EXISTS job_applications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                company TEXT NOT NULL,
+                role TEXT NOT NULL,
+                status TEXT DEFAULT 'applied' CHECK(status IN ('applied','phone_screen','interviewing','offer','accepted','rejected','withdrawn')),
+                applied_date TEXT,
+                follow_up_date TEXT,
+                notes TEXT DEFAULT '',
+                url TEXT DEFAULT '',
+                salary_range TEXT DEFAULT '',
+                contact_name TEXT DEFAULT '',
+                contact_email TEXT DEFAULT '',
+                priority TEXT DEFAULT 'medium' CHECK(priority IN ('low','medium','high')),
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                updated_at TEXT DEFAULT (datetime('now','localtime'))
+            );
+            CREATE TABLE IF NOT EXISTS transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                type TEXT NOT NULL CHECK(type IN ('income','expense')),
+                amount REAL NOT NULL,
+                category TEXT NOT NULL,
+                description TEXT DEFAULT '',
+                date TEXT NOT NULL,
+                recurring INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT (datetime('now','localtime'))
+            );
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS budgets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                category TEXT NOT NULL UNIQUE,
+                monthly_limit REAL NOT NULL,
+                icon TEXT DEFAULT '',
+                color TEXT DEFAULT '#6366f1'
+            );
 
-        CREATE TABLE IF NOT EXISTS subjects (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE,
-            color TEXT NOT NULL DEFAULT '#6366f1',
-            icon TEXT DEFAULT '📖'
-        );
+            INSERT OR IGNORE INTO categories (id, name, color) VALUES
+                (1,'Assignment','#b45309'),(2,'Exam','#b91c1c'),(3,'Project','#6d28d9'),
+                (4,'Reading','#047857'),(5,'Personal','#0e7490'),(6,'Other','#57534e');
+            INSERT OR IGNORE INTO budgets (id, category, monthly_limit) VALUES
+                (1,'Food & Dining',400),(2,'Transport',150),(3,'Entertainment',200),
+                (4,'Shopping',250),(5,'Bills & Utilities',300),(6,'Education',100),(7,'Other',100);
+        """)
+        # Columns added in v2
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(tasks)")}
+        for col, ddl in [
+            ("subject_id", "INTEGER REFERENCES subjects(id) ON DELETE SET NULL"),
+            ("unit_id", "INTEGER REFERENCES units(id) ON DELETE SET NULL"),
+            ("target_grade", "TEXT DEFAULT ''"),
+        ]:
+            if col not in cols:
+                conn.execute(f"ALTER TABLE tasks ADD COLUMN {col} {ddl}")
+        # v3: overdue is now worked out from the due date instead of being saved,
+        # so tasks stop being stuck as overdue after their date is moved.
+        conn.execute("""UPDATE tasks SET status = CASE WHEN progress > 0 THEN 'in_progress' ELSE 'not_started' END
+                        WHERE status = 'overdue'""")
+        # Older versions stored emoji icons; the new UI uses its own icons.
+        conn.execute("UPDATE categories SET icon=''")
+        conn.execute("UPDATE budgets SET icon=''")
+        conn.execute("UPDATE subjects SET icon=''")
+        conn.executescript("""
+            CREATE INDEX IF NOT EXISTS ix_tasks_due ON tasks(due_date);
+            CREATE INDEX IF NOT EXISTS ix_tasks_status ON tasks(status);
+            CREATE INDEX IF NOT EXISTS ix_tasks_category ON tasks(category_id);
+            CREATE INDEX IF NOT EXISTS ix_tasks_subject ON tasks(subject_id);
+            CREATE INDEX IF NOT EXISTS ix_units_subject ON units(subject_id);
+            CREATE INDEX IF NOT EXISTS ix_jobs_status ON job_applications(status);
+            CREATE INDEX IF NOT EXISTS ix_tx_date ON transactions(date);
+            CREATE INDEX IF NOT EXISTS ix_tx_category ON transactions(category);
+        """)
 
-        CREATE TABLE IF NOT EXISTS units (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
-            name TEXT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS tasks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT NOT NULL,
-            description TEXT DEFAULT '',
-            due_date TEXT,
-            planned_start_date TEXT,
-            planned_end_date TEXT,
-            priority TEXT DEFAULT 'medium' CHECK(priority IN ('low','medium','high','urgent')),
-            status TEXT DEFAULT 'not_started' CHECK(status IN ('not_started','in_progress','completed','overdue')),
-            category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
-            subject_id INTEGER REFERENCES subjects(id) ON DELETE SET NULL,
-            unit_id INTEGER REFERENCES units(id) ON DELETE SET NULL,
-            target_grade TEXT DEFAULT '',
-            progress INTEGER DEFAULT 0 CHECK(progress >= 0 AND progress <= 100),
-            estimated_hours REAL,
-            actual_hours REAL DEFAULT 0,
-            notes TEXT DEFAULT '',
-            is_recurring INTEGER DEFAULT 0,
-            recurrence_pattern TEXT DEFAULT '',
-            created_at TEXT DEFAULT (datetime('now','localtime')),
-            updated_at TEXT DEFAULT (datetime('now','localtime'))
-        );
-
-        CREATE TABLE IF NOT EXISTS job_applications (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            company TEXT NOT NULL,
-            role TEXT NOT NULL,
-            status TEXT DEFAULT 'applied' CHECK(status IN ('applied','phone_screen','interviewing','offer','accepted','rejected','withdrawn')),
-            applied_date TEXT,
-            follow_up_date TEXT,
-            notes TEXT DEFAULT '',
-            url TEXT DEFAULT '',
-            salary_range TEXT DEFAULT '',
-            contact_name TEXT DEFAULT '',
-            contact_email TEXT DEFAULT '',
-            priority TEXT DEFAULT 'medium' CHECK(priority IN ('low','medium','high')),
-            created_at TEXT DEFAULT (datetime('now','localtime')),
-            updated_at TEXT DEFAULT (datetime('now','localtime'))
-        );
-
-        CREATE TABLE IF NOT EXISTS transactions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            type TEXT NOT NULL CHECK(type IN ('income','expense')),
-            amount REAL NOT NULL,
-            category TEXT NOT NULL,
-            description TEXT DEFAULT '',
-            date TEXT NOT NULL,
-            recurring INTEGER DEFAULT 0,
-            created_at TEXT DEFAULT (datetime('now','localtime'))
-        );
-
-        CREATE TABLE IF NOT EXISTS budgets (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            category TEXT NOT NULL UNIQUE,
-            monthly_limit REAL NOT NULL,
-            icon TEXT DEFAULT '💰',
-            color TEXT DEFAULT '#6366f1'
-        );
-
-        -- Defaults
-        INSERT OR IGNORE INTO categories (id, name, color, icon) VALUES (1, 'Assignment', '#f59e0b', '📝');
-        INSERT OR IGNORE INTO categories (id, name, color, icon) VALUES (2, 'Exam', '#ef4444', '📋');
-        INSERT OR IGNORE INTO categories (id, name, color, icon) VALUES (3, 'Project', '#8b5cf6', '🚀');
-        INSERT OR IGNORE INTO categories (id, name, color, icon) VALUES (4, 'Reading', '#10b981', '📖');
-        INSERT OR IGNORE INTO categories (id, name, color, icon) VALUES (5, 'Personal', '#06b6d4', '👤');
-        INSERT OR IGNORE INTO categories (id, name, color, icon) VALUES (6, 'Other', '#6b7280', '📌');
-
-        INSERT OR IGNORE INTO budgets (id, category, monthly_limit, icon, color) VALUES (1, 'Food & Dining', 400, '🍔', '#f59e0b');
-        INSERT OR IGNORE INTO budgets (id, category, monthly_limit, icon, color) VALUES (2, 'Transport', 150, '🚌', '#06b6d4');
-        INSERT OR IGNORE INTO budgets (id, category, monthly_limit, icon, color) VALUES (3, 'Entertainment', 200, '🎮', '#8b5cf6');
-        INSERT OR IGNORE INTO budgets (id, category, monthly_limit, icon, color) VALUES (4, 'Shopping', 250, '🛍', '#ec4899');
-        INSERT OR IGNORE INTO budgets (id, category, monthly_limit, icon, color) VALUES (5, 'Bills & Utilities', 300, '⚡', '#ef4444');
-        INSERT OR IGNORE INTO budgets (id, category, monthly_limit, icon, color) VALUES (6, 'Education', 100, '📚', '#10b981');
-        INSERT OR IGNORE INTO budgets (id, category, monthly_limit, icon, color) VALUES (7, 'Other', 100, '📌', '#6b7280');
-
-        -- Migrate existing tasks table to add v2 columns if missing
-    """)
-    # Add columns if they don't exist (safe migration)
-    cols = [r[1] for r in db.execute("PRAGMA table_info(tasks)").fetchall()]
-    if 'subject_id' not in cols:
-        db.execute("ALTER TABLE tasks ADD COLUMN subject_id INTEGER REFERENCES subjects(id) ON DELETE SET NULL")
-    if 'unit_id' not in cols:
-        db.execute("ALTER TABLE tasks ADD COLUMN unit_id INTEGER REFERENCES units(id) ON DELETE SET NULL")
-    if 'target_grade' not in cols:
-        db.execute("ALTER TABLE tasks ADD COLUMN target_grade TEXT DEFAULT ''")
-    db.commit()
-    db.close()
 
 init_db()
 
-# ── Pydantic Models ────────────────────────────────────────────────────────
+# ── Validation models ──────────────────────────────────────────────────────
 
-class TaskCreate(BaseModel):
-    title: str
+Priority = Literal["low", "medium", "high", "urgent"]
+TaskStatus = Literal["not_started", "in_progress", "completed"]
+JobStatus = Literal["applied", "phone_screen", "interviewing", "offer", "accepted", "rejected", "withdrawn"]
+JobPriority = Literal["low", "medium", "high"]
+HexColor = Field(default="#2f5d50", pattern=r"^#[0-9a-fA-F]{6}$")
+Name = Field(min_length=1, max_length=120)
+
+
+def _check_date(v):
+    if v in (None, ""):
+        return None
+    try:
+        return date.fromisoformat(v).isoformat()
+    except (TypeError, ValueError):
+        raise ValueError("Use a date in YYYY-MM-DD format")
+
+
+class DatesMixin(BaseModel):
+    @field_validator("due_date", "planned_start_date", "planned_end_date",
+                     "applied_date", "follow_up_date", "date", check_fields=False, mode="before")
+    @classmethod
+    def valid_date(cls, v):
+        return _check_date(v)
+
+
+class TaskCreate(DatesMixin):
+    title: str = Name
     description: str = ""
     due_date: Optional[str] = None
     planned_start_date: Optional[str] = None
     planned_end_date: Optional[str] = None
-    priority: str = "medium"
-    status: str = "not_started"
+    priority: Priority = "medium"
+    status: TaskStatus = "not_started"
     category_id: Optional[int] = None
     subject_id: Optional[int] = None
     unit_id: Optional[int] = None
-    target_grade: str = ""
-    progress: int = 0
-    estimated_hours: Optional[float] = None
-    actual_hours: float = 0
+    target_grade: str = Field(default="", max_length=20)
+    progress: int = Field(default=0, ge=0, le=100)
+    estimated_hours: Optional[float] = Field(default=None, ge=0, le=1000)
+    actual_hours: float = Field(default=0, ge=0)
     notes: str = ""
     is_recurring: bool = False
     recurrence_pattern: str = ""
 
-class TaskUpdate(BaseModel):
-    title: Optional[str] = None
+
+class TaskUpdate(DatesMixin):
+    title: Optional[str] = Field(default=None, min_length=1, max_length=120)
     description: Optional[str] = None
     due_date: Optional[str] = None
     planned_start_date: Optional[str] = None
     planned_end_date: Optional[str] = None
-    priority: Optional[str] = None
-    status: Optional[str] = None
+    priority: Optional[Priority] = None
+    status: Optional[TaskStatus] = None
     category_id: Optional[int] = None
     subject_id: Optional[int] = None
     unit_id: Optional[int] = None
-    target_grade: Optional[str] = None
-    progress: Optional[int] = None
-    estimated_hours: Optional[float] = None
-    actual_hours: Optional[float] = None
+    target_grade: Optional[str] = Field(default=None, max_length=20)
+    progress: Optional[int] = Field(default=None, ge=0, le=100)
+    estimated_hours: Optional[float] = Field(default=None, ge=0, le=1000)
+    actual_hours: Optional[float] = Field(default=None, ge=0)
     notes: Optional[str] = None
     is_recurring: Optional[bool] = None
     recurrence_pattern: Optional[str] = None
 
+
 class CategoryCreate(BaseModel):
-    name: str
-    color: str = "#6366f1"
-    icon: str = "📚"
+    name: str = Name
+    color: str = HexColor
+
 
 class SubjectCreate(BaseModel):
-    name: str
-    color: str = "#6366f1"
-    icon: str = "📖"
+    name: str = Name
+    color: str = HexColor
+
 
 class UnitCreate(BaseModel):
-    name: str
+    name: str = Name
 
-class JobCreate(BaseModel):
-    company: str
-    role: str
-    status: str = "applied"
+
+class JobCreate(DatesMixin):
+    company: str = Name
+    role: str = Name
+    status: JobStatus = "applied"
     applied_date: Optional[str] = None
     follow_up_date: Optional[str] = None
     notes: str = ""
-    url: str = ""
-    salary_range: str = ""
-    contact_name: str = ""
-    contact_email: str = ""
-    priority: str = "medium"
+    url: str = Field(default="", max_length=500)
+    salary_range: str = Field(default="", max_length=60)
+    contact_name: str = Field(default="", max_length=120)
+    contact_email: str = Field(default="", max_length=200)
+    priority: JobPriority = "medium"
 
-class JobUpdate(BaseModel):
-    company: Optional[str] = None
-    role: Optional[str] = None
-    status: Optional[str] = None
+
+class JobUpdate(DatesMixin):
+    company: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    role: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    status: Optional[JobStatus] = None
     applied_date: Optional[str] = None
     follow_up_date: Optional[str] = None
     notes: Optional[str] = None
-    url: Optional[str] = None
-    salary_range: Optional[str] = None
-    contact_name: Optional[str] = None
-    contact_email: Optional[str] = None
-    priority: Optional[str] = None
+    url: Optional[str] = Field(default=None, max_length=500)
+    salary_range: Optional[str] = Field(default=None, max_length=60)
+    contact_name: Optional[str] = Field(default=None, max_length=120)
+    contact_email: Optional[str] = Field(default=None, max_length=200)
+    priority: Optional[JobPriority] = None
 
-class TransactionCreate(BaseModel):
-    type: str
-    amount: float
-    category: str
-    description: str = ""
+
+class TransactionCreate(DatesMixin):
+    type: Literal["income", "expense"]
+    amount: float = Field(gt=0, le=10_000_000)
+    category: str = Name
+    description: str = Field(default="", max_length=200)
     date: str
     recurring: bool = False
 
+
 class BudgetCreate(BaseModel):
-    category: str
-    monthly_limit: float
-    icon: str = "💰"
-    color: str = "#6366f1"
+    category: str = Name
+    monthly_limit: float = Field(gt=0, le=10_000_000)
+    color: str = HexColor
+
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
-def task_row(row):
+TASK_SELECT = """
+    SELECT t.*, c.name AS category_name, c.color AS category_color,
+           s.name AS subject_name, s.color AS subject_color, u.name AS unit_name
+    FROM tasks t
+    LEFT JOIN categories c ON t.category_id = c.id
+    LEFT JOIN subjects s ON t.subject_id = s.id
+    LEFT JOIN units u ON t.unit_id = u.id
+"""
+
+
+def today() -> str:
+    return date.today().isoformat()
+
+
+def task_row(row, today_str=None):
     if row is None:
         return None
     d = dict(row)
     d["is_recurring"] = bool(d["is_recurring"])
+    t = today_str or today()
+    d["is_overdue"] = bool(d["due_date"] and d["due_date"] < t and d["status"] != "completed")
     return d
 
-def auto_update_overdue(db):
-    today = date.today().isoformat()
-    db.execute(
-        "UPDATE tasks SET status='overdue' WHERE due_date < ? AND status NOT IN ('completed','overdue')",
-        (today,)
-    )
-    db.commit()
+
+def fetch_task(conn, task_id):
+    row = conn.execute(TASK_SELECT + " WHERE t.id=?", (task_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Task not found")
+    return task_row(row)
+
+
+def require(conn, table, item_id, label="Item"):
+    if not conn.execute(f"SELECT 1 FROM {table} WHERE id=?", (item_id,)).fetchone():
+        raise HTTPException(404, f"{label} not found")
+
+
+def month_or_current(month: Optional[str]) -> str:
+    if not month:
+        return date.today().strftime("%Y-%m")
+    try:
+        datetime.strptime(month, "%Y-%m")
+    except ValueError:
+        raise HTTPException(400, "Month must look like YYYY-MM")
+    return month
+
+
+def month_range(month: str):
+    """First day of the month and first day of the next month, for index-friendly range queries."""
+    start = datetime.strptime(month, "%Y-%m").date()
+    nxt = (start.replace(day=28) + timedelta(days=4)).replace(day=1)
+    return start.isoformat(), nxt.isoformat()
+
+
+def now_stamp():
+    return datetime.now().strftime("%Y-%m-%d %H:%M")
+
+
+def normalise_task_status(values: dict, current: Optional[dict] = None):
+    """Keep status and progress consistent with each other."""
+    status = values.get("status", (current or {}).get("status"))
+    progress = values.get("progress", (current or {}).get("progress", 0))
+    if "status" in values and status == "completed" and "progress" not in values:
+        values["progress"] = 100
+    elif "progress" in values and progress == 100 and "status" not in values:
+        values["status"] = "completed"
+    elif "progress" in values and 0 < progress < 100 and status == "not_started" and "status" not in values:
+        values["status"] = "in_progress"
+    return values
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# APP INFO
+# ═══════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/info")
+def info():
+    return {"name": APP_NAME, "version": APP_VERSION, "data_file": str(DB_PATH), "today": today()}
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # SUBJECTS & UNITS
@@ -258,59 +440,75 @@ def auto_update_overdue(db):
 
 @app.get("/api/subjects")
 def list_subjects():
-    db = get_db()
-    rows = db.execute("SELECT s.*, (SELECT COUNT(*) FROM tasks t WHERE t.subject_id=s.id) as task_count FROM subjects s ORDER BY s.id").fetchall()
-    db.close()
-    return [dict(r) for r in rows]
+    """Subjects with their units and task counts in one round trip."""
+    with db() as conn:
+        subjects = [dict(r) for r in conn.execute("""
+            SELECT s.*, COUNT(t.id) AS task_count,
+                   SUM(CASE WHEN t.status != 'completed' THEN 1 ELSE 0 END) AS open_count
+            FROM subjects s LEFT JOIN tasks t ON t.subject_id = s.id
+            GROUP BY s.id ORDER BY s.name COLLATE NOCASE""")]
+        units = conn.execute("SELECT * FROM units ORDER BY name COLLATE NOCASE").fetchall()
+    by_subject = {}
+    for u in units:
+        by_subject.setdefault(u["subject_id"], []).append(dict(u))
+    for s in subjects:
+        s["units"] = by_subject.get(s["id"], [])
+        s["open_count"] = s["open_count"] or 0
+    return subjects
+
 
 @app.post("/api/subjects")
 def create_subject(subj: SubjectCreate):
-    db = get_db()
-    try:
-        cur = db.execute("INSERT INTO subjects (name, color, icon) VALUES (?,?,?)", (subj.name, subj.color, subj.icon))
-        db.commit()
-        row = db.execute("SELECT * FROM subjects WHERE id=?", (cur.lastrowid,)).fetchone()
-        db.close()
-        return dict(row)
-    except sqlite3.IntegrityError:
-        db.close()
-        raise HTTPException(400, "Subject already exists")
+    with db() as conn:
+        cur = conn.execute("INSERT INTO subjects (name, color) VALUES (?,?)", (subj.name.strip(), subj.color))
+        row = dict(conn.execute("SELECT * FROM subjects WHERE id=?", (cur.lastrowid,)).fetchone())
+    row.update(units=[], task_count=0, open_count=0)
+    return row
+
+
+@app.put("/api/subjects/{subj_id}")
+def update_subject(subj_id: int, subj: SubjectCreate):
+    with db() as conn:
+        require(conn, "subjects", subj_id, "Subject")
+        conn.execute("UPDATE subjects SET name=?, color=? WHERE id=?", (subj.name.strip(), subj.color, subj_id))
+    return {"ok": True}
+
 
 @app.delete("/api/subjects/{subj_id}")
 def delete_subject(subj_id: int):
-    db = get_db()
-    db.execute("DELETE FROM subjects WHERE id=?", (subj_id,))
-    db.commit()
-    db.close()
+    with db() as conn:
+        conn.execute("DELETE FROM subjects WHERE id=?", (subj_id,))
     return {"ok": True}
+
 
 @app.get("/api/subjects/{subj_id}/units")
 def list_units(subj_id: int):
-    db = get_db()
-    rows = db.execute("SELECT * FROM units WHERE subject_id=? ORDER BY id", (subj_id,)).fetchall()
-    db.close()
-    return [dict(r) for r in rows]
+    with db() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT * FROM units WHERE subject_id=? ORDER BY name COLLATE NOCASE", (subj_id,))]
+
 
 @app.post("/api/subjects/{subj_id}/units")
 def create_unit(subj_id: int, unit: UnitCreate):
-    db = get_db()
-    cur = db.execute("INSERT INTO units (subject_id, name) VALUES (?,?)", (subj_id, unit.name))
-    db.commit()
-    row = db.execute("SELECT * FROM units WHERE id=?", (cur.lastrowid,)).fetchone()
-    db.close()
-    return dict(row)
+    with db() as conn:
+        require(conn, "subjects", subj_id, "Subject")
+        cur = conn.execute("INSERT INTO units (subject_id, name) VALUES (?,?)", (subj_id, unit.name.strip()))
+        return dict(conn.execute("SELECT * FROM units WHERE id=?", (cur.lastrowid,)).fetchone())
+
 
 @app.delete("/api/units/{unit_id}")
 def delete_unit(unit_id: int):
-    db = get_db()
-    db.execute("DELETE FROM units WHERE id=?", (unit_id,))
-    db.commit()
-    db.close()
+    with db() as conn:
+        conn.execute("DELETE FROM units WHERE id=?", (unit_id,))
     return {"ok": True}
 
+
 # ═══════════════════════════════════════════════════════════════════════════
-# TASKS (extended with subject/unit/grade)
+# TASKS
 # ═══════════════════════════════════════════════════════════════════════════
+
+SORTABLE = {"due_date", "created_at", "title", "progress", "status"}
+
 
 @app.get("/api/tasks")
 def list_tasks(
@@ -318,113 +516,121 @@ def list_tasks(
     priority: Optional[str] = None, search: Optional[str] = None,
     subject: Optional[int] = None, unit: Optional[int] = None,
     due_before: Optional[str] = None, due_after: Optional[str] = None,
-    sort: str = "due_date", order: str = "asc"
+    overdue: Optional[bool] = None,
+    sort: str = "due_date", order: str = "asc",
 ):
-    db = get_db()
-    auto_update_overdue(db)
-    query = """SELECT t.*, c.name as category_name, c.color as category_color, c.icon as category_icon,
-               s.name as subject_name, s.color as subject_color, u.name as unit_name
-               FROM tasks t
-               LEFT JOIN categories c ON t.category_id = c.id
-               LEFT JOIN subjects s ON t.subject_id = s.id
-               LEFT JOIN units u ON t.unit_id = u.id
-               WHERE 1=1"""
-    params = []
+    where, params = [], []
+    t = today()
     if status:
-        for st in status.split(","): query += " AND t.status=?"; params.append(st)
-    if category: query += " AND t.category_id=?"; params.append(category)
-    if subject: query += " AND t.subject_id=?"; params.append(subject)
-    if unit: query += " AND t.unit_id=?"; params.append(unit)
-    if priority: query += " AND t.priority=?"; params.append(priority)
-    if search: query += " AND (t.title LIKE ? OR t.description LIKE ?)"; params.extend([f"%{search}%", f"%{search}%"])
-    if due_before: query += " AND t.due_date <= ?"; params.append(due_before)
-    if due_after: query += " AND t.due_date >= ?"; params.append(due_after)
-    if sort == "priority": query += " ORDER BY CASE t.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 END"
-    elif sort in {"due_date","created_at","title","progress","status"}: query += f" ORDER BY t.{sort} {'ASC' if order=='asc' else 'DESC'}"
-    else: query += " ORDER BY t.due_date ASC"
-    rows = db.execute(query, params).fetchall()
-    db.close()
-    return [task_row(r) for r in rows]
+        statuses = [s for s in status.split(",") if s]
+        if "overdue" in statuses:          # old clients asked for the stored 'overdue' status
+            statuses.remove("overdue")
+            overdue = True
+        if statuses:
+            where.append(f"t.status IN ({','.join('?' * len(statuses))})")
+            params += statuses
+    if overdue is True:
+        where.append("t.due_date < ? AND t.status != 'completed'")
+        params.append(t)
+    for col, val in (("t.category_id", category), ("t.subject_id", subject),
+                     ("t.unit_id", unit), ("t.priority", priority)):
+        if val is not None and val != "":
+            where.append(f"{col}=?")
+            params.append(val)
+    if search:
+        where.append("(t.title LIKE ? OR t.description LIKE ?)")
+        params += [f"%{search}%"] * 2
+    if due_before:
+        where.append("t.due_date <= ?")
+        params.append(due_before)
+    if due_after:
+        where.append("t.due_date >= ?")
+        params.append(due_after)
+
+    q = TASK_SELECT + (" WHERE " + " AND ".join(where) if where else "")
+    if sort == "priority":
+        q += " ORDER BY CASE t.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END"
+    elif sort in SORTABLE:
+        q += f" ORDER BY t.{sort} IS NULL, t.{sort} {'DESC' if order == 'desc' else 'ASC'}"
+    else:
+        q += " ORDER BY t.due_date IS NULL, t.due_date ASC"
+    with db() as conn:
+        rows = conn.execute(q, params).fetchall()
+    return [task_row(r, t) for r in rows]
+
 
 @app.get("/api/tasks/{task_id}")
 def get_task(task_id: int):
-    db = get_db()
-    row = db.execute("""SELECT t.*, c.name as category_name, c.color as category_color, c.icon as category_icon,
-                        s.name as subject_name, s.color as subject_color, u.name as unit_name
-                        FROM tasks t LEFT JOIN categories c ON t.category_id=c.id
-                        LEFT JOIN subjects s ON t.subject_id=s.id LEFT JOIN units u ON t.unit_id=u.id WHERE t.id=?""", (task_id,)).fetchone()
-    db.close()
-    if not row: raise HTTPException(404, "Task not found")
-    return task_row(row)
+    with db() as conn:
+        return fetch_task(conn, task_id)
+
 
 @app.post("/api/tasks")
 def create_task(task: TaskCreate):
-    db = get_db()
-    now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    cur = db.execute("""INSERT INTO tasks (title,description,due_date,planned_start_date,planned_end_date,
-        priority,status,category_id,subject_id,unit_id,target_grade,progress,estimated_hours,actual_hours,notes,is_recurring,recurrence_pattern,created_at,updated_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        (task.title,task.description,task.due_date,task.planned_start_date,task.planned_end_date,
-         task.priority,task.status,task.category_id,task.subject_id,task.unit_id,task.target_grade,
-         task.progress,task.estimated_hours,task.actual_hours,task.notes,int(task.is_recurring),task.recurrence_pattern,now,now))
-    db.commit()
-    row = db.execute("""SELECT t.*, c.name as category_name, c.color as category_color, c.icon as category_icon,
-                        s.name as subject_name, s.color as subject_color, u.name as unit_name
-                        FROM tasks t LEFT JOIN categories c ON t.category_id=c.id
-                        LEFT JOIN subjects s ON t.subject_id=s.id LEFT JOIN units u ON t.unit_id=u.id WHERE t.id=?""", (cur.lastrowid,)).fetchone()
-    db.close()
-    return task_row(row)
+    values = normalise_task_status(task.model_dump(exclude_unset=True))
+    data = task.model_dump()
+    data.update(values)
+    data["title"] = data["title"].strip()
+    data["is_recurring"] = int(data["is_recurring"])
+    data["created_at"] = data["updated_at"] = now_stamp()
+    cols = list(data)
+    with db() as conn:
+        cur = conn.execute(f"INSERT INTO tasks ({','.join(cols)}) VALUES ({','.join('?' * len(cols))})",
+                           [data[c] for c in cols])
+        return fetch_task(conn, cur.lastrowid)
+
 
 @app.put("/api/tasks/{task_id}")
 def update_task(task_id: int, task: TaskUpdate):
-    db = get_db()
-    if not db.execute("SELECT id FROM tasks WHERE id=?", (task_id,)).fetchone():
-        db.close(); raise HTTPException(404, "Task not found")
-    updates = {}
-    for f, v in task.model_dump(exclude_unset=True).items():
-        updates[f] = int(v) if f == "is_recurring" else v
-    if updates:
-        updates["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M")
-        db.execute(f"UPDATE tasks SET {', '.join(f'{k}=?' for k in updates)} WHERE id=?", list(updates.values()) + [task_id])
-        db.commit()
-    row = db.execute("""SELECT t.*, c.name as category_name, c.color as category_color, c.icon as category_icon,
-                        s.name as subject_name, s.color as subject_color, u.name as unit_name
-                        FROM tasks t LEFT JOIN categories c ON t.category_id=c.id
-                        LEFT JOIN subjects s ON t.subject_id=s.id LEFT JOIN units u ON t.unit_id=u.id WHERE t.id=?""", (task_id,)).fetchone()
-    db.close()
-    return task_row(row)
+    updates = task.model_dump(exclude_unset=True)
+    with db() as conn:
+        current = conn.execute("SELECT status, progress FROM tasks WHERE id=?", (task_id,)).fetchone()
+        if not current:
+            raise HTTPException(404, "Task not found")
+        updates = normalise_task_status(updates, dict(current))
+        if "is_recurring" in updates:
+            updates["is_recurring"] = int(updates["is_recurring"])
+        if updates:
+            updates["updated_at"] = now_stamp()
+            conn.execute(f"UPDATE tasks SET {', '.join(f'{k}=?' for k in updates)} WHERE id=?",
+                         [*updates.values(), task_id])
+        return fetch_task(conn, task_id)
+
 
 @app.delete("/api/tasks/{task_id}")
 def delete_task(task_id: int):
-    db = get_db()
-    db.execute("DELETE FROM tasks WHERE id=?", (task_id,))
-    db.commit(); db.close()
+    with db() as conn:
+        conn.execute("DELETE FROM tasks WHERE id=?", (task_id,))
     return {"ok": True}
+
 
 @app.post("/api/tasks/{task_id}/auto-plan")
 def auto_plan(task_id: int):
-    db = get_db()
-    row = db.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
-    if not row: db.close(); raise HTTPException(404, "Task not found")
-    task = dict(row)
-    due = task.get("due_date")
-    hrs = task.get("estimated_hours") or 4
-    if not due: db.close(); return {"plan":[],"message":"Set a due date first."}
-    due_dt = datetime.strptime(due,"%Y-%m-%d").date()
-    days = (due_dt - date.today()).days
-    if days <= 0: db.close(); return {"plan":[],"message":"Due date is today or past — start immediately!"}
-    sessions = max(1, int(hrs/3))
-    sd = min(sessions, days)
-    plan = []
-    if sd <= 1:
-        plan = [{"date":due,"hours":round(hrs,1),"milestone":f"Complete: {task['title']}"}]
-    else:
-        interval = max(1, days//sd)
-        for i in range(sd):
-            plan.append({"date":(date.today()+timedelta(days=i*interval)).isoformat(),"hours":round(hrs/sd,1),"milestone":f"Session {i+1}/{sd} — {int((i+1)/sd*100)}% complete"})
-    db.execute("UPDATE tasks SET planned_start_date=?,planned_end_date=?,updated_at=datetime('now','localtime') WHERE id=?",(plan[0]["date"],plan[-1]["date"],task_id))
-    db.commit(); db.close()
-    return {"plan":plan,"planned_start_date":plan[0]["date"],"planned_end_date":plan[-1]["date"],"message":f"Plan: {sd} session(s) across {days} days"}
+    """Spread the estimated hours into study sessions between today and the due date."""
+    with db() as conn:
+        task = dict(conn.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone() or {})
+        if not task:
+            raise HTTPException(404, "Task not found")
+        due = task.get("due_date")
+        if not due:
+            return {"plan": [], "message": "Set a due date first."}
+        hrs = task.get("estimated_hours") or 4
+        days = (date.fromisoformat(due) - date.today()).days
+        if days <= 0:
+            return {"plan": [], "message": "This is due today or already past — start now."}
+        sessions = min(max(1, round(hrs / 2)), days)       # ~2 hour sessions
+        step = days / sessions
+        plan = []
+        for i in range(sessions):
+            day = date.today() + timedelta(days=int(i * step))
+            plan.append({"date": day.isoformat(), "hours": round(hrs / sessions, 1),
+                         "label": f"Session {i + 1} of {sessions}",
+                         "target": int((i + 1) / sessions * 100)})
+        conn.execute("UPDATE tasks SET planned_start_date=?, planned_end_date=?, updated_at=? WHERE id=?",
+                     (plan[0]["date"], plan[-1]["date"], now_stamp(), task_id))
+        return {"plan": plan, "planned_start_date": plan[0]["date"], "planned_end_date": plan[-1]["date"],
+                "message": f"{sessions} session{'s' if sessions > 1 else ''} over {days} days"}
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # CATEGORIES
@@ -432,239 +638,294 @@ def auto_plan(task_id: int):
 
 @app.get("/api/categories")
 def list_categories():
-    db = get_db()
-    rows = db.execute("SELECT * FROM categories ORDER BY id").fetchall()
-    db.close()
-    return [dict(r) for r in rows]
+    with db() as conn:
+        return [dict(r) for r in conn.execute("SELECT * FROM categories ORDER BY id")]
+
 
 @app.post("/api/categories")
 def create_category(cat: CategoryCreate):
-    db = get_db()
-    try:
-        cur = db.execute("INSERT INTO categories (name,color,icon) VALUES (?,?,?)",(cat.name,cat.color,cat.icon))
-        db.commit()
-        row = db.execute("SELECT * FROM categories WHERE id=?",(cur.lastrowid,)).fetchone()
-        db.close(); return dict(row)
-    except sqlite3.IntegrityError: db.close(); raise HTTPException(400,"Name exists")
+    with db() as conn:
+        cur = conn.execute("INSERT INTO categories (name, color) VALUES (?,?)", (cat.name.strip(), cat.color))
+        return dict(conn.execute("SELECT * FROM categories WHERE id=?", (cur.lastrowid,)).fetchone())
+
 
 @app.delete("/api/categories/{cat_id}")
 def delete_category(cat_id: int):
-    db = get_db()
-    db.execute("DELETE FROM categories WHERE id=?",(cat_id,))
-    db.commit(); db.close()
-    return {"ok":True}
+    with db() as conn:
+        conn.execute("DELETE FROM categories WHERE id=?", (cat_id,))
+    return {"ok": True}
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # JOB APPLICATIONS
 # ═══════════════════════════════════════════════════════════════════════════
 
+JOB_ORDER = ("CASE status WHEN 'interviewing' THEN 0 WHEN 'phone_screen' THEN 1 WHEN 'offer' THEN 2 "
+             "WHEN 'applied' THEN 3 WHEN 'accepted' THEN 4 WHEN 'rejected' THEN 5 ELSE 6 END")
+
+
 @app.get("/api/jobs")
 def list_jobs(status: Optional[str] = None, priority: Optional[str] = None, search: Optional[str] = None):
-    db = get_db()
-    q = "SELECT * FROM job_applications WHERE 1=1"
-    p = []
+    where, params = [], []
     if status:
-        for s in status.split(","): q += " AND status=?"; p.append(s)
-    if priority: q += " AND priority=?"; p.append(priority)
-    if search: q += " AND (company LIKE ? OR role LIKE ?)"; p.extend([f"%{search}%",f"%{search}%"])
-    q += " ORDER BY CASE status WHEN 'interviewing' THEN 0 WHEN 'phone_screen' THEN 1 WHEN 'applied' THEN 2 WHEN 'offer' THEN 3 WHEN 'accepted' THEN 4 WHEN 'rejected' THEN 5 WHEN 'withdrawn' THEN 6 END, updated_at DESC"
-    rows = db.execute(q, p).fetchall()
-    db.close()
-    return [dict(r) for r in rows]
+        statuses = [s for s in status.split(",") if s]
+        where.append(f"status IN ({','.join('?' * len(statuses))})")
+        params += statuses
+    if priority:
+        where.append("priority=?")
+        params.append(priority)
+    if search:
+        where.append("(company LIKE ? OR role LIKE ?)")
+        params += [f"%{search}%"] * 2
+    q = "SELECT * FROM job_applications" + (" WHERE " + " AND ".join(where) if where else "")
+    q += f" ORDER BY {JOB_ORDER}, updated_at DESC"
+    with db() as conn:
+        return [dict(r) for r in conn.execute(q, params)]
+
 
 @app.get("/api/jobs/stats")
 def job_stats():
-    db = get_db()
-    counts = {}
-    for s in ['applied','phone_screen','interviewing','offer','accepted','rejected','withdrawn']:
-        counts[s] = db.execute("SELECT COUNT(*) FROM job_applications WHERE status=?",(s,)).fetchone()[0]
-    total = sum(counts.values())
-    db.close()
-    return {"total": total, "by_status": counts}
+    with db() as conn:
+        counts = {s: 0 for s in JobStatus.__args__}
+        for r in conn.execute("SELECT status, COUNT(*) AS n FROM job_applications GROUP BY status"):
+            counts[r["status"]] = r["n"]
+        follow_ups = conn.execute("""SELECT COUNT(*) FROM job_applications
+            WHERE follow_up_date IS NOT NULL AND follow_up_date <= ?
+              AND status IN ('applied','phone_screen','interviewing','offer')""", (today(),)).fetchone()[0]
+    return {"total": sum(counts.values()), "by_status": counts, "follow_ups_due": follow_ups}
+
 
 @app.post("/api/jobs")
 def create_job(job: JobCreate):
-    db = get_db()
-    now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    cur = db.execute("""INSERT INTO job_applications (company,role,status,applied_date,follow_up_date,notes,url,salary_range,contact_name,contact_email,priority,created_at,updated_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        (job.company,job.role,job.status,job.applied_date,job.follow_up_date,job.notes,job.url,job.salary_range,job.contact_name,job.contact_email,job.priority,now,now))
-    db.commit()
-    row = db.execute("SELECT * FROM job_applications WHERE id=?",(cur.lastrowid,)).fetchone()
-    db.close()
-    return dict(row)
+    data = job.model_dump()
+    data["created_at"] = data["updated_at"] = now_stamp()
+    cols = list(data)
+    with db() as conn:
+        cur = conn.execute(f"INSERT INTO job_applications ({','.join(cols)}) VALUES ({','.join('?' * len(cols))})",
+                           [data[c] for c in cols])
+        return dict(conn.execute("SELECT * FROM job_applications WHERE id=?", (cur.lastrowid,)).fetchone())
+
 
 @app.put("/api/jobs/{job_id}")
 def update_job(job_id: int, job: JobUpdate):
-    db = get_db()
-    if not db.execute("SELECT id FROM job_applications WHERE id=?",(job_id,)).fetchone():
-        db.close(); raise HTTPException(404,"Not found")
-    updates = {k:v for k,v in job.model_dump(exclude_unset=True).items()}
-    if updates:
-        updates["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M")
-        db.execute(f"UPDATE job_applications SET {', '.join(f'{k}=?' for k in updates)} WHERE id=?", list(updates.values())+[job_id])
-        db.commit()
-    row = db.execute("SELECT * FROM job_applications WHERE id=?",(job_id,)).fetchone()
-    db.close()
-    return dict(row)
+    updates = job.model_dump(exclude_unset=True)
+    with db() as conn:
+        require(conn, "job_applications", job_id, "Application")
+        if updates:
+            updates["updated_at"] = now_stamp()
+            conn.execute(f"UPDATE job_applications SET {', '.join(f'{k}=?' for k in updates)} WHERE id=?",
+                         [*updates.values(), job_id])
+        return dict(conn.execute("SELECT * FROM job_applications WHERE id=?", (job_id,)).fetchone())
+
 
 @app.delete("/api/jobs/{job_id}")
 def delete_job(job_id: int):
-    db = get_db()
-    db.execute("DELETE FROM job_applications WHERE id=?",(job_id,))
-    db.commit(); db.close()
-    return {"ok":True}
+    with db() as conn:
+        conn.execute("DELETE FROM job_applications WHERE id=?", (job_id,))
+    return {"ok": True}
+
 
 # ═══════════════════════════════════════════════════════════════════════════
-# FINANCE — TRANSACTIONS & BUDGETS
+# FINANCE
 # ═══════════════════════════════════════════════════════════════════════════
 
 @app.get("/api/transactions")
 def list_transactions(month: Optional[str] = None, category: Optional[str] = None, type: Optional[str] = None):
-    db = get_db()
-    q = "SELECT * FROM transactions WHERE 1=1"
-    p = []
-    if month:
-        q += " AND strftime('%Y-%m', date) = ?"; p.append(month)
-    else:
-        q += " AND strftime('%Y-%m', date) = ?"; p.append(date.today().strftime("%Y-%m"))
-    if category: q += " AND category=?"; p.append(category)
-    if type: q += " AND type=?"; p.append(type)
-    q += " ORDER BY date DESC, id DESC"
-    rows = db.execute(q, p).fetchall()
-    db.close()
-    return [dict(r) for r in rows]
+    start, end = month_range(month_or_current(month))
+    where, params = ["date >= ? AND date < ?"], [start, end]
+    if category:
+        where.append("category=?")
+        params.append(category)
+    if type:
+        where.append("type=?")
+        params.append(type)
+    with db() as conn:
+        return [dict(r) for r in conn.execute(
+            f"SELECT * FROM transactions WHERE {' AND '.join(where)} ORDER BY date DESC, id DESC", params)]
+
 
 @app.post("/api/transactions")
 def create_transaction(tx: TransactionCreate):
-    db = get_db()
-    cur = db.execute("INSERT INTO transactions (type,amount,category,description,date,recurring) VALUES (?,?,?,?,?,?)",
-        (tx.type,tx.amount,tx.category,tx.description,tx.date,int(tx.recurring)))
-    db.commit()
-    row = db.execute("SELECT * FROM transactions WHERE id=?",(cur.lastrowid,)).fetchone()
-    db.close()
-    return dict(row)
+    with db() as conn:
+        cur = conn.execute(
+            "INSERT INTO transactions (type, amount, category, description, date, recurring) VALUES (?,?,?,?,?,?)",
+            (tx.type, round(tx.amount, 2), tx.category.strip(), tx.description.strip(), tx.date, int(tx.recurring)))
+        return dict(conn.execute("SELECT * FROM transactions WHERE id=?", (cur.lastrowid,)).fetchone())
+
 
 @app.delete("/api/transactions/{tx_id}")
 def delete_transaction(tx_id: int):
-    db = get_db()
-    db.execute("DELETE FROM transactions WHERE id=?",(tx_id,))
-    db.commit(); db.close()
-    return {"ok":True}
+    with db() as conn:
+        conn.execute("DELETE FROM transactions WHERE id=?", (tx_id,))
+    return {"ok": True}
+
 
 @app.get("/api/budgets")
-def list_budgets():
-    db = get_db()
-    month = date.today().strftime("%Y-%m")
-    rows = db.execute("""SELECT b.*, COALESCE(SUM(t.amount),0) as spent
-        FROM budgets b LEFT JOIN transactions t ON t.category=b.category AND t.type='expense' AND strftime('%Y-%m',t.date)=?
-        GROUP BY b.id ORDER BY b.id""", (month,)).fetchall()
-    db.close()
-    return [dict(r) for r in rows]
+def list_budgets(month: Optional[str] = None):
+    start, end = month_range(month_or_current(month))
+    with db() as conn:
+        return [dict(r) for r in conn.execute("""
+            SELECT b.*, COALESCE(SUM(t.amount), 0) AS spent
+            FROM budgets b LEFT JOIN transactions t
+              ON t.category = b.category AND t.type = 'expense' AND t.date >= ? AND t.date < ?
+            GROUP BY b.id ORDER BY b.category COLLATE NOCASE""", (start, end))]
+
 
 @app.post("/api/budgets")
 def create_budget(b: BudgetCreate):
-    db = get_db()
-    try:
-        cur = db.execute("INSERT INTO budgets (category,monthly_limit,icon,color) VALUES (?,?,?,?)",(b.category,b.monthly_limit,b.icon,b.color))
-        db.commit()
-        row = db.execute("SELECT * FROM budgets WHERE id=?",(cur.lastrowid,)).fetchone()
-        db.close(); return dict(row)
-    except sqlite3.IntegrityError: db.close(); raise HTTPException(400,"Budget category exists")
+    with db() as conn:
+        cur = conn.execute("INSERT INTO budgets (category, monthly_limit, color) VALUES (?,?,?)",
+                           (b.category.strip(), b.monthly_limit, b.color))
+        row = dict(conn.execute("SELECT * FROM budgets WHERE id=?", (cur.lastrowid,)).fetchone())
+    row["spent"] = 0
+    return row
+
 
 @app.put("/api/budgets/{budget_id}")
 def update_budget(budget_id: int, b: BudgetCreate):
-    db = get_db()
-    db.execute("UPDATE budgets SET category=?,monthly_limit=?,icon=?,color=? WHERE id=?",(b.category,b.monthly_limit,b.icon,b.color,budget_id))
-    db.commit()
-    row = db.execute("SELECT * FROM budgets WHERE id=?",(budget_id,)).fetchone()
-    db.close()
-    return dict(row) if row else None
+    with db() as conn:
+        old = conn.execute("SELECT category FROM budgets WHERE id=?", (budget_id,)).fetchone()
+        if not old:
+            raise HTTPException(404, "Budget not found")
+        new_name = b.category.strip()
+        conn.execute("UPDATE budgets SET category=?, monthly_limit=?, color=? WHERE id=?",
+                     (new_name, b.monthly_limit, b.color, budget_id))
+        # Renaming a budget keeps its past transactions attached to it
+        if old["category"] != new_name:
+            conn.execute("UPDATE transactions SET category=? WHERE category=?", (new_name, old["category"]))
+        return dict(conn.execute("SELECT * FROM budgets WHERE id=?", (budget_id,)).fetchone())
+
 
 @app.delete("/api/budgets/{budget_id}")
 def delete_budget(budget_id: int):
-    db = get_db()
-    db.execute("DELETE FROM budgets WHERE id=?",(budget_id,))
-    db.commit(); db.close()
-    return {"ok":True}
+    with db() as conn:
+        conn.execute("DELETE FROM budgets WHERE id=?", (budget_id,))
+    return {"ok": True}
+
 
 @app.get("/api/finance/stats")
 def finance_stats(month: Optional[str] = None):
-    if not month: month = date.today().strftime("%Y-%m")
-    db = get_db()
-    income = db.execute("SELECT COALESCE(SUM(amount),0) FROM transactions WHERE type='income' AND strftime('%Y-%m',date)=?",(month,)).fetchone()[0]
-    expenses = db.execute("SELECT COALESCE(SUM(amount),0) FROM transactions WHERE type='expense' AND strftime('%Y-%m',date)=?",(month,)).fetchone()[0]
-    by_cat = db.execute("SELECT category, SUM(amount) as total FROM transactions WHERE type='expense' AND strftime('%Y-%m',date)=? GROUP BY category ORDER BY total DESC",(month,)).fetchall()
-    budget_total = db.execute("SELECT COALESCE(SUM(monthly_limit),0) FROM budgets").fetchone()[0]
-    db.close()
-    return {"income":income,"expenses":expenses,"balance":income-expenses,"budget_total":budget_total,
-            "by_category":[dict(r) for r in by_cat]}
+    start, end = month_range(month_or_current(month))
+    with db() as conn:
+        totals = conn.execute("""
+            SELECT COALESCE(SUM(CASE WHEN type='income' THEN amount END), 0) AS income,
+                   COALESCE(SUM(CASE WHEN type='expense' THEN amount END), 0) AS expenses
+            FROM transactions WHERE date >= ? AND date < ?""", (start, end)).fetchone()
+        by_cat = conn.execute("""SELECT category, SUM(amount) AS total FROM transactions
+            WHERE type='expense' AND date >= ? AND date < ? GROUP BY category ORDER BY total DESC""",
+                              (start, end)).fetchall()
+        budget_total = conn.execute("SELECT COALESCE(SUM(monthly_limit), 0) FROM budgets").fetchone()[0]
+    income, expenses = totals["income"], totals["expenses"]
+    return {"income": income, "expenses": expenses, "balance": income - expenses,
+            "budget_total": budget_total, "by_category": [dict(r) for r in by_cat]}
+
 
 # ═══════════════════════════════════════════════════════════════════════════
-# STATS (extended)
+# STATS
 # ═══════════════════════════════════════════════════════════════════════════
 
 @app.get("/api/stats")
 def get_stats():
-    db = get_db()
-    auto_update_overdue(db)
-    today = date.today().isoformat()
-    wl = (date.today()+timedelta(days=7)).isoformat()
-    total = db.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
-    completed = db.execute("SELECT COUNT(*) FROM tasks WHERE status='completed'").fetchone()[0]
-    ip = db.execute("SELECT COUNT(*) FROM tasks WHERE status='in_progress'").fetchone()[0]
-    ov = db.execute("SELECT COUNT(*) FROM tasks WHERE status='overdue'").fetchone()[0]
-    ns = db.execute("SELECT COUNT(*) FROM tasks WHERE status='not_started'").fetchone()[0]
-    dt = db.execute("SELECT COUNT(*) FROM tasks WHERE due_date=? AND status!='completed'",(today,)).fetchone()[0]
-    dw = db.execute("SELECT COUNT(*) FROM tasks WHERE due_date BETWEEN ? AND ? AND status!='completed'",(today,wl)).fetchone()[0]
-    cr = round((completed/total*100),1) if total else 0
-    cb = db.execute("SELECT c.name,c.color,COUNT(t.id) as count FROM categories c LEFT JOIN tasks t ON t.category_id=c.id GROUP BY c.id ORDER BY count DESC").fetchall()
-    pb = db.execute("SELECT priority,COUNT(*) as count FROM tasks WHERE status!='completed' GROUP BY priority").fetchall()
-    # Subject breakdown
-    sb = db.execute("SELECT s.name,s.color,COUNT(t.id) as count FROM subjects s LEFT JOIN tasks t ON t.subject_id=s.id GROUP BY s.id ORDER BY count DESC").fetchall()
-    # Grade distribution
-    gd = db.execute("SELECT target_grade,COUNT(*) as count FROM tasks WHERE target_grade!='' AND status!='completed' GROUP BY target_grade").fetchall()
-    db.close()
-    return {"total":total,"completed":completed,"in_progress":ip,"overdue":ov,"not_started":ns,
-            "due_today":dt,"due_this_week":dw,"completion_rate":cr,
-            "category_breakdown":[dict(r) for r in cb],"priority_breakdown":[dict(r) for r in pb],
-            "subject_breakdown":[dict(r) for r in sb],"grade_distribution":[dict(r) for r in gd]}
+    t = today()
+    week = (date.today() + timedelta(days=7)).isoformat()
+    with db() as conn:
+        s = conn.execute("""
+            SELECT COUNT(*) AS total,
+              SUM(status='completed') AS completed,
+              SUM(status='in_progress') AS in_progress,
+              SUM(status='not_started') AS not_started,
+              SUM(due_date < :t AND status != 'completed') AS overdue,
+              SUM(due_date = :t AND status != 'completed') AS due_today,
+              SUM(due_date BETWEEN :t AND :w AND status != 'completed') AS due_this_week
+            FROM tasks""", {"t": t, "w": week}).fetchone()
+        cb = conn.execute("""SELECT c.name, c.color, COUNT(t.id) AS count FROM categories c
+            LEFT JOIN tasks t ON t.category_id = c.id GROUP BY c.id ORDER BY count DESC""").fetchall()
+        pb = conn.execute("""SELECT priority, COUNT(*) AS count FROM tasks
+            WHERE status != 'completed' GROUP BY priority""").fetchall()
+        sb = conn.execute("""SELECT s.name, s.color, COUNT(t.id) AS count FROM subjects s
+            LEFT JOIN tasks t ON t.subject_id = s.id GROUP BY s.id ORDER BY count DESC""").fetchall()
+        gd = conn.execute("""SELECT target_grade, COUNT(*) AS count FROM tasks
+            WHERE target_grade != '' AND status != 'completed' GROUP BY target_grade""").fetchall()
+    stats = {k: (s[k] or 0) for k in s.keys()}
+    stats["completion_rate"] = round(stats["completed"] / stats["total"] * 100, 1) if stats["total"] else 0
+    stats.update(category_breakdown=[dict(r) for r in cb], priority_breakdown=[dict(r) for r in pb],
+                 subject_breakdown=[dict(r) for r in sb], grade_distribution=[dict(r) for r in gd])
+    return stats
+
 
 # ═══════════════════════════════════════════════════════════════════════════
-# SERVE FRONTEND + PWA
+# SETTINGS (appearance etc.) — kept in the database so they survive restarts
+# ═══════════════════════════════════════════════════════════════════════════
+
+class Appearance(BaseModel):
+    theme: Literal["sunset", "midnight", "cobalt", "ocean", "berry", "graphite"] = "sunset"
+    font: Literal["rounded", "modern", "expressive", "techy", "classic"] = "rounded"
+    mode: Literal["system", "light", "dark"] = "system"
+
+
+@app.get("/api/settings/appearance")
+def get_appearance():
+    with db() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key='appearance'").fetchone()
+    if row:
+        try:
+            return Appearance.model_validate_json(row["value"]).model_dump()
+        except Exception:
+            pass
+    return Appearance().model_dump()
+
+
+@app.put("/api/settings/appearance")
+def set_appearance(a: Appearance):
+    with db() as conn:
+        conn.execute("INSERT INTO settings (key, value) VALUES ('appearance', ?) "
+                     "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (a.model_dump_json(),))
+    return a.model_dump()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# BACKUP
+# ═══════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/export")
+def export_all():
+    """Everything in one JSON file, for backups."""
+    with db() as conn:
+        out = {"app": APP_NAME, "version": APP_VERSION, "exported_at": now_stamp()}
+        for table in ("categories", "subjects", "units", "tasks", "job_applications", "transactions", "budgets", "settings"):
+            out[table] = [dict(r) for r in conn.execute(f"SELECT * FROM {table}")]
+    return out
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# FRONTEND
 # ═══════════════════════════════════════════════════════════════════════════
 
 @app.get("/")
 def index():
-    return FileResponse(BASE / "static" / "index.html")
+    return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-cache"})
+
 
 @app.get("/manifest.json")
 def manifest():
+    sizes = [16, 32, 48, 64, 128, 192, 256, 512]
     return {
-        "name": "LifePlanner",
-        "short_name": "LifePlanner",
-        "description": "Student planner, job tracker & finance manager",
-        "start_url": "/",
-        "display": "standalone",
-        "background_color": "#0f1117",
-        "theme_color": "#6366f1",
-        "icons": [
-            {"src":"/static/icon-16.png","sizes":"16x16","type":"image/png"},
-            {"src":"/static/icon-32.png","sizes":"32x32","type":"image/png"},
-            {"src":"/static/icon-48.png","sizes":"48x48","type":"image/png"},
-            {"src":"/static/icon-64.png","sizes":"64x64","type":"image/png"},
-            {"src":"/static/icon-128.png","sizes":"128x128","type":"image/png"},
-            {"src":"/static/icon-192.png","sizes":"192x192","type":"image/png"},
-            {"src":"/static/icon-256.png","sizes":"256x256","type":"image/png"},
-            {"src":"/static/icon-512.png","sizes":"512x512","type":"image/png"}
-        ]
+        "name": APP_NAME, "short_name": APP_NAME,
+        "description": "Student planner, job tracker and money manager",
+        "start_url": "/", "display": "standalone",
+        "background_color": "#FFF7F2", "theme_color": "#D2461A",
+        "icons": [{"src": f"/static/icon-{n}.png", "sizes": f"{n}x{n}", "type": "image/png"} for n in sizes],
     }
 
-app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
 
-# ── Main ───────────────────────────────────────────────────────────────────
+app.mount("/static", StaticFiles(directory=STATIC), name="static")
+
 
 if __name__ == "__main__":
     import uvicorn
-    print(f"\n  📚 LifePlanner v2 — http://localhost:8585\n")
-    uvicorn.run(app, host="0.0.0.0", port=8585, log_level="info")
+    port = int(os.environ.get("PORT", 8585))
+    # 127.0.0.1 keeps your data private to this computer.
+    # Set TRACKADEMIC_HOST=0.0.0.0 only if you deliberately want other devices to reach it.
+    host = os.environ.get("TRACKADEMIC_HOST", "127.0.0.1")
+    print(f"\n  {APP_NAME} {APP_VERSION} — http://127.0.0.1:{port}\n  Data: {DB_PATH}\n")
+    uvicorn.run(app, host=host, port=port, log_level="info")
