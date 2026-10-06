@@ -13,7 +13,7 @@ sys.path.insert(0, ROOT)
 
 @pytest.fixture()
 def c(tmp_path, monkeypatch):
-    monkeypatch.setenv("LIFEPLANNER_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("TRACKADEMIC_DATA_DIR", str(tmp_path))
     import app as A
     importlib.reload(A)
     return TestClient(A.app)
@@ -68,4 +68,13 @@ def test_full_flow(c):
     ap = c.post(f"/api/tasks/{c.get('/api/tasks').json()[-1]['id']}/auto-plan").json()
     assert "plan" in ap, ap["message"]
     assert "tasks" in c.get("/api/export").json(), "export"
-    assert c.get("/api/info").json()["data_file"].startswith(os.environ["LIFEPLANNER_DATA_DIR"]), "db in data dir"
+    assert c.get("/api/info").json()["data_file"].startswith(os.environ["TRACKADEMIC_DATA_DIR"]), "db in data dir"
+
+
+def test_appearance_settings(c):
+    assert c.get("/api/settings/appearance").json() == {"theme": "sunset", "font": "rounded", "mode": "system"}
+    r = c.put("/api/settings/appearance", json={"theme": "midnight", "font": "techy", "mode": "dark"})
+    assert r.status_code == 200
+    assert c.get("/api/settings/appearance").json()["theme"] == "midnight"
+    assert c.put("/api/settings/appearance", json={"theme": "rainbow"}).status_code == 422
+    assert c.get("/api/info").json()["name"] == "Trackademic"

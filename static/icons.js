@@ -39,8 +39,11 @@ function icon(name, size = 18, extraClass = '') {
   return `<svg class="ic ${extraClass}" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
 }
 
-/* Brand mark: a calendar page with a check — drawn, not an emoji */
-const BRAND_MARK = `<svg viewBox="0 0 32 32" width="30" height="30" aria-hidden="true">
-  <rect x="2" y="2" width="28" height="28" rx="8" fill="var(--accent)"/>
-  <path d="M10 16.5l4 4 8-9" fill="none" stroke="var(--accent-ink)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+/* Brand mark: a check that turns into an upward trend — drawn in the active theme's gradient */
+const BRAND_MARK = `<svg viewBox="0 0 32 32" width="32" height="32" aria-hidden="true">
+  <defs><linearGradient id="bm-g" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" style="stop-color:var(--grad-a)"/><stop offset="1" style="stop-color:var(--grad-b)"/></linearGradient></defs>
+  <rect x="1.5" y="1.5" width="29" height="29" rx="9" fill="url(#bm-g)"/>
+  <path d="M8.5 16.5l4.5 4.5 10-10.5" fill="none" stroke="var(--accent-ink)" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M18.5 10.5h5v5" fill="none" stroke="var(--accent-ink)" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>`;

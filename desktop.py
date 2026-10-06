@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""LifePlanner desktop app — runs the local server and opens it in a native window.
+"""Trackademic desktop app — runs the local server and opens it in a native window.
 
 Uses pywebview, which picks the right engine for each system:
   Windows -> Edge WebView2 (built into Windows 10/11)
@@ -83,7 +83,7 @@ def main():
         width=1280,
         height=820,
         min_size=(380, 600),
-        background_color="#F4F1EA",
+        background_color="#FFF7F2",
         text_select=True,
     )
     webview.start(private_mode=False)

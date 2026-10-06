@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════
-   LifePlanner — frontend
+   Trackademic — frontend
    Plain JavaScript, no build step. One state object, render on change.
    ═══════════════════════════════════════════════════════════════ */
 'use strict';
@@ -72,12 +72,17 @@ async function api(path, { method = 'GET', body } = {}) {
 }
 
 async function loadAll() {
-  const [tasks, categories, subjects, jobs, info] = await Promise.all([
+  const [tasks, categories, subjects, jobs, info, appearance] = await Promise.all([
     api('/api/tasks'), api('/api/categories'), api('/api/subjects'), api('/api/jobs'), api('/api/info'),
+    api('/api/settings/appearance').catch(() => null),
   ]);
+  // The database copy is the source of truth (localStorage only avoids a flash on start-up)
+  if (appearance && JSON.stringify(appearance) !== JSON.stringify(window.__appearance)) {
+    saveAppearanceLocal(applyAppearance(appearance));
+    $('.brand-mark').innerHTML = BRAND_MARK;
+  }
   Object.assign(state, { tasks, categories, subjects, jobs, info });
-  document.title = info.name || 'LifePlanner';
-  $$('[data-app-name]').forEach(el => (el.textContent = info.name || 'LifePlanner'));
+  document.title = info.name || 'Trackademic';
   await loadMoney();
 }
 
@@ -520,25 +525,53 @@ const VIEWS = {
   },
 
   settings() {
-    setHeader('Settings');
-    const theme = document.documentElement.dataset.theme || 'system';
-    const opt = (k, label, ic) => `<button class="${theme === k ? 'on' : ''}" data-action="set-theme" data-value="${k}">${icon(ic, 15)}${label}</button>`;
+    setHeader('Settings', 'Make it yours');
+    const ap = window.__appearance || DEFAULT_APPEARANCE;
+    const dark = document.documentElement.dataset.mode === 'dark';
+    const mode = (k, label, ic) => `<button class="${ap.mode === k ? 'on' : ''}" data-action="set-appearance" data-key="mode" data-value="${k}">${icon(ic, 15)}${label}</button>`;
     $('#content').innerHTML = `
       <div class="settings">
         <h2>Appearance</h2>
         <div class="card">
-          <div class="setting"><div><div class="setting-title">Theme</div><div class="setting-desc">Match your computer, or pick one.</div></div>
-            <div class="segmented">${opt('system', 'System', 'monitor')}${opt('light', 'Light', 'sun')}${opt('dark', 'Dark', 'moon')}</div></div>
+          <div class="appearance">
+            <div class="preview-strip">
+              <span class="preview-title">Your week at a glance</span>
+              <span class="pill accent">3 due today</span>
+              <button class="btn btn-primary btn-sm" type="button" tabindex="-1">${icon('plus', 15)}New task</button>
+            </div>
+            <div class="appearance-head"><div><div class="setting-title">Light or dark</div><div class="setting-desc">System follows your computer's setting.</div></div>
+              <div class="segmented">${mode('system', 'System', 'monitor')}${mode('light', 'Light', 'sun')}${mode('dark', 'Dark', 'moon')}</div></div>
+          </div>
+          <div class="appearance">
+            <div class="appearance-head"><div class="setting-title">Colour theme</div><span class="small muted">${esc(THEMES[ap.theme]?.name || '')}</span></div>
+            <div class="picker" role="radiogroup" aria-label="Colour theme">${Object.entries(THEMES).map(([k, t]) => {
+              const c = dark ? t.dark : t.light;
+              return `<button class="pick ${ap.theme === k ? 'on' : ''}" role="radio" aria-checked="${ap.theme === k}" data-action="set-appearance" data-key="theme" data-value="${k}"
+                  style="--pa:${c.a};--pb:${c.b};--pbg:${dark ? `hsl(${t.hue} ${t.sat * 0.5}% 10%)` : '#fff'}">
+                <span class="pick-swatch"><i></i><i style="opacity:.7"></i></span>
+                <div class="pick-name">${esc(t.name)}${k === DEFAULT_APPEARANCE.theme ? ' <span class="muted small">· default</span>' : ''}</div>
+              </button>`;
+            }).join('')}</div>
+          </div>
+          <div class="appearance">
+            <div class="appearance-head"><div class="setting-title">Text style</div><span class="small muted">${esc(FONTS[ap.font]?.name || '')}</span></div>
+            <div class="picker fonts" role="radiogroup" aria-label="Text style">${Object.entries(FONTS).map(([k, f]) => `
+              <button class="pick ${ap.font === k ? 'on' : ''}" role="radio" aria-checked="${ap.font === k}" data-action="set-appearance" data-key="font" data-value="${k}">
+                <span class="pick-aa" style="font-family:'${f.display}';font-weight:${f.weight};letter-spacing:${f.track}">Aa</span>
+                <div class="pick-name" style="font-family:'${f.body}'">${esc(f.name)}${k === DEFAULT_APPEARANCE.font ? ' <span class="muted small">· default</span>' : ''}</div>
+                <div class="pick-sub">${esc(f.sample)}</div>
+              </button>`).join('')}</div>
+          </div>
         </div>
         <h2>Your data</h2>
         <div class="card">
-          <div class="setting"><div><div class="setting-title">Saved on this computer</div><div class="setting-desc">${esc(state.info.data_file || '')}</div></div>${icon('database', 20)}</div>
+          <div class="setting"><div><div class="setting-title">Saved on this computer</div><div class="setting-desc path">${esc(state.info.data_file || '')}</div></div>${icon('database', 20)}</div>
           <div class="setting"><div><div class="setting-title">Back up</div><div class="setting-desc">${plural(state.tasks.length, 'task')}, ${plural(state.jobs.length, 'application')}, ${state.subjects.length} subjects</div></div>
             ${btn('export', 'Download backup', 'download', 'btn-ghost btn-sm keep-label')}</div>
         </div>
         <h2>About</h2>
         <div class="card">
-          <div class="setting"><div><div class="setting-title">${esc(state.info.name || 'LifePlanner')} ${esc(state.info.version || '')}</div><div class="setting-desc">Student planner, job tracker and money manager</div></div></div>
+          <div class="setting"><div><div class="setting-title">${esc(state.info.name || 'Trackademic')} ${esc(state.info.version || '')}</div><div class="setting-desc">Student planner, job tracker and money manager</div></div></div>
           <div class="setting"><div><div class="setting-title">Made by Mysteryman4k</div><div class="setting-desc">© 2026 Mysteryman4k. All rights reserved.</div></div>
             <a class="link" href="https://github.com/Mysteryman4k/lifeplanner" target="_blank" rel="noopener">GitHub ${icon('external', 14)}</a></div>
         </div>
@@ -906,11 +939,16 @@ const ACTIONS = {
     $$('.swatch', form).forEach(s => { const on = s === el; s.classList.toggle('on', on); s.setAttribute('aria-checked', on); });
   },
 
-  'set-theme'(el) {
-    const v = el.dataset.value;
-    if (v === 'system') delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = v;
-    try { v === 'system' ? localStorage.removeItem('lp-theme') : localStorage.setItem('lp-theme', v); } catch (_) {}
+  async 'set-appearance'(el) {
+    const next = applyAppearance({ ...window.__appearance, [el.dataset.key]: el.dataset.value });
+    saveAppearanceLocal(next);
+    $('.brand-mark').innerHTML = BRAND_MARK;
+    const scroll = $('#content').scrollTop;
+    $('#content').classList.add('still');
     VIEWS.settings();
+    $('#content').scrollTop = scroll;
+    try { await api('/api/settings/appearance', { method: 'PUT', body: next }); }
+    catch (e) { toast("Couldn't save your look: " + e.message, 'error'); }
   },
   async export() {
     try {
@@ -918,7 +956,7 @@ const ACTIONS = {
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = `${(state.info.name || 'lifeplanner').toLowerCase()}-backup-${todayStr()}.json`;
+      a.download = `${(state.info.name || 'trackademic').toLowerCase()}-backup-${todayStr()}.json`;
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(a.href), 2000);
       toast('Backup downloaded');
@@ -958,7 +996,7 @@ document.addEventListener('keydown', e => {
 });
 
 $('#scrim').addEventListener('click', closeDrawer);
-window.addEventListener('hashchange', () => { closeDrawer(); render(); $('#content').scrollTop = 0; });
+window.addEventListener('hashchange', () => { $('#content').classList.remove('still'); closeDrawer(); render(); $('#content').scrollTop = 0; });
 
 // Re-render when the date changes (app left open overnight) or the tab comes back
 let lastDay = todayStr();

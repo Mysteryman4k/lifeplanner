@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
-# Build:  pyinstaller LifePlanner.spec   ->  dist/LifePlanner(.exe)
-# Your data is stored in %APPDATA%\LifePlanner (Windows) or ~/.local/share/LifePlanner (Linux),
+# Build:  pyinstaller Trackademic.spec   ->  dist/Trackademic(.exe)
+# Your data is stored in %APPDATA%\Trackademic (Windows) or ~/.local/share/Trackademic (Linux),
 # so it is kept between launches and updates.
 
 a = Analysis(
@@ -22,11 +22,11 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='LifePlanner',
+    name='Trackademic',
     debug=False,
     strip=False,
     upx=True,
     runtime_tmpdir=None,
     console=False,
-    icon=['static/icon.png'],
+    icon=['static/icon.ico'],
 )

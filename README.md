@@ -1,4 +1,4 @@
-# LifePlanner
+# Trackademic
 
 A personal planner for students: assignments and study tasks, job applications and monthly money, all in one place. It runs on your own computer, needs no account and keeps your data offline.
 
@@ -11,7 +11,8 @@ A personal planner for students: assignments and study tasks, job applications a
 - **Subjects**: your units with their weeks or topics and open task counts
 - **Jobs**: a board from Applied to Offer, follow-up reminders and a list of closed applications
 - **Money**: money in and out by month, budgets with progress bars and remaining amounts
-- **Settings**: light, dark or system theme, and a one-click JSON backup
+- **Make it yours**: 6 colour themes (Sunset is the default), 5 text styles, and light, dark or system mode
+- **Backup**: one-click JSON export of everything
 
 ## Run it
 
@@ -39,17 +40,17 @@ On Windows the desktop window uses Microsoft Edge WebView2, which is built into 
 
 | System  | Location |
 |---------|----------|
-| Windows | `%APPDATA%\LifePlanner\planner.db` |
-| macOS   | `~/Library/Application Support/LifePlanner/planner.db` |
-| Linux   | `~/.local/share/LifePlanner/planner.db` |
+| Windows | `%APPDATA%\Trackademic\planner.db` |
+| macOS   | `~/Library/Application Support/Trackademic/planner.db` |
+| Linux   | `~/.local/share/Trackademic/planner.db` |
 
-Set `LIFEPLANNER_DATA_DIR` to use a different folder. If an older version left a `planner.db` next to `app.py`, it's copied across automatically the first time you run this version.
+Set `TRACKADEMIC_DATA_DIR` to use a different folder. Data from earlier versions, saved under the old LifePlanner name or next to `app.py`, is copied across automatically the first time you run this version.
 
 ## Build a standalone app
 
 ```bash
 pip install -r requirements-dev.txt
-pyinstaller LifePlanner.spec          # output: dist/LifePlanner(.exe)
+pyinstaller Trackademic.spec          # output: dist/Trackademic(.exe)
 ```
 
 ## Tests
@@ -65,16 +66,21 @@ pytest -q
 app.py              FastAPI backend + SQLite (all API routes)
 desktop.py          Opens the app in a native window (pywebview)
 static/index.html   Page shell
-static/styles.css   Design system (colours, type, components, light/dark)
+static/theme.js     Colour themes, text styles and light/dark (applied before first paint)
+static/styles.css   Components and layout, all driven by theme variables
 static/app.js       Views, forms and state
 static/icons.js     Line icons and the logo
-static/fonts/       Manrope + Instrument Serif (SIL Open Font License)
+static/fonts/       Outfit, Plus Jakarta Sans, Bricolage Grotesque, DM Sans, Space Grotesk, Fraunces (SIL Open Font License)
 tests/              API tests
 ```
 
+## Adding a colour theme or text style
+
+Add an entry to `THEMES` or `FONTS` in `static/theme.js`, then add its key to the `Appearance` model in `app.py`. Font files go in `static/fonts/` with an `@font-face` rule at the top of `styles.css`. Then run `node tools/check_contrast.js`: text needs at least 4.5:1 contrast against its background.
+
 ## Renaming the app
 
-Change `APP_NAME` and `APP_SLUG` at the top of `app.py`. The window title, page title and sidebar all read it from there. Changing `APP_SLUG` also changes the data folder name, so move your `planner.db` across when you do.
+Change `APP_NAME` and `APP_SLUG` at the top of `app.py`, add the old slug to `PREVIOUS_SLUGS` so existing data is carried over, and update the logo text in `static/index.html`.
 
 ---
 

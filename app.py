@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-LifePlanner — student planner, job tracker and finance manager.
+Trackademic — student planner, job tracker and money manager.
 FastAPI backend + SQLite database.
 
 Run directly:  python app.py        (serves on http://127.0.0.1:8585)
@@ -21,35 +21,52 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
 # ── App identity (change the name here when renaming the app) ─────────────
-APP_NAME = "LifePlanner"
-APP_SLUG = "LifePlanner"          # folder name used for user data
-APP_VERSION = "3.0.0"
+APP_NAME = "Trackademic"
+APP_SLUG = "Trackademic"          # folder name used for user data
+APP_VERSION = "3.1.0"
+PREVIOUS_SLUGS = ["LifePlanner"]  # data folders of earlier names, migrated automatically
 
 BASE = Path(__file__).resolve().parent
 STATIC = BASE / "static"
 
 
+def _user_data_root() -> Path:
+    if os.name == "nt":
+        return Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support"
+    return Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+
+
 def data_dir() -> Path:
     """Per-user folder that survives updates and the packaged .exe being closed."""
-    override = os.environ.get("LIFEPLANNER_DATA_DIR")
-    if override:
-        base = Path(override)
-    elif os.name == "nt":
-        base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming")) / APP_SLUG
-    elif sys.platform == "darwin":
-        base = Path.home() / "Library" / "Application Support" / APP_SLUG
-    else:
-        base = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / APP_SLUG
+    override = os.environ.get("TRACKADEMIC_DATA_DIR") or os.environ.get("LIFEPLANNER_DATA_DIR")
+    base = Path(override) if override else _user_data_root() / APP_SLUG
     base.mkdir(parents=True, exist_ok=True)
     return base
 
 
 DB_PATH = data_dir() / "planner.db"
 
-# One-time move of a database created by older versions (stored next to app.py)
-_legacy = BASE / "planner.db"
-if _legacy.exists() and not DB_PATH.exists():
-    shutil.copy2(_legacy, DB_PATH)
+
+def _migrate_old_data():
+    """Bring across data from earlier versions (old app name, or stored next to app.py)."""
+    if DB_PATH.exists():
+        return
+    candidates = [_user_data_root() / slug / "planner.db" for slug in PREVIOUS_SLUGS] + [BASE / "planner.db"]
+    for old in candidates:
+        if old.exists() and old.stat().st_size > 0:
+            src = sqlite3.connect(str(old))
+            dst = sqlite3.connect(str(DB_PATH))
+            with dst:
+                src.backup(dst)          # safe copy even if the old file is in WAL mode
+            src.close()
+            dst.close()
+            return
+
+
+if not (os.environ.get("TRACKADEMIC_DATA_DIR") or os.environ.get("LIFEPLANNER_DATA_DIR")):
+    _migrate_old_data()
 
 app = FastAPI(title=APP_NAME, version=APP_VERSION)
 
@@ -161,6 +178,10 @@ def init_db():
                 date TEXT NOT NULL,
                 recurring INTEGER DEFAULT 0,
                 created_at TEXT DEFAULT (datetime('now','localtime'))
+            );
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS budgets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -833,6 +854,36 @@ def get_stats():
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# SETTINGS (appearance etc.) — kept in the database so they survive restarts
+# ═══════════════════════════════════════════════════════════════════════════
+
+class Appearance(BaseModel):
+    theme: Literal["sunset", "midnight", "cobalt", "ocean", "berry", "graphite"] = "sunset"
+    font: Literal["rounded", "modern", "expressive", "techy", "classic"] = "rounded"
+    mode: Literal["system", "light", "dark"] = "system"
+
+
+@app.get("/api/settings/appearance")
+def get_appearance():
+    with db() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key='appearance'").fetchone()
+    if row:
+        try:
+            return Appearance.model_validate_json(row["value"]).model_dump()
+        except Exception:
+            pass
+    return Appearance().model_dump()
+
+
+@app.put("/api/settings/appearance")
+def set_appearance(a: Appearance):
+    with db() as conn:
+        conn.execute("INSERT INTO settings (key, value) VALUES ('appearance', ?) "
+                     "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (a.model_dump_json(),))
+    return a.model_dump()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # BACKUP
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -841,7 +892,7 @@ def export_all():
     """Everything in one JSON file, for backups."""
     with db() as conn:
         out = {"app": APP_NAME, "version": APP_VERSION, "exported_at": now_stamp()}
-        for table in ("categories", "subjects", "units", "tasks", "job_applications", "transactions", "budgets"):
+        for table in ("categories", "subjects", "units", "tasks", "job_applications", "transactions", "budgets", "settings"):
             out[table] = [dict(r) for r in conn.execute(f"SELECT * FROM {table}")]
     return out
 
@@ -862,7 +913,7 @@ def manifest():
         "name": APP_NAME, "short_name": APP_NAME,
         "description": "Student planner, job tracker and money manager",
         "start_url": "/", "display": "standalone",
-        "background_color": "#f4f1ea", "theme_color": "#2f5d50",
+        "background_color": "#FFF7F2", "theme_color": "#D2461A",
         "icons": [{"src": f"/static/icon-{n}.png", "sizes": f"{n}x{n}", "type": "image/png"} for n in sizes],
     }
 
@@ -874,7 +925,7 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8585))
     # 127.0.0.1 keeps your data private to this computer.
-    # Set LIFEPLANNER_HOST=0.0.0.0 only if you deliberately want other devices to reach it.
-    host = os.environ.get("LIFEPLANNER_HOST", "127.0.0.1")
+    # Set TRACKADEMIC_HOST=0.0.0.0 only if you deliberately want other devices to reach it.
+    host = os.environ.get("TRACKADEMIC_HOST", "127.0.0.1")
     print(f"\n  {APP_NAME} {APP_VERSION} — http://127.0.0.1:{port}\n  Data: {DB_PATH}\n")
     uvicorn.run(app, host=host, port=port, log_level="info")
