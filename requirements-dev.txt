@@ -3,3 +3,5 @@
 pytest>=8
 httpx>=0.27
 pyinstaller>=6
+ruff>=0.6
+playwright>=1.45      # browser smoke tests (then: python -m playwright install chromium)

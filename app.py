@@ -7,9 +7,9 @@ Run directly:  python app.py        (serves on http://127.0.0.1:8585)
 Desktop app:   python desktop.py
 """
 import os
-import shutil
 import sqlite3
 import sys
+import threading
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -20,14 +20,17 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
+import updater
+
 # ── App identity (change the name here when renaming the app) ─────────────
 APP_NAME = "Trackademic"
 APP_SLUG = "Trackademic"          # folder name used for user data
-APP_VERSION = "3.1.0"
 PREVIOUS_SLUGS = ["LifePlanner"]  # data folders of earlier names, migrated automatically
 
 BASE = Path(__file__).resolve().parent
 STATIC = BASE / "static"
+# The version lives in one place: the VERSION file (bumped with tools/bump_version.py)
+APP_VERSION = (BASE / "VERSION").read_text(encoding="utf-8").strip() if (BASE / "VERSION").exists() else "0.0.0"
 
 
 def _user_data_root() -> Path:
@@ -93,7 +96,7 @@ def db():
         conn.commit()
     except sqlite3.IntegrityError as e:
         conn.rollback()
-        raise HTTPException(400, _friendly_integrity(e))
+        raise HTTPException(400, _friendly_integrity(e)) from e
     except Exception:
         conn.rollback()
         raise
@@ -157,7 +160,8 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 company TEXT NOT NULL,
                 role TEXT NOT NULL,
-                status TEXT DEFAULT 'applied' CHECK(status IN ('applied','phone_screen','interviewing','offer','accepted','rejected','withdrawn')),
+                status TEXT DEFAULT 'applied' CHECK(status IN ('applied','phone_screen','interviewing',
+                                                          'offer','accepted','rejected','withdrawn')),
                 applied_date TEXT,
                 follow_up_date TEXT,
                 notes TEXT DEFAULT '',
@@ -245,7 +249,7 @@ def _check_date(v):
     try:
         return date.fromisoformat(v).isoformat()
     except (TypeError, ValueError):
-        raise ValueError("Use a date in YYYY-MM-DD format")
+        raise ValueError("Use a date in YYYY-MM-DD format") from None
 
 
 class DatesMixin(BaseModel):
@@ -397,7 +401,7 @@ def month_or_current(month: Optional[str]) -> str:
     try:
         datetime.strptime(month, "%Y-%m")
     except ValueError:
-        raise HTTPException(400, "Month must look like YYYY-MM")
+        raise HTTPException(400, "Month must look like YYYY-MM") from None
     return month
 
 
@@ -431,7 +435,8 @@ def normalise_task_status(values: dict, current: Optional[dict] = None):
 
 @app.get("/api/info")
 def info():
-    return {"name": APP_NAME, "version": APP_VERSION, "data_file": str(DB_PATH), "today": today()}
+    return {"name": APP_NAME, "version": APP_VERSION, "data_file": str(DB_PATH), "today": today(),
+            "installed": updater.is_installed_build()}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -881,6 +886,63 @@ def set_appearance(a: Appearance):
         conn.execute("INSERT INTO settings (key, value) VALUES ('appearance', ?) "
                      "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (a.model_dump_json(),))
     return a.model_dump()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# UPDATES — checks GitHub Releases; the installed Windows app can update itself
+# ═══════════════════════════════════════════════════════════════════════════
+
+class UpdateSettings(BaseModel):
+    auto_check: bool = True
+
+
+def _get_setting(key, model):
+    with db() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+    try:
+        return model.model_validate_json(row["value"]) if row else model()
+    except Exception:
+        return model()
+
+
+@app.get("/api/settings/updates")
+def get_update_settings():
+    return _get_setting("updates", UpdateSettings).model_dump()
+
+
+@app.put("/api/settings/updates")
+def set_update_settings(u: UpdateSettings):
+    with db() as conn:
+        conn.execute("INSERT INTO settings (key, value) VALUES ('updates', ?) "
+                     "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (u.model_dump_json(),))
+    return u.model_dump()
+
+
+@app.get("/api/update/check")
+def update_check(force: bool = False):
+    """force=true is a manual "Check now"; otherwise respects the auto-check setting."""
+    if not force and not _get_setting("updates", UpdateSettings).auto_check:
+        return {"current": APP_VERSION, "available": False, "disabled": True}
+    return updater.check(APP_VERSION, force=force)
+
+
+@app.post("/api/update/install")
+def update_install():
+    if not updater.is_installed_build():
+        raise HTTPException(400, "Automatic updates only work in the installed Windows app. "
+                                 "Download the new version from the release page instead.")
+    status = updater.check(APP_VERSION)
+    latest = updater.latest_cached()
+    if not status.get("available") or not latest:
+        raise HTTPException(400, "You're already on the latest version.")
+    try:
+        path = updater.download_installer(latest)
+    except Exception as e:
+        raise HTTPException(502, f"Couldn't download the update: {e}") from e
+    updater.run_installer(path)
+    # Give the response time to reach the window, then quit so the installer can replace files
+    threading.Timer(1.5, lambda: os._exit(0)).start()
+    return {"ok": True, "version": latest["version"]}
 
 
 # ═══════════════════════════════════════════════════════════════════════════

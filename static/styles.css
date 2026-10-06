@@ -386,6 +386,28 @@ a.tile:hover { border-color: var(--line-strong); transform: translateY(-1px); }
 .preview-strip { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 14px 16px; border-radius: var(--r); background: var(--surface-2); }
 .preview-strip .preview-title { font-family: var(--display); font-weight: var(--display-weight); letter-spacing: var(--display-track); font-size: 22px; flex: 1; min-width: 160px; }
 
+/* ── Updates ──────────────────────────────────────────── */
+.update-banner {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 14px 40px 0; padding: 9px 10px 9px 16px;
+  border-radius: var(--r); background: var(--surface); box-shadow: inset 0 0 0 1px var(--accent-line), var(--shadow-sm);
+  font-size: 13.5px; animation: rise .3s var(--ease);
+}
+.update-banner[hidden] { display: none; }
+.update-banner .spacer { flex: 1; }
+.update-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--grad); box-shadow: 0 0 0 4px var(--accent-soft); }
+.release-notes { margin-top: 8px; font-size: 13.5px; color: var(--ink-2); max-height: 260px; overflow-y: auto; }
+.release-notes h4 { font-size: 12px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 10px 0 4px; }
+.release-notes ul { padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
+.switch { width: 44px; height: 26px; border-radius: 99px; background: var(--line-strong); position: relative; flex-shrink: 0; transition: background .2s; }
+.switch i { position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff; box-shadow: var(--shadow-sm); transition: transform .2s var(--ease); }
+.switch.on { background: var(--grad); }
+.switch.on i { transform: translateX(18px); }
+.update-overlay { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; background: color-mix(in srgb, var(--bg) 70%, transparent); backdrop-filter: blur(6px); }
+.update-overlay[hidden] { display: none; }
+.update-overlay .dialog { text-align: center; }
+.spinner { width: 34px; height: 34px; margin: 4px auto 14px; border-radius: 50%; border: 3px solid var(--accent-soft); border-top-color: var(--accent-text); animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
 /* ── Drawer ───────────────────────────────────────────── */
 .scrim { position: fixed; inset: 0; background: rgba(20, 18, 12, .32); backdrop-filter: blur(2px); z-index: 40; animation: fade .2s; }
 .drawer {
@@ -436,6 +458,7 @@ a.tile:hover { border-color: var(--line-strong); transform: translateY(-1px); }
 }
 @media (max-width: 1024px) {
   :root { --sidebar-w: 72px; }
+  .update-banner { margin: 12px 28px 0; }
   .brand-name, .nav-label, .nav-item > span, .nav-count { display: none; }
   .brand { justify-content: center; padding: 0 0 18px; }
   .nav-item { justify-content: center; padding: 10px; }
@@ -481,6 +504,7 @@ a.tile:hover { border-color: var(--line-strong); transform: translateY(-1px); }
   .input-icon { max-width: none; min-width: 100%; }
   .toolbar .select { flex: 1; min-width: 0; }
   .toast { bottom: calc(84px + env(safe-area-inset-bottom)); }
+  .update-banner { margin: calc(10px + env(safe-area-inset-top)) 16px 0; }
   .tx .icon-btn, .unit .icon-btn, .budget-actions { opacity: 1; }
   .setting { padding: 14px 16px; flex-wrap: wrap; }
   .appearance { padding: 16px; gap: 18px; }
