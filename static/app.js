@@ -46,6 +46,7 @@ const state = {
   taskFilter: 'open', taskSearch: '', taskSubject: '', taskPriority: '',
   calMonth: todayStr().slice(0, 7), calSel: todayStr(),
   drawer: null,
+  update: null, updateSettings: { auto_check: true }, updateDismissed: false, checkingUpdate: false,
 };
 
 // ── API ───────────────────────────────────────────────────────────
@@ -569,6 +570,8 @@ const VIEWS = {
           <div class="setting"><div><div class="setting-title">Back up</div><div class="setting-desc">${plural(state.tasks.length, 'task')}, ${plural(state.jobs.length, 'application')}, ${state.subjects.length} subjects</div></div>
             ${btn('export', 'Download backup', 'download', 'btn-ghost btn-sm keep-label')}</div>
         </div>
+        <h2>Updates</h2>
+        <div class="card">${updatesCard()}</div>
         <h2>About</h2>
         <div class="card">
           <div class="setting"><div><div class="setting-title">${esc(state.info.name || 'Trackademic')} ${esc(state.info.version || '')}</div><div class="setting-desc">Student planner, job tracker and money manager</div></div></div>
@@ -598,6 +601,81 @@ function nextStage(status) {
   const order = ['applied', 'phone_screen', 'interviewing', 'offer', 'accepted'];
   const i = order.indexOf(status);
   return order[Math.min(i + 1, order.length - 1)];
+}
+
+// ── Updates ───────────────────────────────────────────────────────
+async function checkForUpdates(force) {
+  state.checkingUpdate = force;
+  if (force && route() === 'settings') VIEWS.settings();
+  try {
+    const [settings, update] = await Promise.all([
+      api('/api/settings/updates'), api('/api/update/check' + (force ? '?force=true' : '')),
+    ]);
+    state.updateSettings = settings;
+    state.update = update;
+    if (force && !update.available) toast(update.error || `You're on the latest version (${update.current})`, update.error ? 'error' : '');
+  } catch (e) {
+    if (force) toast(e.message, 'error');
+  } finally {
+    state.checkingUpdate = false;
+  }
+  renderUpdateBanner();
+  if (route() === 'settings') { $('#content').classList.add('still'); VIEWS.settings(); }
+}
+
+function renderUpdateBanner() {
+  const u = state.update;
+  const el = $('#updateBanner');
+  if (!u || !u.available || state.updateDismissed) { el.hidden = true; return; }
+  el.hidden = false;
+  el.innerHTML = `
+    <span class="update-dot" aria-hidden="true"></span>
+    <span><strong>Trackademic ${esc(u.latest)}</strong> is available <span class="muted">· you have ${esc(u.current)}</span></span>
+    <span class="spacer"></span>
+    <a class="link" href="#/settings">What's new</a>
+    ${u.can_install ? `<button class="btn btn-primary btn-sm keep-label" data-action="install-update">${icon('download', 15)}Update now</button>`
+      : `<a class="btn btn-primary btn-sm keep-label" href="${esc(u.url)}" target="_blank" rel="noopener">${icon('download', 15)}Download</a>`}
+    <button class="icon-btn sm" data-action="dismiss-update" aria-label="Hide until next launch">${icon('x', 15)}</button>`;
+}
+
+function releaseNotesHtml(md) {
+  // Release notes come from CHANGELOG.md: render headings and bullet points as plain, escaped text
+  const lines = (md || '').split('\n').map(l => l.trimEnd()).filter(Boolean).slice(0, 40);
+  let html = '', inList = false;
+  for (const l of lines) {
+    const bullet = l.match(/^[-*]\s+(.*)/);
+    const heading = l.match(/^#{1,6}\s+(.*)/);
+    if (bullet) { if (!inList) { html += '<ul>'; inList = true; } html += `<li>${esc(bullet[1].replace(/`/g, ''))}</li>`; continue; }
+    if (inList) { html += '</ul>'; inList = false; }
+    html += heading ? `<h4>${esc(heading[1])}</h4>` : `<p>${esc(l)}</p>`;
+  }
+  return html + (inList ? '</ul>' : '');
+}
+
+function updatesCard() {
+  const u = state.update || {};
+  const current = state.info.version || '';
+  const status = state.checkingUpdate ? 'Checking…'
+    : u.available ? (u.can_install ? `Version ${esc(u.latest)} is ready to install` : `Version ${esc(u.latest)} is available`)
+    : u.error ? esc(u.error)
+    : u.latest ? `You're up to date`
+    : 'Not checked yet';
+  return `
+    <div class="setting"><div><div class="setting-title">Version ${esc(current)}</div><div class="setting-desc">${status}</div></div>
+      ${btn('check-updates', state.checkingUpdate ? 'Checking…' : 'Check now', 'refresh', 'btn-ghost btn-sm keep-label', state.checkingUpdate ? 'disabled' : '')}</div>
+    ${u.available ? `
+      <div class="setting release-notes-wrap"><div style="flex:1">
+        <div class="setting-title">What's new in ${esc(u.latest)}</div>
+        <div class="release-notes">${releaseNotesHtml(u.notes)}</div>
+        <div class="toolbar" style="margin:14px 0 0">
+          ${u.can_install ? btn('install-update', 'Update now', 'download', 'btn-primary btn-sm keep-label')
+            : `<a class="btn btn-primary btn-sm keep-label" href="${esc(u.url)}" target="_blank" rel="noopener">${icon('download', 15)}Download from GitHub</a>
+               <span class="small muted">${state.info.installed ? '' : 'Automatic install works in the installed Windows app.'}</span>`}
+        </div></div></div>` : ''}
+    <div class="setting"><div><div class="setting-title">Check for updates automatically</div>
+      <div class="setting-desc">Looks for new versions on GitHub when the app opens. Nothing about you or your data is sent.</div></div>
+      <button class="switch ${state.updateSettings.auto_check ? 'on' : ''}" role="switch" aria-checked="${state.updateSettings.auto_check}"
+        data-action="toggle-auto-update" aria-label="Check for updates automatically"><i></i></button></div>`;
 }
 
 // ── Drawer (forms) ────────────────────────────────────────────────
@@ -796,12 +874,13 @@ function upsert(list, item) {
 }
 
 // ── Confirm, toast, celebrate ─────────────────────────────────────
-function confirmDialog(title, text, yes = 'Delete') {
+function confirmDialog(title, text, yes = 'Delete', style = 'danger') {
   return new Promise(resolve => {
     const wrap = $('#confirm');
     $('#confirmTitle').textContent = title;
     $('#confirmText').textContent = text;
     $('#confirmYes').textContent = yes;
+    $('#confirmYes').className = `btn ${style === 'danger' ? 'btn-danger' : 'btn-primary'}`;
     wrap.hidden = false;
     $('#confirmNo').focus();
     const done = v => { wrap.hidden = true; wrap.onclick = null; document.removeEventListener('keydown', onKey, true); resolve(v); };
@@ -962,6 +1041,27 @@ const ACTIONS = {
       toast('Backup downloaded');
     } catch (e) { toast(e.message, 'error'); }
   },
+  'check-updates': () => checkForUpdates(true),
+  'dismiss-update': () => { state.updateDismissed = true; renderUpdateBanner(); },
+  async 'toggle-auto-update'() {
+    const next = { auto_check: !state.updateSettings.auto_check };
+    try {
+      state.updateSettings = await api('/api/settings/updates', { method: 'PUT', body: next });
+      $('#content').classList.add('still'); VIEWS.settings();
+    } catch (e) { toast(e.message, 'error'); }
+  },
+  async 'install-update'() {
+    const u = state.update;
+    if (!(await confirmDialog(`Update to ${u.latest}?`, 'Trackademic will close, install the update and open again. It takes about a minute.', 'Update now', 'primary'))) return;
+    $('#updateOverlay').hidden = false;
+    try {
+      await api('/api/update/install', { method: 'POST' });
+      // The app closes itself once the installer starts
+    } catch (e) {
+      $('#updateOverlay').hidden = true;
+      toast(e.message, 'error');
+    }
+  },
   'close-drawer': closeDrawer,
 };
 
@@ -1016,4 +1116,5 @@ setInterval(() => { if (todayStr() !== lastDay) { lastDay = todayStr(); render()
     return;
   }
   render();
+  checkForUpdates(false);
 })();

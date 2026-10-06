@@ -24,6 +24,7 @@
   </aside>
 
   <div class="main">
+    <div class="update-banner" id="updateBanner" hidden></div>
     <header class="topbar">
       <div class="topbar-titles">
         <p class="eyebrow" id="eyebrow"></p>
@@ -55,6 +56,14 @@
       <button class="btn btn-ghost" id="confirmNo">Cancel</button>
       <button class="btn btn-danger" id="confirmYes">Delete</button>
     </div>
+  </div>
+</div>
+
+<div class="update-overlay" id="updateOverlay" hidden>
+  <div class="dialog" role="alertdialog" aria-live="assertive">
+    <div class="spinner" aria-hidden="true"></div>
+    <h3>Installing update</h3>
+    <p>Trackademic will close, update and open again by itself. Your data is safe.</p>
   </div>
 </div>
 

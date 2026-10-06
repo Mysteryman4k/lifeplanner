@@ -1,0 +1,94 @@
+name: Tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_call:          # the Release workflow runs these tests before building
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: API tests (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, python: "3.11" }
+          - { os: ubuntu-latest, python: "3.12" }
+          - { os: ubuntu-latest, python: "3.13" }
+          - { os: windows-latest, python: "3.12" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest httpx ruff
+      - name: Lint
+        run: ruff check .
+      - name: Test
+        run: pytest -m "not ui"
+
+  frontend:
+    name: Frontend checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: JavaScript syntax
+        run: for f in static/*.js tools/*.js; do node --check "$f"; done
+      - name: Colour contrast for every theme
+        run: node tools/check_contrast.js
+
+  ui:
+    name: Browser smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - name: Install
+        run: |
+          pip install -r requirements.txt pytest httpx playwright
+          python -m playwright install --with-deps chromium
+      - name: Test every screen in a real browser
+        run: pytest -m ui
+
+  package:
+    name: Windows build check
+    runs-on: windows-latest
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - name: Install
+        run: pip install -r requirements-dev.txt
+      - name: Build the app folder
+        run: pyinstaller --noconfirm Trackademic.spec
+      - name: Check the build contains the app files
+        shell: pwsh
+        run: |
+          foreach ($f in "dist/Trackademic/Trackademic.exe", "dist/Trackademic/_internal/static/index.html", "dist/Trackademic/_internal/VERSION") {
+            if (-not (Test-Path $f)) { throw "Missing from build: $f" }
+          }

@@ -17,6 +17,17 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, APP_DIR)
 
 
+def _redirect_output_when_windowed():
+    """The packaged app has no console (sys.stdout is None), which crashes uvicorn's logging.
+    Send output to a log file in the data folder instead — handy for bug reports too."""
+    if sys.stdout is not None and sys.stderr is not None:
+        return
+    from app import DB_PATH
+    log = open(DB_PATH.parent / "trackademic.log", "a", encoding="utf-8", buffering=1)
+    sys.stdout = sys.stdout or log
+    sys.stderr = sys.stderr or log
+
+
 def free_port(preferred: int = 8585) -> int:
     """Use the usual port if it's free, otherwise any free port (avoids clashing with another app)."""
     for port in (preferred, 0):
@@ -32,7 +43,7 @@ def free_port(preferred: int = 8585) -> int:
 def start_server(port: int):
     import uvicorn
     from app import app
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", use_colors=False)
     uvicorn.Server(config).run()
 
 
@@ -60,7 +71,9 @@ def run_in_browser(url: str):
 
 
 def main():
-    from app import APP_NAME
+    _redirect_output_when_windowed()
+    from app import APP_NAME, APP_VERSION
+    print(f"--- {APP_NAME} {APP_VERSION} starting {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
     port = free_port()
     url = f"http://127.0.0.1:{port}/"
