@@ -21,7 +21,7 @@ jobs:
     needs: tests
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Check the tag matches the VERSION file
         id: version
@@ -32,7 +32,7 @@ jobs:
           if ($version -ne $tag) { throw "Tag v$tag doesn't match VERSION ($version). Run tools/bump_version.py first." }
           "version=$version" >> $env:GITHUB_OUTPUT
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
