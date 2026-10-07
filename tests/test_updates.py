@@ -97,3 +97,19 @@ def test_update_endpoints(client):
     assert c.get("/api/update/check", params={"force": True}).json()["available"] is True
     # Self-install is refused outside the packaged Windows app
     assert c.post("/api/update/install").status_code == 400
+
+
+def test_release_notes_survive_windows_encoding(tmp_path):
+    """The Release workflow runs on Windows, whose console defaults to cp1252.
+    v3.3.0's first release failed because "→" in the changelog couldn't be encoded."""
+    import os
+    import subprocess
+    version = (ROOT / "VERSION").read_text().strip()
+    env = {**os.environ, "PYTHONIOENCODING": "cp1252", "PYTHONUTF8": "0"}
+    script = str(ROOT / "tools" / "release_notes.py")
+    printed = subprocess.run([sys.executable, script, version], env=env, capture_output=True)
+    assert printed.returncode == 0, printed.stderr.decode(errors="replace")
+    out = tmp_path / "notes.md"
+    saved = subprocess.run([sys.executable, script, version, str(out)], env=env, capture_output=True)
+    assert saved.returncode == 0, saved.stderr.decode(errors="replace")
+    assert "→" in out.read_text(encoding="utf-8") or out.read_text(encoding="utf-8").strip()

@@ -20,6 +20,8 @@ jobs:
     name: Build Windows installer
     needs: tests
     runs-on: windows-latest
+    env:
+      PYTHONUTF8: "1"       # UTF-8 everywhere, so changelog characters like "→" can't break the build
     steps:
       - uses: actions/checkout@v7
 
@@ -44,7 +46,7 @@ jobs:
           choco install innosetup -y --no-progress
 
       - name: Release notes from CHANGELOG.md
-        run: python tools/release_notes.py ${{ steps.version.outputs.version }} > release-notes.md
+        run: python tools/release_notes.py ${{ steps.version.outputs.version }} release-notes.md
 
       - name: Build the app
         run: pyinstaller --noconfirm Trackademic.spec
