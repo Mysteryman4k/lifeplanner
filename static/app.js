@@ -1138,5 +1138,6 @@ function finishIntro() {
   }
   render();
   finishIntro();
+  api('/api/diag/client-ready', { method: 'POST' }).catch(() => {});   // recorded in the log, checked by CI
   checkForUpdates(false);
 })();

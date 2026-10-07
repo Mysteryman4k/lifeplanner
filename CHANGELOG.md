@@ -6,6 +6,19 @@ PATCH for fixes. Pushing a tag like `v3.2.0` publishes that version's section as
 
 ## [Unreleased]
 
+## [3.3.1] - 2026-10-07
+
+### Fixed
+
+- The app could get stuck on the intro animation on Windows and never open. The start-up no longer waits on the window in a way that can hang
+- Safety nets: the start-up screen opens the app by itself if the hand-off is late, and the fade-in overlay can never cover the app for more than a few seconds
+- The release build no longer fails when the changelog contains characters like arrows
+
+### Added
+
+- Start-up steps are timestamped in `trackademic.log`, so any slow or stuck start can be diagnosed
+- Every release now launches the real packaged app on Windows and checks it reaches the home screen before publishing
+
 ## [3.3.0] - 2026-10-06
 
 ### Added

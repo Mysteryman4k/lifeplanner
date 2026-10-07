@@ -10,6 +10,7 @@ import os
 import sqlite3
 import sys
 import threading
+import time
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -432,6 +433,25 @@ def normalise_task_status(values: dict, current: Optional[dict] = None):
 # ═══════════════════════════════════════════════════════════════════════════
 # APP INFO
 # ═══════════════════════════════════════════════════════════════════════════
+
+# ── Start-up diagnostics: when the window actually showed the app (used by the log and CI) ──
+STARTUP = {"server_started": time.time(), "client_ready": None}
+
+
+@app.post("/api/diag/client-ready")
+def client_ready():
+    if STARTUP["client_ready"] is None:
+        STARTUP["client_ready"] = time.time()
+        print(f"App on screen {STARTUP['client_ready'] - STARTUP['server_started']:.1f}s after the server started", flush=True)
+    return get_startup_status()
+
+
+@app.get("/api/diag/startup")
+def get_startup_status():
+    ready = STARTUP["client_ready"]
+    return {"version": APP_VERSION, "client_ready": ready is not None,
+            "seconds_to_ready": round(ready - STARTUP["server_started"], 2) if ready else None}
+
 
 @app.get("/api/info")
 def info():

@@ -69,7 +69,7 @@ pytest -m "not ui"                        # just the fast API tests
 ruff check .                              # lint
 ```
 
-Every push runs the **Tests** workflow on GitHub: API tests on Linux (Python 3.11–3.13) and Windows, a lint check, JavaScript and colour-contrast checks, a real-browser smoke test of every screen, and (for `main` and pull requests) a Windows build check.
+Every push runs the **Tests** workflow on GitHub: API tests on Linux (Python 3.11–3.13) and Windows, a lint check, JavaScript and colour-contrast checks, and a real-browser smoke test of every screen. For `main` and pull requests it also builds the Windows app and **launches it for real**, checking it gets past the intro to the home screen (`tools/smoke_desktop.py`). The Release workflow runs the same start-up test on the exact build it's about to publish.
 
 ## Versions and releases
 
@@ -89,7 +89,7 @@ Pushing the tag runs the **Release** workflow, which:
 
 1. runs all the tests,
 2. checks the tag matches `VERSION`,
-3. builds the app with PyInstaller and the installer with Inno Setup,
+3. builds the app with PyInstaller, launches it and checks it opens properly, then builds the installer with Inno Setup,
 4. publishes a GitHub Release with `Trackademic-Setup-x.y.z.exe`, a portable zip, `SHA256SUMS.txt`, and that version's changelog as the release notes.
 
 Installed copies then see the update. The app only installs an update after checking its SHA-256 checksum against `SHA256SUMS.txt` from the same release, and only downloads from GitHub. Tags with a suffix like `v3.3.0-beta.1` are published as pre-releases, which the update check ignores.
@@ -115,7 +115,7 @@ static/app.js       Views, forms and state
 static/icons.js     Line icons and the logo
 static/fonts/       Outfit, Plus Jakarta Sans, Bricolage Grotesque, DM Sans, Space Grotesk, Fraunces (SIL Open Font License)
 tests/              API, update and browser smoke tests
-tools/              bump_version.py, release_notes.py, check_contrast.js
+tools/              bump_version.py, release_notes.py, check_contrast.js, smoke_desktop.py (start-up test)
 ```
 
 ## Adding a colour theme or text style

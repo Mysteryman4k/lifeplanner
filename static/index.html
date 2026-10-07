@@ -45,6 +45,12 @@
     el.hidden = false;
     // Keep the drifting background in step with the splash so the hand-off is seamless
     el.style.setProperty('--t-offset', -(Number(q.get('t')) || 0) / 1000 + 's');
+    // Safety net: never cover the app for long, even if loading data is slow or fails
+    setTimeout(function () {
+      if (el.hidden) return;
+      el.classList.add('leaving');
+      setTimeout(function () { el.hidden = true; }, 650);
+    }, 6000);
   })();
 </script>
 <div class="app" id="app">

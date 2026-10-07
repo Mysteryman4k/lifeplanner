@@ -44,12 +44,9 @@ applyAppearance({{PREF}});
   const intro = document.getElementById('intro');
   // Show a loading bar if the app takes longer than the animation
   setTimeout(() => intro.classList.add('loading'), {{BAR_AFTER_MS}});
-  // Called by desktop.py once the app is ready
-  window.finishSplash = () => { intro.classList.remove('loading'); };
-  window.splashError = (msg) => {
-    intro.classList.remove('loading');
-    document.querySelector('.intro-tag').textContent = msg || "Trackademic couldn't start";
-  };
+  // Safety net: desktop.py normally switches the window to the app. If that hasn't happened
+  // by now, go there ourselves, so start-up can never get stuck on this screen.
+  setTimeout(() => location.replace({{APP_URL_JSON}}), {{FALLBACK_MS}});
 </script>
 </body>
 </html>

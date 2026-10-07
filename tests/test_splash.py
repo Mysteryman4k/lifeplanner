@@ -45,3 +45,24 @@ def test_text_style_fonts_match_theme_js():
     for key, (family, file) in STYLE_FONTS.items():
         assert re.search(rf"{key}:\s*\{{[^}}]*display:\s*'{re.escape(family)}'", theme_js), key
         assert (STATIC / "fonts" / file).exists(), file
+
+
+def test_splash_can_rescue_itself():
+    """If the launcher never switches to the app, the splash navigates there on its own."""
+    html = build_splash_html(STATIC, {"theme": "sunset", "font": "rounded", "mode": "dark"}, True, "1.0.0",
+                             "http://127.0.0.1:9999/?from=splash#/today")
+    assert 'location.replace("http://127.0.0.1:9999/?from=splash#/today")' in html
+
+
+def test_launcher_never_waits_on_the_window_during_start_up():
+    """3.3.0 froze on Windows because evaluate_js() can block forever in WebView2.
+    The start-up path must not call it (or anything else that waits on page JavaScript)."""
+    import ast
+    tree = ast.parse((ROOT / "desktop.py").read_text(encoding="utf-8"))
+    calls = {n.func.attr for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)}
+    assert not calls & {"evaluate_js", "run_js", "get_current_url", "get_elements"}, calls
+
+
+def test_app_overlay_has_a_time_limit():
+    index = (STATIC / "index.html").read_text(encoding="utf-8")
+    assert "setTimeout(function ()" in index and "6000" in index

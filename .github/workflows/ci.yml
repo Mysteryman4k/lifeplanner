@@ -72,9 +72,11 @@ jobs:
         run: pytest -m ui
 
   package:
-    name: Windows build check
+    name: Windows build + start-up test
     runs-on: windows-latest
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    env:
+      PYTHONUTF8: "1"
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -92,3 +94,5 @@ jobs:
           foreach ($f in "dist/Trackademic/Trackademic.exe", "dist/Trackademic/_internal/static/index.html", "dist/Trackademic/_internal/VERSION") {
             if (-not (Test-Path $f)) { throw "Missing from build: $f" }
           }
+      - name: Launch the packaged app and check it gets past the intro
+        run: python tools/smoke_desktop.py --max-seconds 45 dist/Trackademic/Trackademic.exe

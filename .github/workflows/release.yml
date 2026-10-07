@@ -51,6 +51,9 @@ jobs:
       - name: Build the app
         run: pyinstaller --noconfirm Trackademic.spec
 
+      - name: Start-up test - launch the built app and check it gets past the intro
+        run: python tools/smoke_desktop.py --max-seconds 45 dist/Trackademic/Trackademic.exe
+
       - name: Build the installer
         run: iscc /DAppVersion=${{ steps.version.outputs.version }} installer\trackademic.iss
 
