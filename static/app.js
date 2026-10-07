@@ -16,9 +16,29 @@ const addDays = (s, n) => { const d = parseDate(s); d.setDate(d.getDate() + n); 
 const daysBetween = (a, b) => Math.round((parseDate(b) - parseDate(a)) / 86400000);
 const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ESC[c]);
-const AUD = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD' });
-const AUD0 = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD', maximumFractionDigits: 0 });
-const money = (n, whole = false) => (whole ? AUD0 : AUD).format(n || 0);
+// Money is shown in the user's chosen currency (Settings → Money)
+let MONEY_FMT, MONEY_FMT_WHOLE;
+function setCurrency(code) {
+  const make = (extra) => new Intl.NumberFormat(undefined, { style: 'currency', currency: code, currencyDisplay: 'narrowSymbol', ...extra });
+  try { MONEY_FMT = make({}); MONEY_FMT_WHOLE = make({ minimumFractionDigits: 0, maximumFractionDigits: 0 }); }
+  catch (_) { code = 'USD'; MONEY_FMT = make({}); MONEY_FMT_WHOLE = make({ minimumFractionDigits: 0, maximumFractionDigits: 0 }); }
+  state.currency = code;
+}
+const money = (n, whole = false) => (whole ? MONEY_FMT_WHOLE : MONEY_FMT).format(n || 0);
+const currencySymbol = () => MONEY_FMT.formatToParts(0).find(p => p.type === 'currency')?.value || state.currency;
+const currencyName = code => { try { return new Intl.DisplayNames(undefined, { type: 'currency' }).of(code); } catch (_) { return code; } };
+const POPULAR_CURRENCIES = ['AUD', 'USD', 'EUR', 'GBP', 'NZD', 'CAD', 'ZAR', 'INR', 'SGD', 'JPY', 'CNY', 'HKD', 'MYR', 'NGN', 'KES', 'PHP'];
+function currencyOptions(selected) {
+  let all = [];
+  try { all = Intl.supportedValuesOf('currency'); } catch (_) { all = POPULAR_CURRENCIES; }
+  const popular = [...new Set([selected, ...POPULAR_CURRENCIES])].filter(c => all.includes(c) || c === selected);
+  const label = c => `${c} — ${currencyName(c)}`;
+  return `<optgroup label="Common">${popular.map(c => opt(c, label(c), selected)).join('')}</optgroup>
+    <optgroup label="All currencies">${all.filter(c => !popular.includes(c)).map(c => opt(c, label(c), selected)).join('')}</optgroup>`;
+}
+// Categories offered when setting up a budget or logging spending
+const SPENDING_CATEGORIES = ['Rent', 'Groceries', 'Eating out', 'Transport', 'Bills & Utilities', 'Phone & Internet',
+  'Education', 'Health', 'Entertainment', 'Shopping', 'Other'];
 const fmt = (s, opts) => parseDate(s).toLocaleDateString('en-AU', opts);
 const shortDate = s => fmt(s, { day: 'numeric', month: 'short' });
 const longDate = s => fmt(s, { weekday: 'long', day: 'numeric', month: 'long' });
@@ -48,7 +68,10 @@ const state = {
   drawer: null,
   update: null, updateSettings: { auto_check: true }, updateDismissed: false, checkingUpdate: false,
   startup: { intro: true },
+  currency: 'USD', currencyChosen: false,
 };
+
+setCurrency('USD');   // replaced by the saved/suggested currency once settings load
 
 // ── API ───────────────────────────────────────────────────────────
 async function api(path, { method = 'GET', body } = {}) {
@@ -86,6 +109,9 @@ async function loadAll() {
   }
   Object.assign(state, { tasks, categories, subjects, jobs, info });
   document.title = info.name || 'Trackademic';
+  const moneySettings = await api('/api/settings/money').catch(() => ({ currency: 'USD', chosen: false }));
+  setCurrency(moneySettings.currency);
+  state.currencyChosen = moneySettings.chosen;
   await loadMoney();
 }
 
@@ -269,13 +295,19 @@ const VIEWS = {
             </div>
             <div class="tile-value">${activeJobs.length}</div>
           </a>
-          <a class="card tile" href="#/money">
+          ${budgetTotal ? `<a class="card tile" href="#/money">
             <div class="tile-left">
               <div class="tile-top">Left to spend</div>
               <div class="tile-note">${isThisMonth ? `of ${money(budgetTotal, true)} · ${plural(daysLeft, 'day')} left` : ''}</div>
             </div>
             <div class="tile-value ${left < 0 ? 'bad' : ''}">${left < 0 ? '−' : ''}${money(Math.abs(left), true)}</div>
-          </a>
+          </a>` : `<button class="card tile tile-cta" data-action="budget-plan">
+            <div class="tile-left">
+              <div class="tile-top">Monthly budget</div>
+              <div class="tile-note">Not set up yet</div>
+            </div>
+            <div class="tile-value tile-value-cta">Set up ${icon('arrowRight', 20)}</div>
+          </button>`}
         </div>
 
         <div class="grid-2">
@@ -479,7 +511,8 @@ const VIEWS = {
   },
 
   money() {
-    setHeader('Money', '', btn('new-budget', 'Budget', 'money', 'btn-ghost') + btn('new-tx', 'Add transaction', 'plus'));
+    setHeader('Money', `Amounts in ${state.currency} · ${currencyName(state.currency)}`,
+      btn('budget-plan', state.budgets.length ? 'Edit budgets' : 'Set up budget', 'money', 'btn-ghost') + btn('new-tx', 'Add transaction', 'plus'));
     const income = state.transactions.filter(x => x.type === 'income').reduce((s, x) => s + x.amount, 0);
     const spent = state.transactions.filter(x => x.type === 'expense').reduce((s, x) => s + x.amount, 0);
     const budgetTotal = state.budgets.reduce((s, b) => s + b.monthly_limit, 0);
@@ -497,13 +530,24 @@ const VIEWS = {
             <button class="icon-btn sm" data-action="month-shift" data-value="1" aria-label="Next month">${icon('chevronRight', 16)}</button>
           </div>
         </div>
+        ${!state.budgets.length ? `
+        <section class="card onboard">
+          <div class="onboard-icon">${icon('money', 26)}</div>
+          <div class="onboard-text">
+            <h2>Set up your monthly budget</h2>
+            <p>Pick your currency and how much you want to spend on things like rent, groceries and transport each month. Trackademic then shows what's left as you go.</p>
+          </div>
+          ${btn('budget-plan', 'Set up budget', 'arrowRight', 'btn-primary keep-label')}
+        </section>` : ''}
         <div class="tiles">
           <div class="card tile"><div class="tile-left"><div class="tile-top">Money in</div><div class="tile-note">${plural(state.transactions.filter(x => x.type === 'income').length, 'payment')}</div></div>
             <div class="tile-value">${money(income, true)}</div></div>
           <div class="card tile"><div class="tile-left"><div class="tile-top">Money out</div><div class="tile-note">${income ? `${Math.round(spent / income * 100)}% of what came in` : plural(state.transactions.filter(x => x.type === 'expense').length, 'purchase')}</div></div>
             <div class="tile-value">${money(spent, true)}</div></div>
-          <div class="card tile"><div class="tile-left"><div class="tile-top">Budget left</div><div class="tile-note">${budgetTotal ? `of ${money(budgetTotal, true)}` : 'No budgets set'}</div></div>
-            <div class="tile-value ${budgetTotal - budgetSpent < 0 ? 'bad' : ''}">${budgetTotal - budgetSpent < 0 ? '−' : ''}${money(Math.abs(budgetTotal - budgetSpent), true)}</div></div>
+          ${budgetTotal ? `<div class="card tile"><div class="tile-left"><div class="tile-top">Budget left</div><div class="tile-note">of ${money(budgetTotal, true)}</div></div>
+            <div class="tile-value ${budgetTotal - budgetSpent < 0 ? 'bad' : ''}">${budgetTotal - budgetSpent < 0 ? '−' : ''}${money(Math.abs(budgetTotal - budgetSpent), true)}</div></div>`
+          : `<button class="card tile tile-cta" data-action="budget-plan"><div class="tile-left"><div class="tile-top">Budget left</div><div class="tile-note">No budget yet</div></div>
+            <div class="tile-value tile-value-cta">Set up ${icon('arrowRight', 20)}</div></button>`}
         </div>
         <div class="grid-2">
           <section class="card card-pad">
@@ -520,8 +564,8 @@ const VIEWS = {
               : emptyState('inbox', 'Nothing this month', 'Add your pay and spending to see where your money goes.', btn('new-tx', 'Add transaction', 'plus', 'btn-ghost btn-sm keep-label'))}
           </section>
           <section class="card card-pad">
-            <div class="section-head"><h2>Budgets</h2><span class="small muted">${esc(monthLabel(state.month))}</span></div>
-            <div class="budget-list">${state.budgets.map(budgetRow).join('') || '<p class="small muted">No budgets yet.</p>'}</div>
+            <div class="section-head"><h2>Budgets</h2>${state.budgets.length ? `<button class="link" data-action="budget-plan">Edit all</button>` : ''}</div>
+            <div class="budget-list">${state.budgets.map(budgetRow).join('') || `<p class="small muted">No budgets yet. ${''}<button class="link" data-action="budget-plan">Set one up</button></p>`}</div>
           </section>
         </div>
       </div>`;
@@ -573,6 +617,13 @@ const VIEWS = {
           <div class="setting"><div><div class="setting-title">Saved on this computer</div><div class="setting-desc path">${esc(state.info.data_file || '')}</div></div>${icon('database', 20)}</div>
           <div class="setting"><div><div class="setting-title">Back up</div><div class="setting-desc">${plural(state.tasks.length, 'task')}, ${plural(state.jobs.length, 'application')}, ${state.subjects.length} subjects</div></div>
             ${btn('export', 'Download backup', 'download', 'btn-ghost btn-sm keep-label')}</div>
+        </div>
+        <h2>Money</h2>
+        <div class="card">
+          <div class="setting"><div><div class="setting-title">Currency</div><div class="setting-desc">Used for every amount in the app. Changing it relabels your amounts; it doesn't convert them.</div></div>
+            <select class="select" id="settingsCurrency" style="width:auto;max-width:280px" aria-label="Currency">${currencyOptions(state.currency)}</select></div>
+          <div class="setting"><div><div class="setting-title">Monthly budget</div><div class="setting-desc">${state.budgets.length ? `${plural(state.budgets.length, 'category', 'categories')}, ${money(state.budgets.reduce((t, b) => t + b.monthly_limit, 0), true)} a month` : 'Not set up yet'}</div></div>
+            ${btn('budget-plan', state.budgets.length ? 'Edit budgets' : 'Set up budget', 'money', 'btn-ghost btn-sm keep-label')}</div>
         </div>
         <h2>Updates</h2>
         <div class="card">${updatesCard()}</div>
@@ -697,6 +748,7 @@ function openDrawer(title, bodyHtml, footHtml, kind) {
 }
 function closeDrawer() {
   if ($('#drawer').hidden) return;
+  if (state.drawer === 'budget-plan' && state.savedCurrency) setCurrency(state.savedCurrency);
   $('#drawer').hidden = true;
   $('#scrim').hidden = true;
   state.drawer = null;
@@ -767,7 +819,8 @@ function openJob(id) {
 }
 
 function openTx(type = 'expense') {
-  const cats = type === 'income' ? INCOME_CATEGORIES : state.budgets.map(b => b.category);
+  const budgeted = state.budgets.map(b => b.category);
+  const cats = type === 'income' ? INCOME_CATEGORIES : [...budgeted, ...SPENDING_CATEGORIES.filter(c => !budgeted.includes(c))];
   const date = state.month === todayStr().slice(0, 7) ? todayStr() : state.month + '-01';
   const body = `
     <form id="drawerForm" class="form-stack" data-kind="tx" autocomplete="off">
@@ -779,7 +832,7 @@ function openTx(type = 'expense') {
       <div class="form-grid">
         ${field('Amount', `<input class="input" type="number" name="amount" min="0.01" step="0.01" required placeholder="0.00" autofocus inputmode="decimal">`)}
         ${field('Date', `<input class="input" type="date" name="date" value="${date}" required>`)}
-        ${field(type === 'income' ? 'Source' : 'Budget', `<select class="select" name="category" required>${cats.map(c => opt(c, c)).join('')}</select>`, 'span-2')}
+        ${field(type === 'income' ? 'Source' : 'Category', `<select class="select" name="category" required>${cats.map(c => opt(c, c)).join('')}</select>`, 'span-2')}
         ${field('Description', `<input class="input" name="description" placeholder="${type === 'income' ? 'e.g. Weekly pay' : 'e.g. Groceries'}" maxlength="200">`, 'span-2')}
       </div>
     </form>`;
@@ -790,6 +843,47 @@ function swatchPicker(current) {
   const c = current || SUBJECT_COLORS[0];
   return `<input type="hidden" name="color" value="${esc(c)}"><div class="swatches" role="radiogroup" aria-label="Colour">${SUBJECT_COLORS.map(col =>
     `<button type="button" class="swatch ${col.toLowerCase() === c.toLowerCase() ? 'on' : ''}" style="--c:${col}" data-action="pick-color" data-value="${col}" role="radio" aria-checked="${col.toLowerCase() === c.toLowerCase()}" aria-label="Colour ${col}"></button>`).join('')}</div>`;
+}
+
+function planRow(category, amount) {
+  return `<label class="plan-cat" data-category="${esc(category)}">
+    <span class="plan-cat-name">${esc(category)}</span>
+    <span class="money-input"><span class="money-sym" data-sym>${esc(currencySymbol())}</span>
+      <input class="input" type="number" min="0" step="1" inputmode="decimal" value="${amount === '' ? '' : esc(amount)}" placeholder="No budget" aria-label="Monthly budget for ${esc(category)}"></span>
+  </label>`;
+}
+
+/** One screen to choose a currency and set (or clear) a monthly amount for every category. */
+function openBudgetPlan() {
+  const existing = Object.fromEntries(state.budgets.map(b => [b.category, b.monthly_limit]));
+  const names = [...state.budgets.map(b => b.category), ...SPENDING_CATEGORIES.filter(c => !(c in existing))];
+  const body = `
+    <form id="drawerForm" class="form-stack" data-kind="budget-plan" autocomplete="off">
+      <p class="muted" style="margin-top:-4px">Enter how much you want to spend per month. Leave a category empty to skip it. You can change this any time.</p>
+      ${field('Currency', `<select class="select" name="currency" id="planCurrency">${currencyOptions(state.currency)}</select>`)}
+      <div class="plan-list" id="planRows">${names.map(n => planRow(n, n in existing ? existing[n] : '')).join('')}</div>
+      <div class="plan-add">
+        <input class="input" id="planNewName" placeholder="Add your own category" maxlength="60" aria-label="New category name">
+        <button class="btn btn-ghost btn-sm" type="button" data-action="plan-add-row">${icon('plus', 15)}Add</button>
+      </div>
+    </form>`;
+  state.savedCurrency = state.currency;
+  openDrawer(state.budgets.length ? 'Your monthly budget' : 'Set up your budget', body,
+    `<div class="plan-total"><span class="muted small">Total per month</span><strong id="planTotal"></strong></div>
+     <span class="spacer"></span>
+     <button class="btn btn-ghost" type="button" data-action="close-drawer">Cancel</button>
+     <button class="btn btn-primary" type="submit" form="drawerForm">Save budget</button>`, 'budget-plan');
+  const update = () => {
+    const code = $('#planCurrency').value;
+    setCurrency(code);
+    $$('#planRows [data-sym]').forEach(el => (el.textContent = currencySymbol()));
+    const total = $$('#planRows input').reduce((t, i) => t + (Number(i.value) || 0), 0);
+    $('#planTotal').textContent = money(total, true);
+  };
+  $('#drawerForm').addEventListener('input', update);
+  $('#planCurrency').addEventListener('change', update);
+  $('#planNewName').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); ACTIONS['plan-add-row'](); } });
+  update();
 }
 
 function openBudget(id) {
@@ -850,6 +944,16 @@ async function submitDrawer(form) {
       state.month = d.date.slice(0, 7);
       await loadMoney();
       toast('Transaction added');
+    } else if (kind === 'budget-plan') {
+      const items = $$('#planRows [data-category]').map(r => {
+        const v = r.querySelector('input').value.trim();
+        return { category: r.dataset.category, monthly_limit: v === '' ? null : Number(v) };
+      });
+      const money_ = await api('/api/settings/money', { method: 'PUT', body: { currency: d.currency } });
+      setCurrency(money_.currency); state.currencyChosen = true; state.savedCurrency = money_.currency;
+      await api('/api/budget-plan', { method: 'PUT', body: { items } });
+      await loadMoney();
+      toast('Budget saved');
     } else if (kind === 'budget') {
       await api(id ? `/api/budgets/${id}` : '/api/budgets', { method: id ? 'PUT' : 'POST', body: { category: d.category, monthly_limit: Number(d.monthly_limit), color: b_color(id) } });
       await loadMoney();
@@ -996,6 +1100,16 @@ const ACTIONS = {
   },
 
   'new-tx': () => openTx('expense'),
+  'budget-plan': () => openBudgetPlan(),
+  'plan-add-row'() {
+    const input = $('#planNewName');
+    const name = input.value.trim();
+    if (!name) return input.focus();
+    if ($$('#planRows [data-category]').some(r => r.dataset.category.toLowerCase() === name.toLowerCase())) { toast('That category is already in the list', 'error'); return; }
+    $('#planRows').insertAdjacentHTML('beforeend', planRow(name, ''));
+    input.value = '';
+    $(`#planRows [data-category="${CSS.escape(name)}"] input`).focus();
+  },
   'tx-type': el => openTx(el.dataset.value),
   async 'delete-tx'(el) {
     if (!(await confirmDialog('Delete this transaction?', 'It will be removed from this month\'s totals.'))) return;
@@ -1081,6 +1195,16 @@ document.addEventListener('click', e => {
   if (!el || !ACTIONS[el.dataset.action]) return;
   e.preventDefault();
   ACTIONS[el.dataset.action](el, e);
+});
+
+document.addEventListener('change', async e => {
+  if (e.target.id !== 'settingsCurrency') return;
+  try {
+    const m = await api('/api/settings/money', { method: 'PUT', body: { currency: e.target.value } });
+    setCurrency(m.currency); state.currencyChosen = true;
+    $('#content').classList.add('still'); VIEWS.settings();
+    toast(`Currency set to ${m.currency}`);
+  } catch (err) { toast(err.message, 'error'); }
 });
 
 document.addEventListener('submit', e => {

@@ -64,7 +64,7 @@ def run_once(cmd, port: int, max_seconds: float, intro: bool) -> bool:
     with open(out_path, "w", encoding="utf-8") as out:
         proc = subprocess.Popen(cmd, env=env, stdout=out, stderr=subprocess.STDOUT)
     started = time.time()
-    ok, last = False, None
+    ok, last, slow = False, None, False
     try:
         while time.time() - started < max_seconds:
             if proc.poll() is not None:
@@ -79,12 +79,15 @@ def run_once(cmd, port: int, max_seconds: float, intro: bool) -> bool:
         if ok:
             print(f"✓ App on screen after {elapsed:.1f}s (version {last['version']}, "
                   f"{last['seconds_to_ready']}s after the server started)")
+            slow = elapsed > 10
         elif proc.poll() is None:
             stage = "the server never answered" if last is None else "the server is up but the window never showed the app"
             print(f"✗ Not on screen after {max_seconds:.0f}s: {stage}")
     finally:
         kill_tree(proc)
-    if not ok:
+    if not ok or slow:
+        if slow:
+            print("  (slower than expected; start-up log below)")
         for name in ("trackademic.log", "stdout.txt"):
             f = data / name
             if f.exists() and f.read_text(encoding="utf-8", errors="replace").strip():

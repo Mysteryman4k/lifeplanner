@@ -6,6 +6,23 @@ PATCH for fixes. Pushing a tag like `v3.2.0` publishes that version's section as
 
 ## [Unreleased]
 
+## [3.4.0] - 2026-10-07
+
+### Added
+
+- Choose your currency (any currency, with the right symbol). It's pre-selected from your Windows region
+- "Set up your budget": one screen to choose your currency and set a monthly amount per category, with a live total. Add your own categories, and come back any time to change or clear amounts
+- Money settings in Settings: currency and budget
+
+### Changed
+
+- New installs start with no budget instead of a made-up $1,500. Today and Money invite you to set one up
+- Spending can be logged in any category, even without a budget for it
+
+### Fixed
+
+- Sample budgets from earlier versions are removed if you never changed them and haven't recorded any money. Anything you entered is kept
+
 ## [3.3.1] - 2026-10-07
 
 ### Fixed

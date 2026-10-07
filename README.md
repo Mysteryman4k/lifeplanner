@@ -13,7 +13,7 @@ A personal planner for students: assignments and study tasks, job applications a
 - **Calendar**: month view with tasks on each day (weeks start on Monday)
 - **Subjects**: your units with their weeks or topics and open task counts
 - **Jobs**: a board from Applied to Offer, follow-up reminders and a list of closed applications
-- **Money**: money in and out by month, budgets with progress bars and remaining amounts
+- **Money**: your own currency and monthly budget, money in and out by month, and budget bars showing what's left
 - **Make it yours**: 6 colour themes (Sunset is the default), 5 text styles, light, dark or system mode, and an animated intro (can be turned off)
 - **Backup**: one-click JSON export of everything
 

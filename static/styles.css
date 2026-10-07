@@ -359,6 +359,35 @@ a.tile:hover { border-color: var(--line-strong); transform: translateY(-1px); }
 .setting-desc.path { word-break: break-all; }
 .settings h2 { font-size: 12px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); margin: 8px 0 -6px 4px; }
 
+/* ── Money: budget set-up ─────────────────────────────── */
+.onboard { display: flex; align-items: center; gap: 18px; padding: 20px 22px; flex-wrap: wrap;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--grad-a) 9%, var(--surface)), color-mix(in srgb, var(--grad-b) 9%, var(--surface)));
+  box-shadow: inset 0 0 0 1px var(--accent-line); }
+.onboard-icon { width: 52px; height: 52px; border-radius: 14px; display: grid; place-items: center; background: var(--grad); color: var(--accent-ink); flex-shrink: 0; box-shadow: var(--glow); }
+.onboard-text { flex: 1; min-width: 220px; }
+.onboard-text h2 { font-family: var(--display); font-weight: var(--display-weight); letter-spacing: var(--display-track); font-size: 20px; margin-bottom: 2px; }
+.onboard-text p { color: var(--ink-2); font-size: 13.5px; max-width: 560px; }
+button.tile { text-align: left; cursor: pointer; width: 100%; }
+.tile-cta { border-style: dashed; border-color: var(--line-strong); background: color-mix(in srgb, var(--surface) 60%, transparent); }
+.tile-cta:hover { border-color: var(--accent-text); }
+.tile-value.tile-value-cta { font-size: 22px; display: inline-flex; align-items: center; gap: 6px; align-self: end; }
+.tile-value-cta .ic { color: var(--accent-text); }
+.plan-list { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
+.plan-cat { display: grid; grid-template-columns: minmax(0, 1fr) 160px; align-items: center; gap: 12px; padding: 8px 8px 8px 14px; cursor: text; }
+.plan-cat + .plan-cat { border-top: 1px solid var(--line); }
+.plan-cat:focus-within { background: var(--accent-soft); }
+.plan-cat-name { font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.money-input { position: relative; display: block; }
+.money-input .money-sym { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); color: var(--muted); font-weight: 700; font-size: 13px; pointer-events: none; }
+.money-input .input { padding-left: 34px; height: 36px; text-align: right; font-variant-numeric: tabular-nums; }
+.money-input .input::-webkit-outer-spin-button, .money-input .input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.money-input .input { -moz-appearance: textfield; }
+.money-input .input::placeholder { text-align: right; font-size: 12.5px; }
+.plan-add { display: flex; gap: 8px; }
+.plan-total { display: flex; flex-direction: column; line-height: 1.2; }
+.plan-total strong { font-family: var(--display); font-weight: var(--display-weight); font-size: 20px; letter-spacing: var(--display-track); }
+@media (max-width: 760px) { .plan-cat { grid-template-columns: minmax(0, 1fr) 130px; } }
+
 /* ── Appearance pickers (Settings) ────────────────────── */
 .appearance { padding: 18px 22px 22px; display: flex; flex-direction: column; gap: 22px; }
 .appearance + .appearance { border-top: 1px solid var(--line); }

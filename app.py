@@ -114,6 +114,23 @@ def _friendly_integrity(e: Exception) -> str:
     return "That value isn't allowed."
 
 
+# Earlier versions created these sample budgets for everyone (a made-up $1,500/month).
+SAMPLE_BUDGETS = {("Food & Dining", 400), ("Transport", 150), ("Entertainment", 200), ("Shopping", 250),
+                  ("Bills & Utilities", 300), ("Education", 100), ("Other", 100)}
+
+
+def _remove_untouched_sample_budgets(conn):
+    """Remove the old sample budgets, but only if they were never changed and no money has been
+    recorded, so the user sets up their own instead. Anything the user entered is kept."""
+    if conn.execute("SELECT 1 FROM settings WHERE key='migrated_sample_budgets'").fetchone():
+        return
+    rows = {(r["category"], r["monthly_limit"]) for r in conn.execute("SELECT category, monthly_limit FROM budgets")}
+    no_money = conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == 0
+    if rows == SAMPLE_BUDGETS and no_money:
+        conn.execute("DELETE FROM budgets")
+    conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('migrated_sample_budgets', 'true')")
+
+
 def init_db():
     with db() as conn:
         conn.execute("PRAGMA journal_mode=WAL")
@@ -199,10 +216,8 @@ def init_db():
             INSERT OR IGNORE INTO categories (id, name, color) VALUES
                 (1,'Assignment','#b45309'),(2,'Exam','#b91c1c'),(3,'Project','#6d28d9'),
                 (4,'Reading','#047857'),(5,'Personal','#0e7490'),(6,'Other','#57534e');
-            INSERT OR IGNORE INTO budgets (id, category, monthly_limit) VALUES
-                (1,'Food & Dining',400),(2,'Transport',150),(3,'Entertainment',200),
-                (4,'Shopping',250),(5,'Bills & Utilities',300),(6,'Education',100),(7,'Other',100);
         """)
+        _remove_untouched_sample_budgets(conn)
         # Columns added in v2
         cols = {r[1] for r in conn.execute("PRAGMA table_info(tasks)")}
         for col, ddl in [
@@ -828,6 +843,32 @@ def delete_budget(budget_id: int):
     return {"ok": True}
 
 
+class BudgetPlanItem(BaseModel):
+    category: str = Name
+    monthly_limit: Optional[float] = Field(default=None, ge=0, le=10_000_000)   # empty/0 = no budget
+
+
+class BudgetPlan(BaseModel):
+    items: list[BudgetPlanItem] = Field(max_length=100)
+
+
+@app.put("/api/budget-plan")
+def save_budget_plan(plan: BudgetPlan):
+    """Set several budgets at once (the "Set up your budget" screen).
+    A category with an amount is created or updated; one left empty or 0 is removed.
+    Past transactions are never deleted."""
+    with db() as conn:
+        for item in plan.items:
+            name = item.category.strip()
+            if item.monthly_limit:
+                conn.execute("""INSERT INTO budgets (category, monthly_limit) VALUES (?, ?)
+                                ON CONFLICT(category) DO UPDATE SET monthly_limit=excluded.monthly_limit""",
+                             (name, round(item.monthly_limit, 2)))
+            else:
+                conn.execute("DELETE FROM budgets WHERE category=?", (name,))
+    return list_budgets()
+
+
 @app.get("/api/finance/stats")
 def finance_stats(month: Optional[str] = None):
     start, end = month_range(month_or_current(month))
@@ -927,6 +968,52 @@ def _get_setting(key, model):
         return model.model_validate_json(row["value"]) if row else model()
     except Exception:
         return model()
+
+
+class MoneySettings(BaseModel):
+    currency: str = Field(default="", pattern=r"^([A-Z]{3})?$")   # ISO 4217 code; "" = not chosen yet
+
+
+def suggested_currency() -> str:
+    """Best guess from the computer's region (Windows "Region" setting, or LANG elsewhere)."""
+    region = ""
+    try:
+        if os.name == "nt":
+            import ctypes
+            buf = ctypes.create_unicode_buffer(85)
+            if ctypes.windll.kernel32.GetUserDefaultLocaleName(buf, 85):
+                region = buf.value.split("-")[-1]                 # "en-AU" -> "AU"
+        else:
+            region = (os.environ.get("LC_ALL") or os.environ.get("LC_MONETARY") or os.environ.get("LANG") or "")
+            region = region.split(".")[0].split("_")[-1] if "_" in region else ""
+    except Exception:
+        region = ""
+    return REGION_CURRENCY.get(region.upper(), "USD")
+
+
+REGION_CURRENCY = {
+    "AU": "AUD", "NZ": "NZD", "US": "USD", "GB": "GBP", "IE": "EUR", "CA": "CAD", "ZA": "ZAR", "IN": "INR",
+    "SG": "SGD", "MY": "MYR", "HK": "HKD", "CN": "CNY", "JP": "JPY", "KR": "KRW", "PH": "PHP", "ID": "IDR",
+    "NG": "NGN", "KE": "KES", "GH": "GHS", "ZW": "USD", "BW": "BWP", "NA": "NAD", "ZM": "ZMW", "AE": "AED",
+    "SA": "SAR", "PK": "PKR", "BD": "BDT", "LK": "LKR", "NP": "NPR", "VN": "VND", "TH": "THB", "BR": "BRL",
+    "MX": "MXN", "CH": "CHF", "SE": "SEK", "NO": "NOK", "DK": "DKK", "PL": "PLN",
+    **{c: "EUR" for c in ("DE", "FR", "ES", "IT", "NL", "BE", "AT", "PT", "FI", "GR", "LU", "SK", "SI",
+                          "EE", "LV", "LT", "MT", "CY", "HR")},
+}
+
+
+@app.get("/api/settings/money")
+def get_money_settings():
+    m = _get_setting("money", MoneySettings)
+    return {"currency": m.currency or suggested_currency(), "chosen": bool(m.currency)}
+
+
+@app.put("/api/settings/money")
+def set_money_settings(m: MoneySettings):
+    with db() as conn:
+        conn.execute("INSERT INTO settings (key, value) VALUES ('money', ?) "
+                     "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (m.model_dump_json(),))
+    return get_money_settings()
 
 
 @app.get("/api/settings/updates")

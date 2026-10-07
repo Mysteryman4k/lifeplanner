@@ -49,6 +49,10 @@ def test_full_flow(c):
     assert st["completed"]==1 and st["total"]==2, "stats grouped query"
     bad_tx = {"type": "expense", "amount": -5, "category": "Food & Dining", "date": d(0)}
     assert c.post("/api/transactions", json=bad_tx).status_code == 422, "negative amount rejected"
+    # New installs start with no budgets; set two up the way the "Set up your budget" screen does
+    assert c.get("/api/budgets").json() == [], "no made-up sample budgets"
+    plan = {"items": [{"category": "Transport", "monthly_limit": 150}, {"category": "Food & Dining", "monthly_limit": 400}]}
+    assert c.put("/api/budget-plan", json=plan).status_code == 200
     c.post("/api/transactions", json={"type":"expense","amount":50,"category":"Transport","date":d(0)})
     b = c.get("/api/budgets").json()
     tr = [x for x in b if x["category"]=="Transport"][0]
@@ -79,3 +83,51 @@ def test_appearance_settings(c):
     assert c.get("/api/settings/appearance").json()["theme"] == "midnight"
     assert c.put("/api/settings/appearance", json={"theme": "rainbow"}).status_code == 422
     assert c.get("/api/info").json()["name"] == "Trackademic"
+
+
+def test_currency_setting(c):
+    m = c.get("/api/settings/money").json()
+    assert m["chosen"] is False and len(m["currency"]) == 3        # a suggestion until the user picks one
+    assert c.put("/api/settings/money", json={"currency": "ZAR"}).json() == {"currency": "ZAR", "chosen": True}
+    assert c.get("/api/settings/money").json()["currency"] == "ZAR"
+    for bad in ("zar", "RAND", "R", "12$"):
+        assert c.put("/api/settings/money", json={"currency": bad}).status_code == 422, bad
+
+
+def test_budget_plan_sets_updates_and_clears(c):
+    r = c.put("/api/budget-plan", json={"items": [
+        {"category": "Rent", "monthly_limit": 1200}, {"category": "Groceries", "monthly_limit": 320.5},
+        {"category": "Fun", "monthly_limit": None}]}).json()
+    assert {(b["category"], b["monthly_limit"]) for b in r} == {("Rent", 1200), ("Groceries", 320.5)}
+    c.post("/api/transactions", json={"type": "expense", "amount": 80, "category": "Groceries", "date": d(0)})
+    r = c.put("/api/budget-plan", json={"items": [
+        {"category": "Rent", "monthly_limit": 1100}, {"category": "Groceries", "monthly_limit": 0}]}).json()
+    assert [(b["category"], b["monthly_limit"]) for b in r] == [("Rent", 1100)]
+    assert len(c.get("/api/transactions").json()) == 1, "clearing a budget keeps its transactions"
+    assert c.put("/api/budget-plan", json={"items": [{"category": "Rent", "monthly_limit": -5}]}).status_code == 422
+
+
+def _old_db_with_samples(path, with_transaction):
+    import sqlite3
+    db = sqlite3.connect(path / "planner.db")
+    db.executescript("""
+        CREATE TABLE budgets (id INTEGER PRIMARY KEY AUTOINCREMENT, category TEXT NOT NULL UNIQUE,
+            monthly_limit REAL NOT NULL, icon TEXT DEFAULT '', color TEXT DEFAULT '#6366f1');
+        CREATE TABLE transactions (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT NOT NULL, amount REAL NOT NULL,
+            category TEXT NOT NULL, description TEXT DEFAULT '', date TEXT NOT NULL,
+            recurring INTEGER DEFAULT 0, created_at TEXT);
+        INSERT INTO budgets (id, category, monthly_limit) VALUES (1,'Food & Dining',400),(2,'Transport',150),
+            (3,'Entertainment',200),(4,'Shopping',250),(5,'Bills & Utilities',300),(6,'Education',100),(7,'Other',100);""")
+    if with_transaction:
+        db.execute("INSERT INTO transactions (type, amount, category, date) VALUES ('expense', 12, 'Transport', '2026-10-01')")
+    db.commit()
+    db.close()
+
+
+@pytest.mark.parametrize("with_transaction,expected", [(False, 0), (True, 7)])
+def test_old_sample_budgets_removed_only_if_untouched(tmp_path, monkeypatch, with_transaction, expected):
+    _old_db_with_samples(tmp_path, with_transaction)
+    monkeypatch.setenv("TRACKADEMIC_DATA_DIR", str(tmp_path))
+    import app as A
+    importlib.reload(A)
+    assert len(TestClient(A.app).get("/api/budgets").json()) == expected

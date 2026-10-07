@@ -93,3 +93,24 @@ def test_splash_hand_off_fades_into_the_app(server, page):
     page.wait_for_selector("#intro", state="hidden", timeout=5000)
     assert "from=splash" not in page.url
     assert page.errors == [], page.errors
+
+
+def test_budget_setup_and_currency(server, page):
+    """No made-up budget: Money starts with a set-up prompt; amounts use the chosen currency."""
+    page.goto(f"{server}/#/money")
+    page.wait_for_selector(".onboard")
+    page.click(".onboard [data-action=budget-plan]")
+    page.select_option("#planCurrency", "EUR")
+    page.fill('[data-category="Rent"] input', "900")
+    page.fill('[data-category="Groceries"] input', "250")
+    assert "1,150" in page.inner_text("#planTotal") and "€" in page.inner_text("#planTotal")
+    page.click("#drawerFoot [type=submit]")
+    page.wait_for_selector(".budget")
+    assert page.locator(".onboard").count() == 0
+    text = page.inner_text("#content")
+    assert "€900" in text.replace("\u00a0", "") or "900" in text
+    assert "EUR" in page.inner_text("#eyebrow")
+    page.goto(f"{server}/#/today")
+    page.wait_for_selector(".tile")
+    assert "€" in page.inner_text(".tiles")
+    assert page.errors == [], page.errors
