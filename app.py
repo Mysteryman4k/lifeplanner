@@ -7,6 +7,7 @@ Run directly:  python app.py        (serves on http://127.0.0.1:8585)
 Desktop app:   python desktop.py
 """
 import os
+import re
 import sqlite3
 import sys
 import threading
@@ -17,7 +18,7 @@ from pathlib import Path
 from typing import Literal, Optional
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
@@ -1379,9 +1380,26 @@ def import_all(data: dict):
 # FRONTEND
 # ═══════════════════════════════════════════════════════════════════════════
 
+NO_CACHE = {"Cache-Control": "no-cache"}
+
+
 @app.get("/")
 def index():
-    return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-cache"})
+    """The page, with the version added to its script and style links (app.js?v=3.5.1), so after an
+    update the window always loads the new files instead of copies cached from the old version.
+    (3.5.0 shipped without this: updated installs kept running the old screens.)"""
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    html = re.sub(r'(/static/[\w./-]+\.(?:js|css))(?=")', rf"\1?v={APP_VERSION}", html)
+    return HTMLResponse(html, headers=NO_CACHE)
+
+
+@app.middleware("http")
+async def revalidate_static_files(request, call_next):
+    """Files are local, so checking they're current costs nothing; never use a stale cached copy."""
+    response = await call_next(request)
+    if request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
 
 
 @app.get("/manifest.json")

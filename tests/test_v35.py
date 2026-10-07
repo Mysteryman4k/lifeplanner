@@ -297,3 +297,15 @@ def test_window_show_calls_the_desktop_hook(A, c):
     A.WINDOW["show"] = called.set
     assert c.post("/api/window/show").json() == {"ok": True}
     assert called.wait(2)
+
+
+# ── After an update the window must load the new screens, not cached old ones (bug in 3.5.0) ──
+
+def test_page_links_are_versioned_and_static_files_revalidate(A, c):
+    r = c.get("/")
+    assert r.headers["cache-control"] == "no-cache"
+    for name in ("app.js", "icons.js", "theme.js", "styles.css", "intro.css"):
+        assert f"/static/{name}?v={A.APP_VERSION}\"" in r.text, name
+    js = c.get(f"/static/app.js?v={A.APP_VERSION}")
+    assert js.status_code == 200 and js.headers["cache-control"] == "no-cache"
+    assert "<!-- intro:start -->" in r.text

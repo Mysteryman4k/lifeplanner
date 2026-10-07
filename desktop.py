@@ -234,7 +234,8 @@ def main():
             log(f"ERROR during start-up hand-off: {e!r}")
 
     log("showing splash")
-    webview.start(hand_over, window, private_mode=False)
+    # Trackademic's own browser cache, next to its data (not the shared %APPDATA%\pywebview folder)
+    webview.start(hand_over, window, private_mode=False, storage_path=str(DB_PATH.parent / "webview"))
     log("window closed")
 
 

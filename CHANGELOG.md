@@ -6,6 +6,13 @@ PATCH for fixes. Pushing a tag like `v3.2.0` publishes that version's section as
 
 ## [Unreleased]
 
+## [3.5.1] - 2026-10-07
+
+### Fixed
+
+- After an in-app update, the window could keep showing the previous version's screens from its cache, so new features (Reminders, Task types, Restore, Repeats, Money settings) didn't appear. Updates now always load the new screens
+- Trackademic keeps its window cache in its own folder (`%APPDATA%\Trackademic\webview`) instead of a folder shared with other apps
+
 ## [3.5.0] - 2026-10-07
 
 ### Added
