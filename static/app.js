@@ -69,7 +69,11 @@ const state = {
   update: null, updateSettings: { auto_check: true }, updateDismissed: false, checkingUpdate: false,
   startup: { intro: true },
   currency: 'USD', currencyChosen: false,
+  reminders: { daily: true, time: '08:30' }, autostart: { supported: false, enabled: false }, backups: null,
 };
+
+const REPEATS = { '': "Doesn't repeat", daily: 'Every day', weekly: 'Every week', fortnightly: 'Every 2 weeks', monthly: 'Every month' };
+const REPEAT_SHORT = { daily: 'Daily', weekly: 'Weekly', fortnightly: 'Fortnightly', monthly: 'Monthly' };
 
 setCurrency('USD');   // replaced by the saved/suggested currency once settings load
 
@@ -102,6 +106,9 @@ async function loadAll() {
     api('/api/settings/appearance').catch(() => null),
   ]);
   api('/api/settings/startup').then(st => { state.startup = st; }).catch(() => {});
+  api('/api/settings/reminders').then(r => { state.reminders = r; }).catch(() => {});
+  api('/api/settings/autostart').then(a => { state.autostart = a; }).catch(() => {});
+  api('/api/backups').then(b => { state.backups = b; }).catch(() => {});
   // The database copy is the source of truth (localStorage only avoids a flash on start-up)
   if (appearance && JSON.stringify(appearance) !== JSON.stringify(window.__appearance)) {
     saveAppearanceLocal(applyAppearance(appearance));
@@ -164,6 +171,7 @@ function taskRow(t) {
     t.category_name ? `<span>${esc(t.category_name)}</span>` : '',
     t.estimated_hours ? `<span>${icon('clock', 13)}${esc(t.estimated_hours)}h</span>` : '',
     t.target_grade ? `<span>Aiming for ${esc(t.target_grade)}</span>` : '',
+    t.recurrence_pattern ? `<span class="repeats" title="${esc(REPEATS[t.recurrence_pattern])}">${icon('repeat', 13)}${esc(REPEAT_SHORT[t.recurrence_pattern])}</span>` : '',
   ].filter(Boolean).join('');
   const prio = (t.priority === 'urgent' || t.priority === 'high') && !isDone(t)
     ? `<span class="prio ${t.priority}" title="${t.priority} priority">${icon('flag', 13)}<span class="prio-label">${t.priority}</span></span>` : '';
@@ -612,11 +620,17 @@ const VIEWS = {
               </button>`).join('')}</div>
           </div>
         </div>
+        <h2>Reminders</h2>
+        <div class="card">${remindersCard()}</div>
+        <h2>Task types</h2>
+        <div class="card">${taskTypesCard()}</div>
         <h2>Your data</h2>
         <div class="card">
           <div class="setting"><div><div class="setting-title">Saved on this computer</div><div class="setting-desc path">${esc(state.info.data_file || '')}</div></div>${icon('database', 20)}</div>
-          <div class="setting"><div><div class="setting-title">Back up</div><div class="setting-desc">${plural(state.tasks.length, 'task')}, ${plural(state.jobs.length, 'application')}, ${state.subjects.length} subjects</div></div>
+          <div class="setting"><div><div class="setting-title">Back up</div><div class="setting-desc">${plural(state.tasks.length, 'task')}, ${plural(state.jobs.length, 'application')}, ${state.subjects.length} subjects${state.backups?.latest ? '. A copy is also saved automatically each day you open the app (the last 10 are kept).' : ''}</div></div>
             ${btn('export', 'Download backup', 'download', 'btn-ghost btn-sm keep-label')}</div>
+          <div class="setting"><div><div class="setting-title">Restore from a backup</div><div class="setting-desc">Replaces everything with a backup file. Your current data is saved first, just in case.</div></div>
+            ${btn('import', 'Restore…', 'upload', 'btn-ghost btn-sm keep-label')}<input type="file" id="importFile" accept=".json,application/json" hidden></div>
         </div>
         <h2>Money</h2>
         <div class="card">
@@ -636,6 +650,45 @@ const VIEWS = {
       </div>`;
   },
 };
+
+function remindersCard() {
+  const r = state.reminders, a = state.autostart;
+  return `
+    <div class="setting"><div><div class="setting-title">Daily reminder</div><div class="setting-desc">A notification with what's due today, what's overdue and job follow-ups. Only sent on days with something to do, while Trackademic is open (it can be minimised).</div></div>
+      <button class="switch ${r.daily ? 'on' : ''}" role="switch" aria-checked="${r.daily}" data-action="toggle-reminders" aria-label="Daily reminder"><i></i></button></div>
+    ${r.daily ? `<div class="setting"><div><div class="setting-title">Time</div><div class="setting-desc">If the app opens after this time, you get it then.</div></div>
+      <div class="row-gap"><input class="input" type="time" id="reminderTime" value="${esc(r.time)}" aria-label="Reminder time">
+      ${btn('test-reminder', 'Send test', 'bell', 'btn-ghost btn-sm keep-label')}</div></div>` : ''}
+    <div class="setting"><div><div class="setting-title">Start with Windows</div><div class="setting-desc">${a.supported
+      ? 'Opens Trackademic minimised when you sign in, so reminders arrive without you opening it.'
+      : 'Available in the installed Windows app.'}</div></div>
+      <button class="switch ${a.enabled ? 'on' : ''}" role="switch" aria-checked="${a.enabled}" data-action="toggle-autostart" aria-label="Start with Windows" ${a.supported ? '' : 'disabled'}><i></i></button></div>`;
+}
+
+function taskTypesCard() {
+  const used = id => state.tasks.filter(t => t.category_id === id).length;
+  return `
+    <div class="setting-desc type-intro">The "Type" you can give a task. Rename them, change their colour or add your own.</div>
+    <div class="type-list">${state.categories.map(c => `
+      <div class="type-row">
+        <i class="dot" style="--c:${esc(c.color)}"></i>
+        <span class="type-name">${esc(c.name)}</span>
+        <span class="muted small">${plural(used(c.id), 'task')}</span>
+        <button class="icon-btn sm" data-action="edit-type" data-id="${c.id}" aria-label="Edit ${esc(c.name)}" title="Edit">${icon('pencil', 15)}</button>
+      </div>`).join('')}</div>
+    <div class="type-add">${btn('new-type', 'Add a type', 'plus', 'btn-ghost btn-sm keep-label')}</div>`;
+}
+
+function openType(id) {
+  const c = id ? state.categories.find(x => x.id === id) : { name: '', color: SUBJECT_COLORS[1] };
+  if (!c) return;
+  const body = `
+    <form id="drawerForm" class="form-stack" data-kind="type" data-id="${id || ''}" autocomplete="off">
+      <input class="title-input" name="name" placeholder="e.g. Lab report" value="${esc(c.name)}" required maxlength="120" autofocus aria-label="Name">
+      ${field('Colour', swatchPicker(c.color))}
+    </form>`;
+  openDrawer(id ? 'Edit task type' : 'New task type', body, footer(id ? 'delete-type' : ''), 'type');
+}
 
 function budgetRow(b) {
   const pct = b.monthly_limit ? b.spent / b.monthly_limit : 0;
@@ -777,6 +830,7 @@ function openTask(id, defaults = {}) {
       <div id="planSlot"></div>
       <div class="form-grid">
         ${field('Due date', `<input class="input" type="date" name="due_date" value="${esc(t.due_date || '')}">`)}
+        ${field('Repeats', `<select class="select" name="recurrence_pattern">${Object.entries(REPEATS).map(([k, v]) => opt(k, v, t.recurrence_pattern || '')).join('')}</select>`)}
         ${field('Priority', `<select class="select" name="priority">${['low', 'medium', 'high', 'urgent'].map(p => opt(p, p[0].toUpperCase() + p.slice(1), t.priority)).join('')}</select>`)}
         ${field('Subject', `<select class="select" name="subject_id" id="fSubject">${opt('', 'None')}${state.subjects.map(s => opt(s.id, s.name, t.subject_id)).join('')}</select>`)}
         ${field('Unit', `<select class="select" name="unit_id" id="fUnit">${unitOptions(t.subject_id, t.unit_id)}</select>`)}
@@ -929,12 +983,20 @@ async function submitDrawer(form) {
         due_date: d.due_date || null, subject_id: numOrNull(d.subject_id), unit_id: numOrNull(d.unit_id),
         category_id: numOrNull(d.category_id), estimated_hours: numOrNull(d.estimated_hours),
         target_grade: d.target_grade, progress: Number(d.progress) || 0,
+        recurrence_pattern: d.recurrence_pattern || '',
       };
       const prev = id && state.tasks.find(x => x.id === id);
       if (prev && prev.status !== 'completed' && body.status === 'completed' && body.progress < 100) body.progress = 100;
       const saved = await api(id ? `/api/tasks/${id}` : '/api/tasks', { method: id ? 'PUT' : 'POST', body });
       upsert(state.tasks, saved);
-      toast(id ? 'Task updated' : 'Task added');
+      if (saved.next_task) { upsert(state.tasks, saved.next_task); toast(`Done. Next one added for ${fmt(saved.next_task.due_date, { weekday: 'short', day: 'numeric', month: 'short' })}`); }
+      else toast(id ? 'Task updated' : 'Task added');
+    } else if (kind === 'type') {
+      const saved = await api(id ? `/api/categories/${id}` : '/api/categories', { method: id ? 'PUT' : 'POST', body: { name: d.name, color: d.color } });
+      upsert(state.categories, saved);
+      // Task rows show the type's name, so refresh them
+      if (id) state.tasks.forEach(t => { if (t.category_id === id) { t.category_name = saved.name; t.category_color = saved.color; } });
+      toast(id ? 'Task type updated' : 'Task type added');
     } else if (kind === 'job') {
       const body = { ...d, applied_date: d.applied_date || null, follow_up_date: d.follow_up_date || null };
       upsert(state.jobs, await api(id ? `/api/jobs/${id}` : '/api/jobs', { method: id ? 'PUT' : 'POST', body }));
@@ -1033,8 +1095,10 @@ const ACTIONS = {
     try {
       const saved = await api(`/api/tasks/${t.id}`, { method: 'PUT', body: done ? { status: 'completed' } : { status: t.progress > 0 && t.progress < 100 ? 'in_progress' : 'not_started', progress: t.progress === 100 ? 0 : t.progress } });
       upsert(state.tasks, saved);
+      if (saved.next_task) upsert(state.tasks, saved.next_task);
       setTimeout(render, done ? 350 : 0);
-      if (done) toast('Nice — task done');
+      if (saved.next_task) toast(`Done. Next one added for ${fmt(saved.next_task.due_date, { weekday: 'short', day: 'numeric', month: 'short' })}`);
+      else if (done) toast('Nice — task done');
     } catch (e) { toast(e.message, 'error'); render(); }
   },
   async 'delete-task'() {
@@ -1188,7 +1252,70 @@ const ACTIONS = {
     }
   },
   'close-drawer': closeDrawer,
+
+  'new-type': () => openType(null),
+  'edit-type': el => openType(Number(el.dataset.id)),
+  async 'delete-type'() {
+    const id = Number($('#drawerForm').dataset.id);
+    const c = state.categories.find(x => x.id === id);
+    const n = state.tasks.filter(t => t.category_id === id).length;
+    if (!(await confirmDialog(`Delete "${c.name}"?`, n ? `${plural(n, 'task')} will keep their details but have no type.` : 'No tasks use it.'))) return;
+    try {
+      await api(`/api/categories/${id}`, { method: 'DELETE' });
+      state.categories = state.categories.filter(x => x.id !== id);
+      state.tasks.forEach(t => { if (t.category_id === id) { t.category_id = null; t.category_name = null; } });
+      closeDrawer(); stillRender(); toast('Task type deleted');
+    } catch (e) { toast(e.message, 'error'); }
+  },
+
+  async 'toggle-reminders'() {
+    try {
+      state.reminders = await api('/api/settings/reminders', { method: 'PUT', body: { ...state.reminders, daily: !state.reminders.daily } });
+      stillRender(); toast(state.reminders.daily ? `Daily reminder at ${state.reminders.time}` : 'Daily reminder off');
+    } catch (e) { toast(e.message, 'error'); }
+  },
+  async 'test-reminder'() {
+    try {
+      const r = await api('/api/reminders/test', { method: 'POST' });
+      toast(r.shown ? 'Test notification sent' : "The notification couldn't be shown. Check that notifications are on in Windows Settings.", r.shown ? '' : 'error');
+    } catch (e) { toast(e.message, 'error'); }
+  },
+  async 'toggle-autostart'() {
+    try {
+      state.autostart = await api('/api/settings/autostart', { method: 'PUT', body: { enabled: !state.autostart.enabled } });
+      stillRender(); toast(state.autostart.enabled ? 'Trackademic will start with Windows' : "Trackademic won't start with Windows");
+    } catch (e) { toast(e.message, 'error'); }
+  },
+
+  import: () => { const f = $('#importFile'); f.value = ''; f.click(); },
 };
+
+/** Re-render the current screen without the entry animation, keeping the scroll position. */
+function stillRender() {
+  const scroll = $('#content').scrollTop;
+  $('#content').classList.add('still');
+  render();
+  $('#content').scrollTop = scroll;
+}
+
+async function restoreFromFile(file) {
+  let data;
+  try { data = JSON.parse(await file.text()); }
+  catch (_) { toast("That file isn't a Trackademic backup.", 'error'); return; }
+  try {
+    const p = await api('/api/import/preview', { method: 'POST', body: data });
+    const c = p.counts;
+    const when = p.exported_at ? ` from ${p.exported_at}` : '';
+    const ok = await confirmDialog(`Restore the backup${when}?`,
+      `It has ${plural(c.tasks, 'task')}, ${plural(c.job_applications, 'job application')}, ${plural(c.transactions, 'transaction')} and ${plural(c.subjects, 'subject')}. ` +
+      'Everything in the app now will be replaced. A copy of your current data is saved first.', 'Restore', 'primary');
+    if (!ok) return;
+    await api('/api/import', { method: 'POST', body: data });
+    await loadAll();
+    stillRender();
+    toast('Backup restored');
+  } catch (e) { toast(e.message, 'error'); }
+}
 
 document.addEventListener('click', e => {
   const el = e.target.closest('[data-action]');
@@ -1198,6 +1325,15 @@ document.addEventListener('click', e => {
 });
 
 document.addEventListener('change', async e => {
+  if (e.target.id === 'importFile' && e.target.files[0]) { restoreFromFile(e.target.files[0]); return; }
+  if (e.target.id === 'reminderTime') {
+    if (!e.target.value) return;
+    try {
+      state.reminders = await api('/api/settings/reminders', { method: 'PUT', body: { ...state.reminders, time: e.target.value } });
+      toast(`Daily reminder at ${state.reminders.time}`);
+    } catch (err) { toast(err.message, 'error'); }
+    return;
+  }
   if (e.target.id !== 'settingsCurrency') return;
   try {
     const m = await api('/api/settings/money', { method: 'PUT', body: { currency: e.target.value } });

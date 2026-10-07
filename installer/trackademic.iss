@@ -52,8 +52,13 @@ Source: "..\dist\Trackademic\*"; DestDir: "{app}"; Flags: ignoreversion recurses
 Type: filesandordirs; Name: "{app}\_internal"
 
 [Icons]
-Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
+; AppUserModelID must match APP_ID in reminders.py, so reminder notifications show as "Trackademic"
+Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"; AppUserModelID: "Mysteryman4k.Trackademic"
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon; AppUserModelID: "Mysteryman4k.Trackademic"
+
+[Registry]
+; "Start with Windows" is switched on from inside the app; uninstalling removes it
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "{#AppName}"; Flags: uninsdeletevalue dontcreatekey
 
 [Run]
 ; Runs after a normal install (as a "Launch" checkbox) and after a silent in-app update

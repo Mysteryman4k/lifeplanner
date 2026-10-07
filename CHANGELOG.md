@@ -6,6 +6,22 @@ PATCH for fixes. Pushing a tag like `v3.2.0` publishes that version's section as
 
 ## [Unreleased]
 
+## [3.5.0] - 2026-10-07
+
+### Added
+
+- Daily reminders as Windows notifications: what's due today, what's overdue and job follow-ups, at a time you choose. Only sent on days with something to do, and caught up if the app opens later. "Send test" shows one straight away
+- Start with Windows (optional): opens Trackademic minimised when you sign in, so reminders arrive without opening it
+- Repeating tasks: daily, weekly, every 2 weeks or monthly. Ticking one off adds the next with the same details. Repeating tasks show a "Daily"/"Weekly" tag
+- Manage task types in Settings: add your own, rename them and change their colours. Deleting one keeps its tasks
+- Restore from a backup file in Settings. It shows what's in the backup before replacing anything, and saves your current data first
+- Automatic backups: a copy of your data is saved each day you open the app, keeping the last 10
+
+### Changed
+
+- Opening Trackademic while it's already open brings the open window forward instead of starting a second copy
+- The taskbar icon and notifications are grouped under Trackademic
+
 ## [3.4.0] - 2026-10-07
 
 ### Added

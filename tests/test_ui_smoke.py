@@ -114,3 +114,71 @@ def test_budget_setup_and_currency(server, page):
     page.wait_for_selector(".tile")
     assert "€" in page.inner_text(".tiles")
     assert page.errors == [], page.errors
+
+
+def test_repeating_task_adds_the_next_one(server, page):
+    page.goto(f"{server}/#/tasks")
+    page.click("[data-action=new-task] >> nth=0")
+    page.fill("[name=title]", "Weekly reading")
+    page.fill("[name=due_date]", time.strftime("%Y-%m-%d"))
+    page.select_option("[name=recurrence_pattern]", "weekly")
+    page.click("#drawerFoot [type=submit]")
+    row = page.locator(".task", has_text="Weekly reading")
+    row.locator(".repeats").wait_for()
+    row.locator(".check").click()
+    page.wait_for_selector("#toast.show >> text=Next one added")
+    page.wait_for_function("[...document.querySelectorAll('.task')]"
+                           ".filter(t => t.textContent.includes('Weekly reading')).length === 1")
+    assert page.errors == [], page.errors
+
+
+def test_task_types_can_be_added_and_renamed(server, page):
+    page.goto(f"{server}/#/settings")
+    page.click("[data-action=new-type]")
+    page.fill("#drawerForm [name=name]", "Lab report")
+    page.click("#drawerForm .swatch >> nth=3")
+    page.click("#drawerFoot [type=submit]")
+    page.wait_for_selector(".type-row >> text=Lab report")
+    page.click(".type-row:has-text('Lab report') [data-action=edit-type]")
+    page.fill("#drawerForm [name=name]", "Lab write-up")
+    page.click("#drawerFoot [type=submit]")
+    page.wait_for_selector(".type-row >> text=Lab write-up")
+    page.goto(f"{server}/#/tasks")
+    page.click("[data-action=new-task] >> nth=0")
+    assert "Lab write-up" in page.inner_text("[name=category_id]")
+    page.keyboard.press("Escape")
+    assert page.errors == [], page.errors
+
+
+def test_reminder_and_startup_settings(server, page):
+    page.goto(f"{server}/#/settings")
+    page.wait_for_selector("#reminderTime")
+    page.fill("#reminderTime", "18:45")
+    page.dispatch_event("#reminderTime", "change")
+    page.wait_for_selector("#toast.show >> text=18:45")
+    assert page.locator("[data-action=toggle-autostart]").is_disabled()    # not the installed Windows app
+    page.click("[data-action=toggle-reminders]")
+    page.wait_for_selector("#reminderTime", state="detached")
+    page.click("[data-action=toggle-reminders]")
+    page.wait_for_selector("#reminderTime")
+    assert page.input_value("#reminderTime") == "18:45"
+    assert page.errors == [], page.errors
+
+
+def test_restore_from_backup(server, page, tmp_path):
+    import json
+    import urllib.request
+    backup = json.load(urllib.request.urlopen(f"{server}/api/export"))
+    backup["tasks"] = [{"id": 1, "title": "Restored task", "priority": "medium", "status": "not_started", "progress": 0}]
+    f = tmp_path / "backup.json"
+    f.write_text(json.dumps(backup))
+    page.goto(f"{server}/#/settings")
+    page.set_input_files("#importFile", str(f))
+    page.wait_for_selector("#confirm:not([hidden])")
+    assert "1 task" in page.inner_text("#confirmText")
+    page.click("#confirmYes")
+    page.wait_for_selector("#toast.show >> text=Backup restored")
+    page.goto(f"{server}/#/tasks")
+    page.wait_for_selector(".task >> text=Restored task")
+    assert page.locator(".task").count() == 1
+    assert page.errors == [], page.errors

@@ -21,6 +21,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
+import reminders
+import system_integration
 import updater
 
 # ── App identity (change the name here when renaming the app) ─────────────
@@ -253,6 +255,7 @@ init_db()
 
 Priority = Literal["low", "medium", "high", "urgent"]
 TaskStatus = Literal["not_started", "in_progress", "completed"]
+Repeat = Literal["", "daily", "weekly", "fortnightly", "monthly"]
 JobStatus = Literal["applied", "phone_screen", "interviewing", "offer", "accepted", "rejected", "withdrawn"]
 JobPriority = Literal["low", "medium", "high"]
 HexColor = Field(default="#2f5d50", pattern=r"^#[0-9a-fA-F]{6}$")
@@ -293,7 +296,7 @@ class TaskCreate(DatesMixin):
     actual_hours: float = Field(default=0, ge=0)
     notes: str = ""
     is_recurring: bool = False
-    recurrence_pattern: str = ""
+    recurrence_pattern: Repeat = ""
 
 
 class TaskUpdate(DatesMixin):
@@ -313,12 +316,17 @@ class TaskUpdate(DatesMixin):
     actual_hours: Optional[float] = Field(default=None, ge=0)
     notes: Optional[str] = None
     is_recurring: Optional[bool] = None
-    recurrence_pattern: Optional[str] = None
+    recurrence_pattern: Optional[Repeat] = None
 
 
 class CategoryCreate(BaseModel):
     name: str = Name
     color: str = HexColor
+
+
+class CategoryUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    color: Optional[str] = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")
 
 
 class SubjectCreate(BaseModel):
@@ -443,6 +451,59 @@ def normalise_task_status(values: dict, current: Optional[dict] = None):
     elif "progress" in values and 0 < progress < 100 and status == "not_started" and "status" not in values:
         values["status"] = "in_progress"
     return values
+
+
+def sync_recurrence(values: dict):
+    """"Repeats" is the recurrence pattern; is_recurring just mirrors whether one is set."""
+    if "recurrence_pattern" in values:
+        values["recurrence_pattern"] = values["recurrence_pattern"] or ""
+        values["is_recurring"] = int(bool(values["recurrence_pattern"]))
+    elif "is_recurring" in values:
+        values["is_recurring"] = int(values["is_recurring"])
+        if not values["is_recurring"]:
+            values["recurrence_pattern"] = ""
+    return values
+
+
+def next_due_date(due: str, pattern: str) -> str:
+    """The due date of the next copy of a repeating task. Monthly moves to the same day next month,
+    or that month's last day if it's shorter (31 Jan -> 28 Feb)."""
+    d = date.fromisoformat(due)
+    if pattern == "daily":
+        return (d + timedelta(days=1)).isoformat()
+    if pattern == "weekly":
+        return (d + timedelta(weeks=1)).isoformat()
+    if pattern == "fortnightly":
+        return (d + timedelta(weeks=2)).isoformat()
+    if pattern == "monthly":
+        year, month = (d.year + 1, 1) if d.month == 12 else (d.year, d.month + 1)
+        last_day = (date(year + (month == 12), month % 12 + 1, 1) - timedelta(days=1)).day
+        return date(year, month, min(d.day, last_day)).isoformat()
+    raise ValueError(pattern)
+
+
+REPEAT_COPY_FIELDS = ("title", "description", "priority", "category_id", "subject_id", "unit_id",
+                      "target_grade", "estimated_hours", "notes", "is_recurring", "recurrence_pattern")
+
+
+def spawn_next_occurrence(conn, task: dict):
+    """When a repeating task is completed, add the next one and stop the finished one repeating,
+    so completing it twice (or un-completing and re-completing) never makes duplicates."""
+    pattern = task.get("recurrence_pattern")
+    if not pattern:
+        return None
+    base = task.get("due_date") or today()
+    nxt = next_due_date(base, pattern)
+    while nxt < today():                          # catching up after a while away: skip missed ones
+        nxt = next_due_date(nxt, pattern)
+    data = {k: task[k] for k in REPEAT_COPY_FIELDS}
+    data.update(due_date=nxt, status="not_started", progress=0, actual_hours=0,
+                created_at=now_stamp(), updated_at=now_stamp())
+    cols = list(data)
+    cur = conn.execute(f"INSERT INTO tasks ({','.join(cols)}) VALUES ({','.join('?' * len(cols))})",
+                       [data[c] for c in cols])
+    conn.execute("UPDATE tasks SET is_recurring=0, recurrence_pattern='' WHERE id=?", (task["id"],))
+    return fetch_task(conn, cur.lastrowid)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -611,7 +672,9 @@ def create_task(task: TaskCreate):
     data = task.model_dump()
     data.update(values)
     data["title"] = data["title"].strip()
-    data["is_recurring"] = int(data["is_recurring"])
+    sync_recurrence(data)
+    if data["recurrence_pattern"] and not data["due_date"]:
+        data["due_date"] = today()               # a repeating task needs a date to repeat from
     data["created_at"] = data["updated_at"] = now_stamp()
     cols = list(data)
     with db() as conn:
@@ -627,14 +690,16 @@ def update_task(task_id: int, task: TaskUpdate):
         current = conn.execute("SELECT status, progress FROM tasks WHERE id=?", (task_id,)).fetchone()
         if not current:
             raise HTTPException(404, "Task not found")
-        updates = normalise_task_status(updates, dict(current))
-        if "is_recurring" in updates:
-            updates["is_recurring"] = int(updates["is_recurring"])
+        updates = sync_recurrence(normalise_task_status(updates, dict(current)))
         if updates:
             updates["updated_at"] = now_stamp()
             conn.execute(f"UPDATE tasks SET {', '.join(f'{k}=?' for k in updates)} WHERE id=?",
                          [*updates.values(), task_id])
-        return fetch_task(conn, task_id)
+        task = fetch_task(conn, task_id)
+        if task["status"] == "completed" and current["status"] != "completed" and task["recurrence_pattern"]:
+            task["next_task"] = spawn_next_occurrence(conn, task)
+            task.update(is_recurring=False, recurrence_pattern="")
+        return task
 
 
 @app.delete("/api/tasks/{task_id}")
@@ -687,6 +752,21 @@ def create_category(cat: CategoryCreate):
     with db() as conn:
         cur = conn.execute("INSERT INTO categories (name, color) VALUES (?,?)", (cat.name.strip(), cat.color))
         return dict(conn.execute("SELECT * FROM categories WHERE id=?", (cur.lastrowid,)).fetchone())
+
+
+@app.put("/api/categories/{cat_id}")
+def update_category(cat_id: int, cat: CategoryUpdate):
+    updates = cat.model_dump(exclude_unset=True, exclude_none=True)
+    if "name" in updates:
+        updates["name"] = updates["name"].strip()
+        if not updates["name"]:
+            raise HTTPException(400, "Give it a name.")
+    with db() as conn:
+        require(conn, "categories", cat_id, "Task type")
+        if updates:
+            conn.execute(f"UPDATE categories SET {', '.join(f'{k}=?' for k in updates)} WHERE id=?",
+                         [*updates.values(), cat_id])
+        return dict(conn.execute("SELECT * FROM categories WHERE id=?", (cat_id,)).fetchone())
 
 
 @app.delete("/api/categories/{cat_id}")
@@ -970,6 +1050,12 @@ def _get_setting(key, model):
         return model()
 
 
+def _put_setting(key: str, value: str):
+    with db() as conn:
+        conn.execute("INSERT INTO settings (key, value) VALUES (?, ?) "
+                     "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
+
+
 class MoneySettings(BaseModel):
     currency: str = Field(default="", pattern=r"^([A-Z]{3})?$")   # ISO 4217 code; "" = not chosen yet
 
@@ -1042,6 +1128,99 @@ def set_startup_settings(st: StartupSettings):
     return st.model_dump()
 
 
+# ── Reminders: one notification a day with what's due ──────────────────
+
+class ReminderSettings(BaseModel):
+    daily: bool = True
+    time: str = Field(default="08:30", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+
+
+@app.get("/api/settings/reminders")
+def get_reminder_settings():
+    return _get_setting("reminders", ReminderSettings).model_dump()
+
+
+@app.put("/api/settings/reminders")
+def set_reminder_settings(r: ReminderSettings):
+    _put_setting("reminders", r.model_dump_json())
+    now = datetime.now()
+    if r.daily and now.strftime("%H:%M") < r.time:
+        set_reminder_last_sent("")       # moved to later today: send today's at the new time
+    return r.model_dump()
+
+
+def reminder_last_sent() -> str:
+    with db() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key='reminders_last_sent'").fetchone()
+    return row["value"].strip('"') if row else ""
+
+
+def set_reminder_last_sent(day: str):
+    _put_setting("reminders_last_sent", f'"{day}"')
+
+
+def todays_digest(day: Optional[date] = None):
+    with db() as conn:
+        return reminders.build_digest(conn, day or date.today())
+
+
+@app.get("/api/reminders/preview")
+def reminder_preview():
+    return {"digest": todays_digest()}
+
+
+@app.post("/api/reminders/test")
+def reminder_test():
+    """Show today's reminder now, so the user can see what it looks like (and that Windows allows it)."""
+    digest = todays_digest() or {"title": "Nothing due today",
+                                 "body": "You're all caught up. Reminders will look like this.", "counts": {}}
+    shown = reminders.notify(digest["title"], digest["body"])
+    return {"shown": shown, "digest": digest}
+
+
+def start_reminders():
+    """Called by the desktop app (not the plain web server) to send the daily reminder."""
+    return reminders.start_scheduler(get_reminder_settings, reminder_last_sent,
+                                     set_reminder_last_sent, todays_digest)
+
+
+# ── Start with Windows ───────────────────────────────────────────────
+
+class AutostartSettings(BaseModel):
+    enabled: bool
+
+
+@app.get("/api/settings/autostart")
+def get_autostart():
+    return {"supported": system_integration.autostart_supported(),
+            "enabled": system_integration.autostart_enabled()}
+
+
+@app.put("/api/settings/autostart")
+def set_autostart(a: AutostartSettings):
+    if not system_integration.autostart_supported():
+        raise HTTPException(400, "Starting with Windows only works in the installed Windows app.")
+    try:
+        system_integration.set_autostart(a.enabled)
+    except OSError as e:
+        raise HTTPException(500, f"Windows didn't allow that change: {e}") from e
+    return get_autostart()
+
+
+# ── The desktop window (set by desktop.py) ──────────────────────────
+
+WINDOW = {"show": None}
+
+
+@app.post("/api/window/show")
+def show_window():
+    """Another copy of Trackademic was opened: bring this window to the front instead."""
+    if WINDOW["show"]:
+        threading.Thread(target=WINDOW["show"], daemon=True).start()
+        return {"ok": True}
+    return {"ok": False}
+
+
 @app.get("/api/update/check")
 def update_check(force: bool = False):
     """force=true is a manual "Check now"; otherwise respects the auto-check setting."""
@@ -1073,14 +1252,127 @@ def update_install():
 # BACKUP
 # ═══════════════════════════════════════════════════════════════════════════
 
+# Parents before children, so a restore can insert in this order
+BACKUP_TABLES = ("categories", "subjects", "units", "tasks", "job_applications", "transactions", "budgets", "settings")
+COUNTED_TABLES = ("tasks", "subjects", "job_applications", "transactions", "budgets")
+BACKUP_DIR = DB_PATH.parent / "backups"
+KEEP_AUTO_BACKUPS = 10
+# Settings that belong to this computer rather than to your data, so a restore keeps the current ones
+LOCAL_SETTINGS = ("reminders_last_sent", "migrated_sample_budgets")
+
+
 @app.get("/api/export")
 def export_all():
     """Everything in one JSON file, for backups."""
     with db() as conn:
         out = {"app": APP_NAME, "version": APP_VERSION, "exported_at": now_stamp()}
-        for table in ("categories", "subjects", "units", "tasks", "job_applications", "transactions", "budgets", "settings"):
+        for table in BACKUP_TABLES:
             out[table] = [dict(r) for r in conn.execute(f"SELECT * FROM {table}")]
     return out
+
+
+def snapshot_database(kind: str) -> Path:
+    """Copy the whole database into backups/ (sqlite's backup API is safe while the app is running)."""
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    target = BACKUP_DIR / f"{kind}-{datetime.now().strftime('%Y-%m-%d_%H%M%S')}.db"
+    src, dst = _connect(), sqlite3.connect(str(target))
+    try:
+        src.backup(dst)
+    finally:
+        dst.close()
+        src.close()
+    return target
+
+
+def list_backups(kind: Optional[str] = None):
+    if not BACKUP_DIR.exists():
+        return []
+    files = sorted(BACKUP_DIR.glob(f"{kind or '*'}-*.db"), key=lambda f: f.name[-20:], reverse=True)   # newest first
+    return files
+
+
+def auto_backup():
+    """One automatic backup a day, keeping the last few. Runs when the app starts."""
+    try:
+        stamp = date.today().isoformat()
+        if not any(f.name.startswith(f"auto-{stamp}") for f in list_backups("auto")):
+            snapshot_database("auto")
+        for old in list_backups("auto")[KEEP_AUTO_BACKUPS:]:
+            old.unlink(missing_ok=True)
+        for old in list_backups("before-restore")[KEEP_AUTO_BACKUPS:]:
+            old.unlink(missing_ok=True)
+    except Exception as e:                                  # a backup problem must never stop the app
+        print(f"Automatic backup failed: {e!r}", flush=True)
+
+
+@app.get("/api/backups")
+def get_backups():
+    files = list_backups()
+    return {"folder": str(BACKUP_DIR),
+            "latest": files[0].name if files else None,
+            "count": len(files)}
+
+
+def _check_backup(data) -> dict:
+    if not isinstance(data, dict) or data.get("app") not in (APP_NAME, "LifePlanner") \
+            or not isinstance(data.get("tasks"), list):
+        raise HTTPException(400, "That file isn't a Trackademic backup.")
+    for table in BACKUP_TABLES:
+        rows = data.get(table, [])
+        if not isinstance(rows, list) or not all(isinstance(r, dict) for r in rows):
+            raise HTTPException(400, f"The backup's {table.replace('_', ' ')} section is damaged.")
+    return data
+
+
+@app.post("/api/import/preview")
+def import_preview(data: dict):
+    data = _check_backup(data)
+    return {"exported_at": data.get("exported_at"), "version": data.get("version"),
+            "counts": {t: len(data.get(t, [])) for t in COUNTED_TABLES}}
+
+
+@app.post("/api/import")
+def import_all(data: dict):
+    """Replace everything with a backup made by Download backup. The current data is saved
+    to backups/ first, and nothing changes unless the whole backup goes in cleanly."""
+    data = _check_backup(data)
+    safety = snapshot_database("before-restore")
+    conn = _connect()
+    try:
+        conn.execute("PRAGMA foreign_keys=OFF")          # checked as a whole at the end instead
+        conn.execute("BEGIN")
+        for table in reversed(BACKUP_TABLES):
+            if table == "settings":
+                conn.execute(f"DELETE FROM settings WHERE key NOT IN ({','.join('?' * len(LOCAL_SETTINGS))})",
+                             LOCAL_SETTINGS)
+            else:
+                conn.execute(f"DELETE FROM {table}")
+        for table in BACKUP_TABLES:
+            columns = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+            for row in data.get(table, []):
+                if table == "settings" and row.get("key") in LOCAL_SETTINGS:
+                    continue
+                cols = [c for c in row if c in columns]     # backups from older versions may lack columns
+                if cols:
+                    conn.execute(f"INSERT INTO {table} ({','.join(cols)}) VALUES ({','.join('?' * len(cols))})",
+                                 [row[c] for c in cols])
+        problems = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if problems:
+            raise HTTPException(400, "The backup has items linked to things that aren't in it, so nothing was changed.")
+        conn.execute("UPDATE tasks SET status = CASE WHEN progress > 0 THEN 'in_progress' ELSE 'not_started' END "
+                     "WHERE status = 'overdue'")
+        conn.commit()
+    except HTTPException:
+        conn.rollback()
+        raise
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise HTTPException(400, f"That backup couldn't be restored ({e}). Nothing was changed.") from e
+    finally:
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.close()
+    return {"ok": True, "safety_backup": safety.name,
+            "counts": {t: len(data.get(t, [])) for t in COUNTED_TABLES}}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1114,4 +1406,5 @@ if __name__ == "__main__":
     # Set TRACKADEMIC_HOST=0.0.0.0 only if you deliberately want other devices to reach it.
     host = os.environ.get("TRACKADEMIC_HOST", "127.0.0.1")
     print(f"\n  {APP_NAME} {APP_VERSION} — http://127.0.0.1:{port}\n  Data: {DB_PATH}\n")
+    auto_backup()
     uvicorn.run(app, host=host, port=port, log_level="info")

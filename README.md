@@ -8,14 +8,15 @@ A personal planner for students: assignments and study tasks, job applications a
 ## Features
 
 - **Today**: what's overdue and due this week, your workload for the next 7 days, job follow-ups and how much budget is left
-- **Tasks**: grouped by Overdue, Today, Next 7 days and Later; search and filter by subject or priority
+- **Tasks**: grouped by Overdue, Today, Next 7 days and Later; search and filter by subject or priority; repeating tasks (daily, weekly, every 2 weeks, monthly) and your own task types
 - **Plan sessions**: splits a task's estimated hours into study sessions before the due date
 - **Calendar**: month view with tasks on each day (weeks start on Monday)
 - **Subjects**: your units with their weeks or topics and open task counts
 - **Jobs**: a board from Applied to Offer, follow-up reminders and a list of closed applications
 - **Money**: your own currency and monthly budget, money in and out by month, and budget bars showing what's left
 - **Make it yours**: 6 colour themes (Sunset is the default), 5 text styles, light, dark or system mode, and an animated intro (can be turned off)
-- **Backup**: one-click JSON export of everything
+- **Reminders**: a daily Windows notification with what's due, at the time you choose, and an optional start with Windows
+- **Backup and restore**: one-click backup file, restore from it, plus an automatic daily copy (last 10 kept in the `backups` folder next to your data)
 
 ## Install (Windows)
 
@@ -57,6 +58,8 @@ On Windows the desktop window uses Microsoft Edge WebView2, which is built into 
 | macOS   | `~/Library/Application Support/Trackademic/planner.db` |
 | Linux   | `~/.local/share/Trackademic/planner.db` |
 
+Automatic daily backups are saved in a `backups` folder in the same place.
+
 Set `TRACKADEMIC_DATA_DIR` to use a different folder. Data from earlier versions, saved under the old LifePlanner name or next to `app.py`, is copied across automatically the first time you run this version.
 
 ## Tests
@@ -69,7 +72,7 @@ pytest -m "not ui"                        # just the fast API tests
 ruff check .                              # lint
 ```
 
-Every push runs the **Tests** workflow on GitHub: API tests on Linux (Python 3.11–3.13) and Windows, a lint check, JavaScript and colour-contrast checks, and a real-browser smoke test of every screen. For `main` and pull requests it also builds the Windows app and **launches it for real**, checking it gets past the intro to the home screen (`tools/smoke_desktop.py`). The Release workflow runs the same start-up test on the exact build it's about to publish.
+Every push runs the **Tests** workflow on GitHub: API tests on Linux (Python 3.11–3.13) and Windows, a lint check, JavaScript and colour-contrast checks, and a real-browser smoke test of every screen. For `main` and pull requests it also builds the Windows app and **launches it for real**, checking it gets past the intro to the home screen and that opening it a second time reuses the open window (`tools/smoke_desktop.py`). The Release workflow runs the same start-up test on the exact build it's about to publish.
 
 ## Versions and releases
 
@@ -101,6 +104,8 @@ To build locally: `pip install -r requirements-dev.txt`, then `pyinstaller --noc
 ```
 app.py              FastAPI backend + SQLite (all API routes)
 desktop.py          Opens the app in a native window (pywebview)
+reminders.py        Daily reminder: what to say and showing the notification
+system_integration.py  Start with Windows and the one-window-at-a-time check
 updater.py          Update checks and verified installs from GitHub Releases
 VERSION             The app version (single source of truth)
 CHANGELOG.md        What changed in each version

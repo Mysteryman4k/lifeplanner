@@ -129,16 +129,57 @@ def run_in_browser(url: str):
         pass
 
 
+def bring_window_forward(window):
+    """Restore and raise the window (used when Trackademic is opened again while running)."""
+    try:
+        window.restore()
+        window.show()
+        window.on_top = True          # Windows won't always let an app take focus; this lifts it above others
+        time.sleep(0.3)
+        window.on_top = False
+    except Exception as e:
+        log(f"couldn't bring the window forward: {e!r}")
+
+
+def set_windows_app_id():
+    """Group the window with the Start-menu shortcut, so the taskbar and notifications say Trackademic."""
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        from reminders import APP_ID
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
+    except Exception as e:
+        log(f"couldn't set the app id: {e!r}")
+
+
 def main():
     _redirect_output_when_windowed()
-    from app import APP_NAME, APP_VERSION
-    print(f"--- {APP_NAME} {APP_VERSION} starting {time.strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
+    set_windows_app_id()
+    import system_integration
+    from app import APP_NAME, APP_VERSION, DB_PATH
+    minimized = "--minimized" in sys.argv        # started by "Start with Windows"
+    print(f"--- {APP_NAME} {APP_VERSION} starting {time.strftime('%Y-%m-%d %H:%M:%S')}"
+          f"{' (minimised)' if minimized else ''}", flush=True)
+
+    # Only one Trackademic per data folder: opening it again brings the open window forward
+    running = system_integration.find_running_instance(DB_PATH.parent, APP_NAME)
+    if running:
+        log(f"already running on port {running}; bringing it forward")
+        if not minimized:
+            system_integration.bring_to_front(running)
+        return
 
     forced = os.environ.get("TRACKADEMIC_PORT")       # tests pin the port so they can find the app
     port = int(forced) if forced else free_port()
     url = f"http://127.0.0.1:{port}/"
     threading.Thread(target=start_server, args=(port,), daemon=True).start()   # starts while the splash plays
     log(f"server starting on port {port}")
+    system_integration.claim_instance(DB_PATH.parent, port)
+
+    import app as backend
+    threading.Thread(target=backend.auto_backup, name="backup", daemon=True).start()
+    backend.start_reminders()
 
     try:
         import webview
@@ -151,7 +192,7 @@ def main():
 
     from app import STATIC, get_appearance, get_startup_settings
     appearance = get_appearance()
-    intro = get_startup_settings()["intro"]
+    intro = get_startup_settings()["intro"] and not minimized
     dark = appearance["mode"] == "dark" or (appearance["mode"] == "system" and system_prefers_dark())
     query = urllib.parse.urlencode({"from": "splash", "ap": json.dumps(appearance)})
     app_url = f"{url}?{query}#/today"
@@ -166,7 +207,9 @@ def main():
         min_size=(380, 600),
         background_color="#140F16" if dark else "#FFF7F2",
         text_select=True,
+        minimized=minimized,
     )
+    backend.WINDOW["show"] = lambda: bring_window_forward(window)
 
     def hand_over(win):
         """Wait for the server and the intro, then switch the window to the app.

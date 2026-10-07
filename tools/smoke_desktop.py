@@ -48,7 +48,7 @@ def status(port: int):
         return None
 
 
-def run_once(cmd, port: int, max_seconds: float, intro: bool) -> bool:
+def run_once(cmd, port: int, max_seconds: float, intro: bool, second_copy: bool = False) -> bool:
     data = Path(tempfile.mkdtemp(prefix="trackademic-smoke-"))
     env = {**os.environ, "TRACKADEMIC_DATA_DIR": str(data), "TRACKADEMIC_PORT": str(port)}
     if not intro:                                      # pre-seed the "intro off" setting
@@ -83,6 +83,8 @@ def run_once(cmd, port: int, max_seconds: float, intro: bool) -> bool:
         elif proc.poll() is None:
             stage = "the server never answered" if last is None else "the server is up but the window never showed the app"
             print(f"✗ Not on screen after {max_seconds:.0f}s: {stage}")
+        if ok and second_copy:
+            ok = check_second_copy(cmd, env, proc, port)
     finally:
         kill_tree(proc)
     if not ok or slow:
@@ -96,6 +98,24 @@ def run_once(cmd, port: int, max_seconds: float, intro: bool) -> bool:
     return ok
 
 
+def check_second_copy(cmd, env, first, port) -> bool:
+    """Opening Trackademic again should bring the open window forward and quit, not start a second app."""
+    env2 = {**env, "TRACKADEMIC_PORT": str(pick_port())}
+    started = time.time()
+    second = subprocess.Popen(cmd, env=env2, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        second.wait(timeout=15)
+    except subprocess.TimeoutExpired:
+        kill_tree(second)
+        print("✗ Opening a second copy started another app instead of using the open one")
+        return False
+    if first.poll() is not None or not status(port):
+        print("✗ The open app closed when a second copy was opened")
+        return False
+    print(f"✓ Opening it again used the open window ({time.time() - started:.1f}s)")
+    return True
+
+
 def main():
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")   # Windows consoles default to cp1252
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -106,7 +126,7 @@ def main():
         ap.error("give the command that starts the app")
     cmd = [sys.executable if c == "python" else c for c in args.command]
     results = [run_once(cmd, pick_port(), args.max_seconds, intro=True),
-               run_once(cmd, pick_port(), args.max_seconds, intro=False)]
+               run_once(cmd, pick_port(), args.max_seconds, intro=False, second_copy=True)]
     if all(results):
         print("\nStart-up smoke test passed.")
     else:
