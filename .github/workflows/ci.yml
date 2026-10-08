@@ -72,7 +72,7 @@ jobs:
         run: pytest -m ui
 
   package:
-    name: Windows build + start-up test
+    name: Windows build, start-up and install test
     runs-on: windows-latest
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     env:
@@ -96,3 +96,15 @@ jobs:
           }
       - name: Launch the packaged app and check it gets past the intro
         run: python tools/smoke_desktop.py --max-seconds 45 dist/Trackademic/Trackademic.exe
+      - name: Build the installer
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          iscc /DAppVersion=$((Get-Content VERSION -Raw).Trim()) installer\trackademic.iss
+      - name: Install, update from the last release, uninstall
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $v = (Get-Content VERSION -Raw).Trim()
+          python tools/install_test.py "dist/Trackademic-Setup-$v.exe" --version $v

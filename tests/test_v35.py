@@ -272,6 +272,7 @@ def test_notification_text_is_escaped_for_windows(monkeypatch):
     assert reminders._windows_toast("Tom & Jerry <b>", "'@ quote", "App.Id")
     assert "Tom &amp; Jerry &lt;b&gt;" in captured["script"]
     assert "CreateToastNotifier('App.Id')" in captured["script"]
+    assert "$notifier.Show($toast)" in captured["script"]
 
 
 # ── Start with Windows / single instance ──────────────────────────────

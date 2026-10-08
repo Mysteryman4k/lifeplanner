@@ -182,3 +182,34 @@ def test_restore_from_backup(server, page, tmp_path):
     page.wait_for_selector(".task >> text=Restored task")
     assert page.locator(".task").count() == 1
     assert page.errors == [], page.errors
+
+
+def test_download_backup_gives_a_valid_backup_file(server, page):
+    import json
+    page.goto(f"{server}/#/settings")
+    with page.expect_download() as dl:
+        page.click("[data-action=export]")
+    f = dl.value
+    assert f.suggested_filename.endswith(".json")
+    data = json.loads(Path(f.path()).read_text(encoding="utf-8"))
+    assert data["app"] == "Trackademic" and isinstance(data["tasks"], list)
+    assert page.errors == [], page.errors
+
+
+def test_window_loads_new_screens_after_an_update(server, page):
+    """The 3.5.0 bug: after updating, the window kept running the old version's cached app.js.
+    Simulate an update by changing the version, then check the page asks for the new files."""
+    import app as A
+    page.goto(f"{server}/#/today")
+    page.wait_for_selector(".tile")
+    real = A.APP_VERSION
+    try:
+        A.APP_VERSION = "99.0.0"
+        page.reload()
+        page.wait_for_selector(".tile")
+        status = page.evaluate("fetch('/api/diag/startup').then(r => r.json())")
+        assert "99.0.0" in status["app_js_versions"], status
+        assert status["screens_current"] is True
+    finally:
+        A.APP_VERSION = real
+    assert page.errors == [], page.errors

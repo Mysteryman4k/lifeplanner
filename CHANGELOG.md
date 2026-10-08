@@ -6,6 +6,14 @@ PATCH for fixes. Pushing a tag like `v3.2.0` publishes that version's section as
 
 ## [Unreleased]
 
+### Fixed
+
+- The red Delete button in confirm dialogs was hard to read in dark themes
+
+### Added
+
+- More automatic testing on every change: install and update from the last release on a real Windows machine, Windows-only checks, consistency checks and more browser tests
+
 ## [3.5.1] - 2026-10-07
 
 ### Fixed

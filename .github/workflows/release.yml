@@ -57,6 +57,11 @@ jobs:
       - name: Build the installer
         run: iscc /DAppVersion=${{ steps.version.outputs.version }} installer\trackademic.iss
 
+      - name: Install test - update from the last release, open, uninstall
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python tools/install_test.py "dist/Trackademic-Setup-${{ steps.version.outputs.version }}.exe" --version ${{ steps.version.outputs.version }}
+
       - name: Portable zip and checksums
         shell: pwsh
         run: |

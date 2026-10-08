@@ -512,7 +512,7 @@ def spawn_next_occurrence(conn, task: dict):
 # ═══════════════════════════════════════════════════════════════════════════
 
 # ── Start-up diagnostics: when the window actually showed the app (used by the log and CI) ──
-STARTUP = {"server_started": time.time(), "client_ready": None}
+STARTUP = {"server_started": time.time(), "client_ready": None, "app_js_loads": []}
 
 
 @app.post("/api/diag/client-ready")
@@ -526,8 +526,13 @@ def client_ready():
 @app.get("/api/diag/startup")
 def get_startup_status():
     ready = STARTUP["client_ready"]
+    loads = STARTUP["app_js_loads"]
     return {"version": APP_VERSION, "client_ready": ready is not None,
-            "seconds_to_ready": round(ready - STARTUP["server_started"], 2) if ready else None}
+            "seconds_to_ready": round(ready - STARTUP["server_started"], 2) if ready else None,
+            # Which app.js the window asked the server for. If this doesn't include the current
+            # version, the window ran a cached copy of the old screens (the 3.5.0 update bug).
+            "app_js_versions": sorted(set(loads)),
+            "screens_current": f"{APP_VERSION}" in loads}
 
 
 @app.get("/api/info")
@@ -1399,6 +1404,9 @@ async def revalidate_static_files(request, call_next):
     response = await call_next(request)
     if request.url.path.startswith("/static/"):
         response.headers["Cache-Control"] = "no-cache"
+        if request.url.path == "/static/app.js":
+            STARTUP["app_js_loads"].append(request.query_params.get("v", "unversioned"))
+            del STARTUP["app_js_loads"][:-50]
     return response
 
 

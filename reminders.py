@@ -67,10 +67,12 @@ def build_digest(conn, today: date):
 
 # ── Showing a notification ───────────────────────────────────────────
 
-def _windows_toast(title: str, body: str, app_id: str) -> bool:
+def _windows_toast(title: str, body: str, app_id: str, dry_run: bool = False) -> bool:
+    """dry_run builds everything but doesn't show it (CI machines have no desktop to show it on)."""
     xml = ("<toast><visual><binding template='ToastGeneric'>"
            f"<text>{escape(title)}</text><text>{escape(body)}</text>"
            "</binding></visual></toast>")
+    show = "" if dry_run else "$notifier.Show($toast)"
     script = f"""
 [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null
 [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] > $null
@@ -79,7 +81,8 @@ $xml.LoadXml(@'
 {xml}
 '@)
 $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
-[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{app_id}').Show($toast)
+$notifier = [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{app_id}')
+{show}
 """
     encoded = base64.b64encode(script.encode("utf-16-le")).decode()
     result = subprocess.run(

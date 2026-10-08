@@ -48,8 +48,10 @@ def status(port: int):
         return None
 
 
-def run_once(cmd, port: int, max_seconds: float, intro: bool, second_copy: bool = False) -> bool:
-    data = Path(tempfile.mkdtemp(prefix="trackademic-smoke-"))
+def run_once(cmd, port: int, max_seconds: float, intro: bool, second_copy: bool = False,
+             data: Path = None, expect_version: str = None) -> bool:
+    data = Path(data) if data else Path(tempfile.mkdtemp(prefix="trackademic-smoke-"))
+    data.mkdir(parents=True, exist_ok=True)
     env = {**os.environ, "TRACKADEMIC_DATA_DIR": str(data), "TRACKADEMIC_PORT": str(port)}
     if not intro:                                      # pre-seed the "intro off" setting
         import sqlite3
@@ -80,6 +82,13 @@ def run_once(cmd, port: int, max_seconds: float, intro: bool, second_copy: bool 
             print(f"✓ App on screen after {elapsed:.1f}s (version {last['version']}, "
                   f"{last['seconds_to_ready']}s after the server started)")
             slow = elapsed > 10
+            if expect_version and last["version"] != expect_version:
+                print(f"✗ Expected version {expect_version} but {last['version']} started")
+                ok = False
+            elif last.get("screens_current") is False:        # key only exists from 3.5.2
+                print(f"✗ The window ran cached screens from an old version (loaded app.js {last['app_js_versions']}), "
+                      f"not {last['version']}")
+                ok = False
         elif proc.poll() is None:
             stage = "the server never answered" if last is None else "the server is up but the window never showed the app"
             print(f"✗ Not on screen after {max_seconds:.0f}s: {stage}")
@@ -120,13 +129,21 @@ def main():
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")   # Windows consoles default to cp1252
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--max-seconds", type=float, default=25, help="fail if the app isn't on screen by then")
+    ap.add_argument("--data-dir", help="reuse this data folder (keeps the window cache between runs)")
+    ap.add_argument("--expect-version", help="fail unless this version starts")
+    ap.add_argument("--once", action="store_true", help="one launch with the intro off (for install tests)")
     ap.add_argument("command", nargs=argparse.REMAINDER, help="how to start the app")
     args = ap.parse_args()
     if not args.command:
         ap.error("give the command that starts the app")
     cmd = [sys.executable if c == "python" else c for c in args.command]
-    results = [run_once(cmd, pick_port(), args.max_seconds, intro=True),
-               run_once(cmd, pick_port(), args.max_seconds, intro=False, second_copy=True)]
+    if args.once:
+        results = [run_once(cmd, pick_port(), args.max_seconds, intro=False,
+                            data=args.data_dir, expect_version=args.expect_version)]
+    else:
+        results = [run_once(cmd, pick_port(), args.max_seconds, intro=True, expect_version=args.expect_version),
+                   run_once(cmd, pick_port(), args.max_seconds, intro=False, second_copy=True,
+                            expect_version=args.expect_version)]
     if all(results):
         print("\nStart-up smoke test passed.")
     else:

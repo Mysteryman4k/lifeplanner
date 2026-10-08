@@ -72,7 +72,19 @@ pytest -m "not ui"                        # just the fast API tests
 ruff check .                              # lint
 ```
 
-Every push runs the **Tests** workflow on GitHub: API tests on Linux (Python 3.11–3.13) and Windows, a lint check, JavaScript and colour-contrast checks, and a real-browser smoke test of every screen. For `main` and pull requests it also builds the Windows app and **launches it for real**, checking it gets past the intro to the home screen and that opening it a second time reuses the open window (`tools/smoke_desktop.py`). The Release workflow runs the same start-up test on the exact build it's about to publish.
+Every push runs the **Tests** workflow on GitHub:
+
+- API tests on Linux (Python 3.11–3.13) and Windows, plus Windows-only checks (the Start with Windows registry entry and the notification script)
+- consistency checks: every button has a handler, every server call the screens make exists, every icon is drawn, every page file is versioned
+- lint, JavaScript syntax and colour contrast for every theme
+- a real-browser test of every screen and the main flows (tasks, repeating tasks, task types, reminders, budget, backup download and restore, fresh screens after an update)
+
+For `main` and pull requests it also builds the Windows app and installer on a real Windows machine and:
+
+- **launches it** and checks it gets past the intro, and that opening it a second time reuses the open window (`tools/smoke_desktop.py`)
+- **installs the last published release, then updates to the new build over it**, checking the new version opens with its new screens; then checks the Start-menu shortcut and that uninstalling removes the app and Start with Windows but keeps your data (`tools/install_test.py`)
+
+The Release workflow runs the same launch and install tests on the exact build it's about to publish.
 
 ## Versions and releases
 
