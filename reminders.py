@@ -104,6 +104,13 @@ def notify(title: str, body: str) -> bool:
     """Show a system notification. Returns True if it was handed to the OS."""
     try:
         if os.name == "nt":
+            import store
+            if store.is_store_build():                       # the package has its own notification identity
+                if store.show_toast(title, body):
+                    return True
+                app_id = store.app_user_model_id()
+                if app_id:
+                    return _windows_toast(title, body, app_id)
             return _windows_toast(title, body, APP_ID if _has_start_menu_shortcut() else POWERSHELL_APP_ID)
         if shutil.which("notify-send"):
             return subprocess.run(["notify-send", "-a", "Trackademic", title, body], timeout=10).returncode == 0

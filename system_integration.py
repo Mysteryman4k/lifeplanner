@@ -10,18 +10,24 @@ import sys
 import urllib.request
 from pathlib import Path
 
+import store
+
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 RUN_VALUE = "Trackademic"
 
 
 def autostart_supported() -> bool:
     """Only the installed Windows app has a stable .exe path to start at sign-in."""
+    if store.is_store_build():
+        return store.startup_supported()
     return os.name == "nt" and bool(getattr(sys, "frozen", False))
 
 
 def autostart_enabled() -> bool:
     if not autostart_supported():
         return False
+    if store.is_store_build():
+        return store.startup_enabled()
     import winreg
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as key:
@@ -34,6 +40,8 @@ def autostart_enabled() -> bool:
 def set_autostart(enabled: bool) -> bool:
     if not autostart_supported():
         return False
+    if store.is_store_build():                                 # packaged apps use a startup task, not the Run key
+        return store.set_startup(enabled)
     import winreg
     # CreateKeyEx, not OpenKey: the Run key doesn't exist on fresh accounts
     with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:

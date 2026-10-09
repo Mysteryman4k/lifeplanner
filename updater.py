@@ -21,6 +21,8 @@ import urllib.request
 from pathlib import Path
 from urllib.parse import urlparse
 
+import store
+
 UPDATE_REPO = os.environ.get("TRACKADEMIC_UPDATE_REPO", "Mysteryman4k/lifeplanner")
 API_URL = f"https://api.github.com/repos/{UPDATE_REPO}/releases/latest"
 CHECK_INTERVAL = 6 * 3600          # seconds between automatic checks
@@ -47,8 +49,9 @@ def is_newer(latest: str, current: str) -> bool:
 
 
 def is_installed_build() -> bool:
-    """True for the packaged Windows app (the only build that can update itself)."""
-    return bool(getattr(sys, "frozen", False)) and os.name == "nt"
+    """True for the packaged Windows app (the only build that can update itself).
+    The Microsoft Store build is packaged too, but the Store updates it, not us."""
+    return bool(getattr(sys, "frozen", False)) and os.name == "nt" and not store.is_store_build()
 
 
 def _get(url: str, timeout: float = 8.0) -> bytes:
@@ -80,6 +83,8 @@ def fetch_latest() -> dict:
 def check(current_version: str, force: bool = False, fetch=None) -> dict:
     """Latest release info compared with the running version. Cached between checks."""
     fetch = fetch or fetch_latest
+    if store.is_store_build():                                    # the Microsoft Store does the updating
+        return {"current": current_version, "available": False, "store_managed": True}
     with _lock:
         fresh = _cache["data"] is not None and time.time() - _cache["at"] < CHECK_INTERVAL
         if force or not fresh:

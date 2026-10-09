@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field, field_validator
 
 import reminders
 import system_integration
+import store
 import updater
 
 # ── App identity (change the name here when renaming the app) ─────────────
@@ -538,7 +539,7 @@ def get_startup_status():
 @app.get("/api/info")
 def info():
     return {"name": APP_NAME, "version": APP_VERSION, "data_file": str(DB_PATH), "today": today(),
-            "installed": updater.is_installed_build()}
+            "installed": updater.is_installed_build(), "store": store.is_store_build()}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1230,6 +1231,8 @@ def show_window():
 @app.get("/api/update/check")
 def update_check(force: bool = False):
     """force=true is a manual "Check now"; otherwise respects the auto-check setting."""
+    if store.is_store_build():
+        return {"current": APP_VERSION, "available": False, "store_managed": True}
     if not force and not _get_setting("updates", UpdateSettings).auto_check:
         return {"current": APP_VERSION, "available": False, "disabled": True}
     return updater.check(APP_VERSION, force=force)
@@ -1237,6 +1240,8 @@ def update_check(force: bool = False):
 
 @app.post("/api/update/install")
 def update_install():
+    if store.is_store_build():
+        raise HTTPException(400, "Updates come from the Microsoft Store.")
     if not updater.is_installed_build():
         raise HTTPException(400, "Automatic updates only work in the installed Windows app. "
                                  "Download the new version from the release page instead.")

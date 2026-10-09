@@ -763,6 +763,10 @@ function releaseNotesHtml(md) {
 function updatesCard() {
   const u = state.update || {};
   const current = state.info.version || '';
+  if (state.info.store) {
+    return `<div class="setting"><div><div class="setting-title">Version ${esc(current)}</div>
+      <div class="setting-desc">Trackademic updates itself through the Microsoft Store. Open the Store and check Downloads to update by hand.</div></div></div>`;
+  }
   const status = state.checkingUpdate ? 'Checking…'
     : u.available ? (u.can_install ? `Version ${esc(u.latest)} is ready to install` : `Version ${esc(u.latest)} is available`)
     : u.error ? esc(u.error)
