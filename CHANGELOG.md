@@ -6,8 +6,11 @@ PATCH for fixes. Pushing a tag like `v3.2.0` publishes that version's section as
 
 ## [Unreleased]
 
+## [3.5.2] - 2026-10-09
+
 ### Fixed
 
+- Turning on "Start with Windows" could fail on a fresh Windows account. It now works on every account
 - The red Delete button in confirm dialogs was hard to read in dark themes
 
 ### Added
