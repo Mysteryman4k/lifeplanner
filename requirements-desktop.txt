@@ -3,6 +3,7 @@ pywebview>=5.0
 # Microsoft Store build only: startup task and notifications from inside the package
 winrt-runtime>=2; sys_platform == "win32"
 winrt-Windows.ApplicationModel>=2; sys_platform == "win32"
+winrt-Windows.ApplicationModel.Activation>=2; sys_platform == "win32"
 winrt-Windows.UI.Notifications>=2; sys_platform == "win32"
 winrt-Windows.Data.Xml.Dom>=2; sys_platform == "win32"
 winrt-Windows.Foundation>=2; sys_platform == "win32"

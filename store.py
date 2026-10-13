@@ -83,6 +83,21 @@ def startup_enabled() -> bool:
         return False
 
 
+def launched_at_sign_in() -> bool:
+    """True when Windows started the packaged app through the startup task. The Run-key version passes
+    --minimized instead, but a startup task can't pass arguments."""
+    if not is_store_build():
+        return False
+    try:
+        from winrt.windows.applicationmodel import AppInstance
+        from winrt.windows.applicationmodel.activation import ActivationKind
+        args = AppInstance.get_activated_event_args()
+        return args is not None and args.kind == ActivationKind.STARTUP_TASK
+    except Exception as e:
+        _log(f"couldn't read how the app was started: {e!r}")
+        return False
+
+
 def set_startup(enabled: bool) -> bool:
     """Turn the startup task on or off. Windows may refuse (the user turned it off in Settings > Apps > Startup)."""
     try:

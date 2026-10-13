@@ -85,6 +85,49 @@ def test_store_mode_never_enables_autostart_for_source_runs(monkeypatch):
     assert not called                                  # the Store path isn't even tried
 
 
+def test_not_a_sign_in_launch_outside_the_store(monkeypatch):
+    monkeypatch.setenv("TRACKADEMIC_STORE", "0")
+    assert store.launched_at_sign_in() is False
+
+
 @pytest.mark.parametrize("version,expected", [("3.5.2", "3.5.2.0"), ("4.0.0-beta.1", "4.0.0.0")])
 def test_package_version(version, expected):
     assert load_builder().package_version(version) == expected
+
+
+class _WindowCreated(Exception):
+    pass
+
+
+@pytest.mark.parametrize("sign_in,argv,expected", [
+    (True, [], True),                     # Store startup task at sign-in
+    (False, ["--minimized"], True),       # Run key at sign-in (GitHub version)
+    (False, [], False),                   # opened normally
+])
+def test_desktop_starts_minimised_when_windows_opens_it_at_sign_in(tmp_path, monkeypatch, sign_in, argv, expected):
+    monkeypatch.setenv("TRACKADEMIC_DATA_DIR", str(tmp_path))
+    import types
+
+    import app
+    importlib.reload(app)
+    import desktop
+    import system_integration
+    monkeypatch.setattr(sys, "argv", ["Trackademic.exe", *argv])
+    monkeypatch.setattr(store, "launched_at_sign_in", lambda: sign_in)
+    # Keep main() from starting anything real: no server, no lock file, no background jobs
+    monkeypatch.setattr(desktop, "set_windows_app_id", lambda: None)
+    monkeypatch.setattr(desktop, "start_server", lambda port: None)
+    monkeypatch.setattr(system_integration, "find_running_instance", lambda *a: None)
+    monkeypatch.setattr(system_integration, "claim_instance", lambda *a: None)
+    monkeypatch.setattr(app, "auto_backup", lambda: None)
+    monkeypatch.setattr(app, "start_reminders", lambda: None)
+    created = {}
+
+    def create_window(**kwargs):
+        created.update(kwargs)
+        raise _WindowCreated
+
+    monkeypatch.setitem(sys.modules, "webview", types.SimpleNamespace(settings={}, create_window=create_window))
+    with pytest.raises(_WindowCreated):
+        desktop.main()
+    assert created["minimized"] is expected
