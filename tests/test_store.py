@@ -1,4 +1,5 @@
 """Microsoft Store build: Store mode switches off the updater, and the package manifest is valid."""
+import importlib
 import importlib.util
 import sys
 import xml.etree.ElementTree as ET
@@ -40,9 +41,11 @@ def test_store_build_leaves_updates_to_the_store(monkeypatch):
     assert not called                                  # never even asks GitHub
 
 
-def test_store_build_api(monkeypatch):
+def test_store_build_api(tmp_path, monkeypatch):
+    monkeypatch.setenv("TRACKADEMIC_DATA_DIR", str(tmp_path))          # never touch the real data folder
     monkeypatch.setenv("TRACKADEMIC_STORE", "1")
     import app
+    importlib.reload(app)
     c = TestClient(app.app)
     assert c.get("/api/info").json()["store"] is True
     assert c.get("/api/update/check?force=true").json()["store_managed"] is True
@@ -69,6 +72,17 @@ def test_manifest_images_are_all_listed():
     manifest = b.render_manifest("A.B", "CN=A", "A", "3.5.2")
     for name in b.ASSETS:
         assert f"Assets\\{name}.png" in manifest, name
+
+
+def test_store_mode_never_enables_autostart_for_source_runs(monkeypatch):
+    import system_integration
+    monkeypatch.setenv("TRACKADEMIC_STORE", "1")
+    monkeypatch.delattr(sys, "frozen", raising=False)
+    called = []
+    monkeypatch.setattr(store, "startup_supported", lambda: called.append(1) or True)
+    assert system_integration.autostart_supported() is False
+    assert system_integration.set_autostart(True) is False
+    assert not called                                  # the Store path isn't even tried
 
 
 @pytest.mark.parametrize("version,expected", [("3.5.2", "3.5.2.0"), ("4.0.0-beta.1", "4.0.0.0")])

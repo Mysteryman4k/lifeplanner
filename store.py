@@ -53,7 +53,13 @@ def app_user_model_id():
 # ── Start with Windows (startup task) ───────────────────────────────
 
 def _run(coro):
-    return asyncio.new_event_loop().run_until_complete(coro)
+    # asyncio.run closes its loop afterwards. Callers are plain functions (FastAPI runs them in a thread pool)
+    return asyncio.run(coro)
+
+
+def _log(message: str):
+    """Goes to trackademic.log in the packaged app (desktop.py sends output there)."""
+    print(f"[store] {message}", flush=True)
 
 
 async def _startup_task():
@@ -64,7 +70,8 @@ async def _startup_task():
 def startup_supported() -> bool:
     try:
         return _run(_startup_task()) is not None
-    except Exception:
+    except Exception as e:
+        _log(f"startup task unavailable: {e!r}")
         return False
 
 
@@ -84,8 +91,9 @@ def set_startup(enabled: bool) -> bool:
             _run(task.request_enable_async())
         else:
             task.disable()
-    except Exception:
-        pass
+    except Exception as e:
+        _log(f"couldn't change the startup task: {e!r}")
+    # A refusal (the user turned it off in Settings > Apps > Startup) isn't an error: it shows in the state
     return startup_enabled()
 
 
@@ -102,5 +110,6 @@ def show_toast(title: str, body: str) -> bool:
                      f"<text>{escape(title)}</text><text>{escape(body)}</text></binding></visual></toast>")
         ToastNotificationManager.create_toast_notifier().show(ToastNotification(xml))
         return True
-    except Exception:
+    except Exception as e:
+        _log(f"packaged notification failed, falling back: {e!r}")
         return False

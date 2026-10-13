@@ -18,9 +18,11 @@ RUN_VALUE = "Trackademic"
 
 def autostart_supported() -> bool:
     """Only the installed Windows app has a stable .exe path to start at sign-in."""
+    if not (os.name == "nt" and getattr(sys, "frozen", False)):    # never for source runs or other systems
+        return False
     if store.is_store_build():
         return store.startup_supported()
-    return os.name == "nt" and bool(getattr(sys, "frozen", False))
+    return True
 
 
 def autostart_enabled() -> bool:
