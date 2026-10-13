@@ -24,6 +24,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
+import ai.routes as ai_routes
 import reminders
 import system_integration
 import store
@@ -1065,6 +1066,11 @@ def _put_setting(key: str, value: str):
                      "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
 
 
+# ── AI features (preview, off by default): routes live in ai/routes.py ──
+AI_TRANSPORT = {"value": None}          # tests put an httpx.MockTransport here, so nothing goes online
+ai_routes.register(app, _get_setting, _put_setting, lambda: AI_TRANSPORT["value"])
+
+
 class MoneySettings(BaseModel):
     currency: str = Field(default="", pattern=r"^([A-Z]{3})?$")   # ISO 4217 code; "" = not chosen yet
 
@@ -1271,7 +1277,9 @@ COUNTED_TABLES = ("tasks", "subjects", "job_applications", "transactions", "budg
 BACKUP_DIR = DB_PATH.parent / "backups"
 KEEP_AUTO_BACKUPS = 10
 # Settings that belong to this computer rather than to your data, so a restore keeps the current ones
-LOCAL_SETTINGS = ("reminders_last_sent", "migrated_sample_budgets")
+# Settings that belong to this PC: never put in backups, and kept as they are when one is restored.
+# "ai" holds the AI terms agreement, which must be given again on another PC.
+LOCAL_SETTINGS = ("reminders_last_sent", "migrated_sample_budgets", "ai")
 
 
 @app.get("/api/export")
@@ -1280,7 +1288,8 @@ def export_all():
     with db() as conn:
         out = {"app": APP_NAME, "version": APP_VERSION, "exported_at": now_stamp()}
         for table in BACKUP_TABLES:
-            out[table] = [dict(r) for r in conn.execute(f"SELECT * FROM {table}")]
+            out[table] = [dict(r) for r in conn.execute(f"SELECT * FROM {table}")
+                          if table != "settings" or r["key"] not in LOCAL_SETTINGS]
     return out
 
 

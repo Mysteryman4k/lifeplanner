@@ -6,6 +6,12 @@ PATCH for fixes. Pushing a tag like `v3.2.0` publishes that version's section as
 
 ## [Unreleased]
 
+### Added (preview, off by default)
+
+- Settings has a new Study assistant section (preview). Turning it on shows what the AI features can and can't do, then the terms of use, which need three ticks to agree. Until then nothing about AI appears anywhere in the app
+- Choose an AI provider: Anthropic, OpenAI, DeepSeek, a custom OpenAI-compatible service, or Ollama for free local models. Test the connection, pick a model, and see what this PC can run. API keys are kept in Windows Credential Manager, never in your data or backups
+- Ollama's cloud models are labelled, because they send your messages to ollama.com rather than staying on your PC
+
 ### Security
 
 - EasyUniTrack's built-in server now only answers EasyUniTrack itself. Websites open in your browser can no longer read or change your planner data, even with tricks that point a web address at your own computer

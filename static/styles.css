@@ -564,3 +564,24 @@ button.tile { text-align: left; cursor: pointer; width: 100%; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+
+/* ── AI study assistant (preview) ─────────────────────── */
+.preview-badge { display: inline-block; vertical-align: middle; margin-left: 6px; font-size: 10.5px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase;
+  padding: 2px 8px; border-radius: 6px; background: var(--warn-soft); color: var(--warn); border: 1px solid color-mix(in srgb, var(--warn) 30%, var(--line)); }
+.ai-provider { align-items: flex-start; }
+.ai-pills { flex-wrap: wrap; margin: 8px 0 6px; }
+.ai-about-provider { max-width: 640px; }
+.ai-links { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; }
+.ai-links .link { display: inline-flex; align-items: center; gap: 4px; }
+.setting-desc.ai-ok { color: var(--ok); font-weight: 650; }
+.setting-desc.ai-bad { color: var(--danger); font-weight: 650; }
+.ai-about ul { margin: 12px 0 14px 18px; display: flex; flex-direction: column; gap: 10px; }
+.ai-about li { line-height: 1.5; }
+.ai-terms { display: flex; flex-direction: column; gap: 12px; }
+.terms-box { max-height: 46vh; overflow: auto; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--bg); font-size: 13.5px; line-height: 1.55; }
+.terms-box h4 { font-size: 13.5px; margin: 10px 0 2px; }
+.terms-box h4:first-child { margin-top: 0; }
+.terms-box p { color: var(--ink-2); }
+.ai-ticks { display: flex; flex-direction: column; gap: 8px; }
+.tick-row { display: flex; gap: 10px; align-items: flex-start; font-size: 13.5px; font-weight: 600; cursor: pointer; line-height: 1.45; }
+.tick-row input { width: 18px; height: 18px; margin-top: 1px; accent-color: var(--accent-text); flex: none; }
