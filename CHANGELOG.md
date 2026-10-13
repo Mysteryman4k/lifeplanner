@@ -6,9 +6,15 @@ PATCH for fixes. Pushing a tag like `v3.2.0` publishes that version's section as
 
 ## [Unreleased]
 
+## [3.6.1] - 2026-10-13
+
 ### Fixed
 
 - In the calendar's day panel, task names are no longer cut short and their details are easier to read
+
+### Added
+
+- A privacy policy, linked from the README: EasyUniTrack has no accounts, ads or tracking, and your data stays on your computer
 
 ## [3.6.0] - 2026-10-13
 
