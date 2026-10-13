@@ -66,7 +66,8 @@ def previous_release(new_version):
 
 
 def kill_app():
-    subprocess.run(["taskkill", "/IM", "EasyUniTrack.exe", "/F", "/T"], capture_output=True)
+    for exe in ("EasyUniTrack.exe", "Trackademic.exe"):          # Trackademic: releases before 3.6.0
+        subprocess.run(["taskkill", "/IM", exe, "/F", "/T"], capture_output=True)
     time.sleep(1)
 
 

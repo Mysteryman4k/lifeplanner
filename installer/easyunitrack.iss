@@ -77,8 +77,15 @@ Filename: "{app}\{#AppExe}"; Description: "Launch {#AppName}"; Flags: nowait pos
 procedure RemoveOldName();
 var
   OldDir: String;
+  ResultCode: Integer;
 begin
   OldDir := ExpandConstant('{localappdata}\Programs\Trackademic');
+  // A copy of the old app that's still open would stop its folder being removed. Its data is already
+  // saved (every change is written straight away), the same as when an update closes the app.
+  if FileExists(OldDir + '\Trackademic.exe') then begin
+    Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM Trackademic.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Sleep(1000);
+  end;
   // Only the folder the old installer used, and only if it really holds the old app
   if (CompareText(OldDir, ExpandConstant('{app}')) <> 0) and FileExists(OldDir + '\Trackademic.exe') then
     DelTree(OldDir, True, True, True);
