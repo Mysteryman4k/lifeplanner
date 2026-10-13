@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Filled in by tools/build_msix.py. The upper-case values below come from the Partner Center "Product identity" page. -->
+<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+         xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+         xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+         xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+         IgnorableNamespaces="uap rescap desktop">
+
+  <Identity Name="${IDENTITY_NAME}" Publisher="${PUBLISHER}" Version="${PACKAGE_VERSION}" ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>Trackademic</DisplayName>
+    <PublisherDisplayName>${PUBLISHER_DISPLAY_NAME}</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="en-AU" />
+    <Resource Language="en-US" />
+  </Resources>
+
+  <Applications>
+    <Application Id="App" Executable="Trackademic.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements DisplayName="Trackademic"
+                          Description="A personal planner for students: tasks, subjects, calendar, jobs and money. Works offline."
+                          BackgroundColor="transparent"
+                          Square150x150Logo="Assets\Square150x150Logo.png"
+                          Square44x44Logo="Assets\Square44x44Logo.png">
+        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png" Square71x71Logo="Assets\Square71x71Logo.png" />
+      </uap:VisualElements>
+      <Extensions>
+        <!-- "Start with Windows". The id must match STARTUP_TASK_ID in store.py -->
+        <desktop:Extension Category="windows.startupTask" Executable="Trackademic.exe" EntryPoint="Windows.FullTrustApplication">
+          <desktop:StartupTask TaskId="TrackademicStartup" Enabled="false" DisplayName="Trackademic" />
+        </desktop:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <!-- Needed because the app is a normal desktop program (Python plus a local web server) inside the package -->
+    <rescap:Capability Name="runFullTrust" />
+    <Capability Name="internetClient" />
+  </Capabilities>
+</Package>

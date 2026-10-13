@@ -1,0 +1,53 @@
+name: Microsoft Store package
+
+# Builds the .msix for the Microsoft Store. Run it by hand (Actions > Microsoft Store package > Run workflow)
+# when preparing a Store submission. It also runs on changes to the packaging files, with a placeholder
+# identity, so a broken manifest is caught early.
+#
+# For the real thing, add three repository variables (Settings > Secrets and variables > Actions > Variables)
+# from Partner Center > Product management > Product identity:
+#   STORE_IDENTITY_NAME, STORE_PUBLISHER (CN=...), STORE_PUBLISHER_DISPLAY_NAME
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: ["msix/**", "tools/build_msix.py", "store.py", ".github/workflows/store.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  msix:
+    name: Build the .msix
+    runs-on: windows-latest
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - name: Install
+        run: pip install -r requirements-dev.txt
+      - name: Build the app folder
+        run: pyinstaller --noconfirm Trackademic.spec
+      - name: Build the package
+        shell: pwsh
+        env:
+          IDENTITY_NAME: ${{ vars.STORE_IDENTITY_NAME }}
+          PUBLISHER: ${{ vars.STORE_PUBLISHER }}
+          PUBLISHER_DISPLAY_NAME: ${{ vars.STORE_PUBLISHER_DISPLAY_NAME }}
+        run: |
+          $extra = @()
+          if ($env:IDENTITY_NAME -and $env:PUBLISHER -and $env:PUBLISHER_DISPLAY_NAME) {
+            $extra = "--identity-name", $env:IDENTITY_NAME, "--publisher", $env:PUBLISHER, "--publisher-display-name", $env:PUBLISHER_DISPLAY_NAME
+          } else {
+            Write-Host "No Store identity set: building a test package with a placeholder identity."
+          }
+          python tools/build_msix.py @extra
+      - uses: actions/upload-artifact@v7
+        with:
+          name: trackademic-msix
+          path: dist/*.msix

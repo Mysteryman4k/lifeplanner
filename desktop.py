@@ -147,6 +147,10 @@ def set_windows_app_id():
         return
     try:
         import ctypes
+
+        import store
+        if store.is_store_build():                       # a packaged app already has its own id
+            return
         from reminders import APP_ID
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
     except Exception as e:
