@@ -1,9 +1,11 @@
-# Trackademic
+# EasyUniTrack
 
 [![Tests](https://github.com/Mysteryman4k/lifeplanner/actions/workflows/ci.yml/badge.svg)](https://github.com/Mysteryman4k/lifeplanner/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/Mysteryman4k/lifeplanner?label=download)](https://github.com/Mysteryman4k/lifeplanner/releases/latest)
 
 A personal planner for students: assignments and study tasks, job applications and monthly money, all in one place. It runs on your own computer, needs no account and keeps your data offline.
+
+EasyUniTrack was called Trackademic before version 3.6.0. Updating keeps all your data and settings.
 
 ## Features
 
@@ -20,11 +22,11 @@ A personal planner for students: assignments and study tasks, job applications a
 
 ## Install (Windows)
 
-1. Go to the [latest release](https://github.com/Mysteryman4k/lifeplanner/releases/latest) and download **Trackademic-Setup-x.y.z.exe**.
+1. Go to the [latest release](https://github.com/Mysteryman4k/lifeplanner/releases/latest) and download **EasyUniTrack-Setup-x.y.z.exe**.
 2. Run it. It installs for your account only, so no admin password is needed, and adds Start menu and desktop shortcuts.
-3. Trackademic checks for new versions when it opens and offers **Update now**. Updates install in about a minute and keep all your data.
+3. EasyUniTrack checks for new versions when it opens and offers **Update now**. Updates install in about a minute and keep all your data.
 
-Prefer not to install? Download the **portable zip**, unzip it anywhere and run `Trackademic.exe`.
+Prefer not to install? Download the **portable zip**, unzip it anywhere and run `EasyUniTrack.exe`.
 
 > Windows SmartScreen may say "Windows protected your PC" because the app isn't code-signed yet. Click **More info → Run anyway**.
 
@@ -54,13 +56,13 @@ On Windows the desktop window uses Microsoft Edge WebView2, which is built into 
 
 | System  | Location |
 |---------|----------|
-| Windows | `%APPDATA%\Trackademic\planner.db` |
-| macOS   | `~/Library/Application Support/Trackademic/planner.db` |
-| Linux   | `~/.local/share/Trackademic/planner.db` |
+| Windows | `%APPDATA%\EasyUniTrack\planner.db` |
+| macOS   | `~/Library/Application Support/EasyUniTrack/planner.db` |
+| Linux   | `~/.local/share/EasyUniTrack/planner.db` |
 
 Automatic daily backups are saved in a `backups` folder in the same place.
 
-Set `TRACKADEMIC_DATA_DIR` to use a different folder. Data from earlier versions, saved under the old LifePlanner name or next to `app.py`, is copied across automatically the first time you run this version.
+Set `TRACKADEMIC_DATA_DIR` to use a different folder. Data from earlier versions, saved under the old Trackademic or LifePlanner names or next to `app.py`, is copied across automatically the first time you run this version.
 
 ## Tests
 
@@ -105,11 +107,11 @@ Pushing the tag runs the **Release** workflow, which:
 1. runs all the tests,
 2. checks the tag matches `VERSION`,
 3. builds the app with PyInstaller, launches it and checks it opens properly, then builds the installer with Inno Setup,
-4. publishes a GitHub Release with `Trackademic-Setup-x.y.z.exe`, a portable zip, `SHA256SUMS.txt`, and that version's changelog as the release notes.
+4. publishes a GitHub Release with `EasyUniTrack-Setup-x.y.z.exe`, a portable zip, `SHA256SUMS.txt`, and that version's changelog as the release notes.
 
 Installed copies then see the update. The app only installs an update after checking its SHA-256 checksum against `SHA256SUMS.txt` from the same release, and only downloads from GitHub. Tags with a suffix like `v3.3.0-beta.1` are published as pre-releases, which the update check ignores.
 
-To build locally: `pip install -r requirements-dev.txt`, then `pyinstaller --noconfirm Trackademic.spec` (output in `dist/Trackademic/`). For the installer, install [Inno Setup 6](https://jrsoftware.org/isinfo.php) and run `iscc /DAppVersion=3.2.0 installer\trackademic.iss`.
+To build locally: `pip install -r requirements-dev.txt`, then `pyinstaller --noconfirm EasyUniTrack.spec` (output in `dist/EasyUniTrack/`). For the installer, install [Inno Setup 6](https://jrsoftware.org/isinfo.php) and run `iscc /DAppVersion=3.2.0 installer\easyunitrack.iss`.
 
 ## Project layout
 

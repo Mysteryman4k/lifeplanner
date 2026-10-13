@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Start-up smoke test for the real desktop app.
 
-Launches the app (the packaged Trackademic.exe, or `python desktop.py`), waits until the
+Launches the app (the packaged EasyUniTrack.exe, or `python desktop.py`), waits until the
 window has actually loaded the app past the intro, then closes it. Fails if that takes too long,
 which is exactly how 3.3.0 broke (stuck on the intro) without any unit test noticing.
 
-  python tools/smoke_desktop.py dist/Trackademic/Trackademic.exe
+  python tools/smoke_desktop.py dist/EasyUniTrack/EasyUniTrack.exe
   python tools/smoke_desktop.py python desktop.py
-  python tools/smoke_desktop.py --max-seconds 20 --runs 2 dist/Trackademic/Trackademic.exe
+  python tools/smoke_desktop.py --max-seconds 20 --runs 2 dist/EasyUniTrack/EasyUniTrack.exe
 """
 import argparse
 import json
@@ -50,7 +50,7 @@ def status(port: int):
 
 def run_once(cmd, port: int, max_seconds: float, intro: bool, second_copy: bool = False,
              data: Path = None, expect_version: str = None) -> bool:
-    data = Path(data) if data else Path(tempfile.mkdtemp(prefix="trackademic-smoke-"))
+    data = Path(data) if data else Path(tempfile.mkdtemp(prefix="easyunitrack-smoke-"))
     data.mkdir(parents=True, exist_ok=True)
     env = {**os.environ, "TRACKADEMIC_DATA_DIR": str(data), "TRACKADEMIC_PORT": str(port)}
     if not intro:                                      # pre-seed the "intro off" setting
@@ -99,7 +99,7 @@ def run_once(cmd, port: int, max_seconds: float, intro: bool, second_copy: bool 
     if not ok or slow:
         if slow:
             print("  (slower than expected; start-up log below)")
-        for name in ("trackademic.log", "stdout.txt"):
+        for name in ("easyunitrack.log", "stdout.txt"):
             f = data / name
             if f.exists() and f.read_text(encoding="utf-8", errors="replace").strip():
                 print(f"--- {name} ---")
@@ -108,7 +108,7 @@ def run_once(cmd, port: int, max_seconds: float, intro: bool, second_copy: bool 
 
 
 def check_second_copy(cmd, env, first, port) -> bool:
-    """Opening Trackademic again should bring the open window forward and quit, not start a second app."""
+    """Opening EasyUniTrack again should bring the open window forward and quit, not start a second app."""
     env2 = {**env, "TRACKADEMIC_PORT": str(pick_port())}
     started = time.time()
     second = subprocess.Popen(cmd, env=env2, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

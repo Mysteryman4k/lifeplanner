@@ -1,7 +1,7 @@
 """
 Microsoft Store (MSIX) build support.
 
-When Trackademic is installed from the Microsoft Store it runs as a packaged app. Four things differ:
+When EasyUniTrack is installed from the Microsoft Store it runs as a packaged app. Four things differ:
   - the Store handles updates, so the built-in GitHub updater is switched off
   - "Start with Windows" uses the package's startup task instead of the Run registry key
   - notifications use the package's own app id (no Start-menu shortcut tricks)
@@ -13,7 +13,7 @@ import asyncio
 import os
 import sys
 
-STARTUP_TASK_ID = "TrackademicStartup"      # must match the <desktop:StartupTask TaskId> in the manifest
+STARTUP_TASK_ID = "EasyUniTrackStartup"      # must match the <desktop:StartupTask TaskId> in the manifest
 APP_ENTRY_ID = "App"                        # the Application Id in the manifest
 
 
@@ -42,7 +42,7 @@ def is_store_build() -> bool:
 
 
 def app_user_model_id():
-    """The id Windows gives this package's notifications and taskbar entry, e.g. 'Publisher.Trackademic_abc!App'."""
+    """The id Windows gives this package's notifications and taskbar entry, e.g. 'Publisher.EasyUniTrack_abc!App'."""
     try:
         family = _package_name("GetCurrentPackageFamilyName")
     except Exception:
@@ -58,7 +58,7 @@ def _run(coro):
 
 
 def _log(message: str):
-    """Goes to trackademic.log in the packaged app (desktop.py sends output there)."""
+    """Goes to easyunitrack.log in the packaged app (desktop.py sends output there)."""
     print(f"[store] {message}", flush=True)
 
 

@@ -3,7 +3,7 @@ Update checks against GitHub Releases.
 
 How releases work:
   1. Bump the version (python tools/bump_version.py minor) and push a tag like v3.2.0.
-  2. The "Release" GitHub Action builds Trackademic-Setup-<version>.exe, a portable zip
+  2. The "Release" GitHub Action builds EasyUniTrack-Setup-<version>.exe, a portable zip
      and SHA256SUMS.txt, and publishes them as a GitHub Release.
   3. Installed copies check the latest release (at most every few hours, can be turned off),
      and on Windows can download the installer, verify its checksum and run it silently.
@@ -59,7 +59,7 @@ def _get(url: str, timeout: float = 8.0) -> bytes:
     if urlparse(url).scheme != "https" or host not in ALLOWED_HOSTS:
         raise ValueError(f"Refusing to download from {host or url}")
     req = urllib.request.Request(url, headers={
-        "User-Agent": "Trackademic-updater", "Accept": "application/vnd.github+json, application/octet-stream"})
+        "User-Agent": "EasyUniTrack-updater", "Accept": "application/vnd.github+json, application/octet-stream"})
     with urllib.request.urlopen(req, timeout=timeout) as r:      # redirects to GitHub's CDN are followed
         final_host = urlparse(r.geturl()).hostname or ""
         if final_host not in ALLOWED_HOSTS:
@@ -112,7 +112,7 @@ def check(current_version: str, force: bool = False, fetch=None) -> dict:
 
 
 def installer_asset(latest: dict):
-    name = f"Trackademic-Setup-{latest['version']}.exe"
+    name = f"EasyUniTrack-Setup-{latest['version']}.exe"
     return (name, latest["assets"][name]) if name in latest["assets"] else None
 
 

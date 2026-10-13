@@ -21,7 +21,7 @@ def test_notification_script_runs_on_windows():
 def test_start_with_windows_round_trip(monkeypatch, tmp_path):
     import winreg
     monkeypatch.setattr(sys, "frozen", True, raising=False)
-    monkeypatch.setattr(sys, "executable", str(tmp_path / "Trackademic.exe"))
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "EasyUniTrack.exe"))
 
     def current():
         try:
@@ -34,7 +34,7 @@ def test_start_with_windows_round_trip(monkeypatch, tmp_path):
     try:
         assert system_integration.autostart_supported()
         assert system_integration.set_autostart(True) is True
-        assert current() == f'"{tmp_path / "Trackademic.exe"}" --minimized'
+        assert current() == f'"{tmp_path / "EasyUniTrack.exe"}" --minimized'
         assert system_integration.set_autostart(False) is False
         assert current() is None
         assert system_integration.set_autostart(False) is False        # turning off twice is fine
@@ -47,3 +47,43 @@ def test_start_with_windows_round_trip(monkeypatch, tmp_path):
 def test_suggested_currency_reads_the_windows_region():
     import app
     assert len(app.suggested_currency()) == 3
+
+
+def test_start_with_windows_moves_over_from_the_old_name(monkeypatch, tmp_path):
+    """Updating from Trackademic: an old "Start with Windows" entry becomes an EasyUniTrack one."""
+    import winreg
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "EasyUniTrack.exe"))
+    names = (system_integration.RUN_VALUE, *system_integration.OLD_RUN_VALUES)
+
+    def read(name):
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, system_integration.RUN_KEY) as key:
+                return winreg.QueryValueEx(key, name)[0]
+        except OSError:
+            return None
+
+    def write(name, value):
+        with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, system_integration.RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
+            if value is None:
+                try:
+                    winreg.DeleteValue(key, name)
+                except FileNotFoundError:
+                    pass
+            else:
+                winreg.SetValueEx(key, name, 0, winreg.REG_SZ, value)
+
+    before = {name: read(name) for name in names}                  # this machine's real entries
+    try:
+        write("Trackademic", r'"C:\old\Trackademic.exe" --minimized')
+        write(system_integration.RUN_VALUE, None)
+        system_integration.migrate_autostart()
+        assert read("Trackademic") is None
+        assert read(system_integration.RUN_VALUE) == f'"{tmp_path / "EasyUniTrack.exe"}" --minimized'
+
+        write(system_integration.RUN_VALUE, None)                   # it was off: stays off
+        system_integration.migrate_autostart()
+        assert read(system_integration.RUN_VALUE) is None
+    finally:
+        for name, value in before.items():                          # leave the machine as it was
+            write(name, value)

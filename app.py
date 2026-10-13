@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Trackademic — student planner, job tracker and money manager.
+EasyUniTrack — student planner, job tracker and money manager.
 FastAPI backend + SQLite database.
 
 Run directly:  python app.py        (serves on http://127.0.0.1:8585)
@@ -28,9 +28,9 @@ import store
 import updater
 
 # ── App identity (change the name here when renaming the app) ─────────────
-APP_NAME = "Trackademic"
-APP_SLUG = "Trackademic"          # folder name used for user data
-PREVIOUS_SLUGS = ["LifePlanner"]  # data folders of earlier names, migrated automatically
+APP_NAME = "EasyUniTrack"
+APP_SLUG = "EasyUniTrack"          # folder name used for user data
+PREVIOUS_SLUGS = ["Trackademic", "LifePlanner"]  # data folders of earlier names, copied across automatically
 
 BASE = Path(__file__).resolve().parent
 STATIC = BASE / "static"
@@ -1221,7 +1221,7 @@ WINDOW = {"show": None}
 
 @app.post("/api/window/show")
 def show_window():
-    """Another copy of Trackademic was opened: bring this window to the front instead."""
+    """Another copy of EasyUniTrack was opened: bring this window to the front instead."""
     if WINDOW["show"]:
         threading.Thread(target=WINDOW["show"], daemon=True).start()
         return {"ok": True}
@@ -1325,9 +1325,9 @@ def get_backups():
 
 
 def _check_backup(data) -> dict:
-    if not isinstance(data, dict) or data.get("app") not in (APP_NAME, "LifePlanner") \
+    if not isinstance(data, dict) or data.get("app") not in (APP_NAME, "Trackademic", "LifePlanner") \
             or not isinstance(data.get("tasks"), list):
-        raise HTTPException(400, "That file isn't a Trackademic backup.")
+        raise HTTPException(400, "That file isn't an EasyUniTrack backup.")
     for table in BACKUP_TABLES:
         rows = data.get(table, [])
         if not isinstance(rows, list) or not all(isinstance(r, dict) for r in rows):

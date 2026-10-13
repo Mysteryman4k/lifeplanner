@@ -1,9 +1,9 @@
 # -*- mode: python ; coding: utf-8 -*-
-# Build:  pyinstaller --noconfirm Trackademic.spec   ->  dist/Trackademic/Trackademic(.exe)
+# Build:  pyinstaller --noconfirm EasyUniTrack.spec   ->  dist/EasyUniTrack/EasyUniTrack(.exe)
 #
-# "onedir" build: a folder with Trackademic.exe and its files. It starts much faster than a
+# "onedir" build: a folder with EasyUniTrack.exe and its files. It starts much faster than a
 # single-file .exe (nothing is unpacked on each launch) and is what the installer ships.
-# Your data is stored separately in %APPDATA%\Trackademic, so it's kept across updates.
+# Your data is stored separately in %APPDATA%\EasyUniTrack, so it's kept across updates.
 
 import os
 import sys
@@ -18,12 +18,12 @@ with open('build/version_info.txt', 'w', encoding='utf-8') as f:
                     fileType=0x1, subtype=0x0, date=(0, 0)),
   kids=[StringFileInfo([StringTable('040904B0', [
       StringStruct('CompanyName', 'Mysteryman4k'),
-      StringStruct('FileDescription', 'Trackademic'),
+      StringStruct('FileDescription', 'EasyUniTrack'),
       StringStruct('FileVersion', '{VERSION}'),
-      StringStruct('InternalName', 'Trackademic'),
+      StringStruct('InternalName', 'EasyUniTrack'),
       StringStruct('LegalCopyright', '(c) 2026 Mysteryman4k'),
-      StringStruct('OriginalFilename', 'Trackademic.exe'),
-      StringStruct('ProductName', 'Trackademic'),
+      StringStruct('OriginalFilename', 'EasyUniTrack.exe'),
+      StringStruct('ProductName', 'EasyUniTrack'),
       StringStruct('ProductVersion', '{VERSION}')])]),
         VarFileInfo([VarStruct('Translation', [1033, 1200])])]
 )
@@ -47,7 +47,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='Trackademic',
+    name='EasyUniTrack',
     debug=False,
     strip=False,
     upx=False,
@@ -62,5 +62,5 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=False,
-    name='Trackademic',
+    name='EasyUniTrack',
 )

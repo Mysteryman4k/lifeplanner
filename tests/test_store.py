@@ -63,7 +63,7 @@ def test_manifest_is_valid_and_matches_the_code():
     assert ident.get("Version") == "3.5.2.0"
     assert root.find("m:Properties/m:PublisherDisplayName", ns).text == "Inkpaw <Studio>"
     app = root.find("m:Applications/m:Application", ns)
-    assert app.get("Id") == store.APP_ENTRY_ID and app.get("Executable") == "Trackademic.exe"
+    assert app.get("Id") == store.APP_ENTRY_ID and app.get("Executable") == "EasyUniTrack.exe"
     assert app.find(".//d:StartupTask", ns).get("TaskId") == store.STARTUP_TASK_ID
 
 
@@ -112,7 +112,7 @@ def test_desktop_starts_minimised_when_windows_opens_it_at_sign_in(tmp_path, mon
     importlib.reload(app)
     import desktop
     import system_integration
-    monkeypatch.setattr(sys, "argv", ["Trackademic.exe", *argv])
+    monkeypatch.setattr(sys, "argv", ["EasyUniTrack.exe", *argv])
     monkeypatch.setattr(store, "launched_at_sign_in", lambda: sign_in)
     # Keep main() from starting anything real: no server, no lock file, no background jobs
     monkeypatch.setattr(desktop, "set_windows_app_id", lambda: None)

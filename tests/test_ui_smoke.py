@@ -192,7 +192,7 @@ def test_download_backup_gives_a_valid_backup_file(server, page):
     f = dl.value
     assert f.suggested_filename.endswith(".json")
     data = json.loads(Path(f.path()).read_text(encoding="utf-8"))
-    assert data["app"] == "Trackademic" and isinstance(data["tasks"], list)
+    assert data["app"] == "EasyUniTrack" and isinstance(data["tasks"], list)
     assert page.errors == [], page.errors
 
 

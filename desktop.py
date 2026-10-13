@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Trackademic desktop app — runs the local server and opens it in a native window.
+"""EasyUniTrack desktop app — runs the local server and opens it in a native window.
 
 Uses pywebview, which picks the right engine for each system:
   Windows -> Edge WebView2 (built into Windows 10/11)
@@ -23,7 +23,7 @@ STARTED = time.time()
 
 
 def log(message: str):
-    """Timestamped start-up log line (goes to trackademic.log in the packaged app)."""
+    """Timestamped start-up log line (goes to easyunitrack.log in the packaged app)."""
     print(f"[{time.time() - STARTED:6.2f}s] {message}", flush=True)
 
 
@@ -33,7 +33,7 @@ def _redirect_output_when_windowed():
     if sys.stdout is not None and sys.stderr is not None:
         return
     from app import DB_PATH
-    log = open(DB_PATH.parent / "trackademic.log", "a", encoding="utf-8", buffering=1)
+    log = open(DB_PATH.parent / "easyunitrack.log", "a", encoding="utf-8", buffering=1)
     sys.stdout = sys.stdout or log
     sys.stderr = sys.stderr or log
 
@@ -130,7 +130,7 @@ def run_in_browser(url: str):
 
 
 def bring_window_forward(window):
-    """Restore and raise the window (used when Trackademic is opened again while running)."""
+    """Restore and raise the window (used when EasyUniTrack is opened again while running)."""
     try:
         window.restore()
         window.show()
@@ -142,7 +142,7 @@ def bring_window_forward(window):
 
 
 def set_windows_app_id():
-    """Group the window with the Start-menu shortcut, so the taskbar and notifications say Trackademic."""
+    """Group the window with the Start-menu shortcut, so the taskbar and notifications say EasyUniTrack."""
     if os.name != "nt":
         return
     try:
@@ -165,10 +165,14 @@ def main():
     import store
     # started by "Start with Windows": the Run key passes --minimized, the Store's startup task can't
     minimized = "--minimized" in sys.argv or store.launched_at_sign_in()
+    try:
+        system_integration.migrate_autostart()
+    except Exception as e:
+        log(f"couldn't carry over Start with Windows: {e!r}")
     print(f"--- {APP_NAME} {APP_VERSION} starting {time.strftime('%Y-%m-%d %H:%M:%S')}"
           f"{' (minimised)' if minimized else ''}", flush=True)
 
-    # Only one Trackademic per data folder: opening it again brings the open window forward
+    # Only one EasyUniTrack per data folder: opening it again brings the open window forward
     running = system_integration.find_running_instance(DB_PATH.parent, APP_NAME)
     if running:
         log(f"already running on port {running}; bringing it forward")
@@ -226,7 +230,7 @@ def main():
         try:
             if not wait_until_ready(url):
                 log("ERROR: the local server didn't start within 30 seconds")
-                win.load_html("<body style='font:16px system-ui;padding:40px'>Trackademic couldn't start. "
+                win.load_html("<body style='font:16px system-ui;padding:40px'>EasyUniTrack couldn't start. "
                               "Please close it and try again.</body>")
                 return
             log("server ready")
@@ -240,7 +244,7 @@ def main():
             log(f"ERROR during start-up hand-off: {e!r}")
 
     log("showing splash")
-    # Trackademic's own browser cache, next to its data (not the shared %APPDATA%\pywebview folder)
+    # EasyUniTrack's own browser cache, next to its data (not the shared %APPDATA%\pywebview folder)
     webview.start(hand_over, window, private_mode=False, storage_path=str(DB_PATH.parent / "webview"))
     log("window closed")
 

@@ -1,7 +1,7 @@
 """
 Windows integration for the installed app:
-  - Start with Windows (a per-user "Run" entry that opens Trackademic minimised)
-  - Single instance: opening Trackademic again (or clicking a notification) brings the
+  - Start with Windows (a per-user "Run" entry that opens EasyUniTrack minimised)
+  - Single instance: opening EasyUniTrack again (or clicking a notification) brings the
     running window to the front instead of starting a second copy
 """
 import json
@@ -13,7 +13,8 @@ from pathlib import Path
 import store
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
-RUN_VALUE = "Trackademic"
+RUN_VALUE = "EasyUniTrack"
+OLD_RUN_VALUES = ("Trackademic",)       # earlier names of the app
 
 
 def autostart_supported() -> bool:
@@ -57,6 +58,28 @@ def set_autostart(enabled: bool) -> bool:
     return autostart_enabled()
 
 
+def migrate_autostart():
+    """After the rename: if "Start with Windows" was on under an old name, keep it on under the new one.
+    The old entry points at an .exe the update removed, so it's deleted either way."""
+    if not autostart_supported() or store.is_store_build():
+        return
+    import winreg
+    was_on = False
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE | winreg.KEY_QUERY_VALUE) as key:
+            for old in OLD_RUN_VALUES:
+                try:
+                    winreg.QueryValueEx(key, old)
+                    winreg.DeleteValue(key, old)
+                    was_on = True
+                except FileNotFoundError:
+                    pass
+    except OSError:
+        return
+    if was_on:
+        set_autostart(True)
+
+
 # ── Single instance ──────────────────────────────────────────────────
 
 def _lock_file(data_dir: Path) -> Path:
@@ -64,7 +87,7 @@ def _lock_file(data_dir: Path) -> Path:
 
 
 def find_running_instance(data_dir: Path, app_name: str):
-    """Port of an already-running Trackademic using the same data, or None."""
+    """Port of an already-running EasyUniTrack using the same data, or None."""
     try:
         info = json.loads(_lock_file(data_dir).read_text(encoding="utf-8"))
         port = int(info["port"])

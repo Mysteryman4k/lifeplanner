@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════
-   Trackademic — frontend
+   EasyUniTrack — frontend
    Plain JavaScript, no build step. One state object, render on change.
    ═══════════════════════════════════════════════════════════════ */
 'use strict';
@@ -115,7 +115,7 @@ async function loadAll() {
     $('.brand-mark').innerHTML = BRAND_MARK;
   }
   Object.assign(state, { tasks, categories, subjects, jobs, info });
-  document.title = info.name || 'Trackademic';
+  document.title = info.name || 'EasyUniTrack';
   const moneySettings = await api('/api/settings/money').catch(() => ({ currency: 'USD', chosen: false }));
   setCurrency(moneySettings.currency);
   state.currencyChosen = moneySettings.chosen;
@@ -543,7 +543,7 @@ const VIEWS = {
           <div class="onboard-icon">${icon('money', 26)}</div>
           <div class="onboard-text">
             <h2>Set up your monthly budget</h2>
-            <p>Pick your currency and how much you want to spend on things like rent, groceries and transport each month. Trackademic then shows what's left as you go.</p>
+            <p>Pick your currency and how much you want to spend on things like rent, groceries and transport each month. EasyUniTrack then shows what's left as you go.</p>
           </div>
           ${btn('budget-plan', 'Set up budget', 'arrowRight', 'btn-primary keep-label')}
         </section>` : ''}
@@ -643,7 +643,7 @@ const VIEWS = {
         <div class="card">${updatesCard()}</div>
         <h2>About</h2>
         <div class="card">
-          <div class="setting"><div><div class="setting-title">${esc(state.info.name || 'Trackademic')} ${esc(state.info.version || '')}</div><div class="setting-desc">Student planner, job tracker and money manager</div></div></div>
+          <div class="setting"><div><div class="setting-title">${esc(state.info.name || 'EasyUniTrack')} ${esc(state.info.version || '')}</div><div class="setting-desc">Student planner, job tracker and money manager</div></div></div>
           <div class="setting"><div><div class="setting-title">Made by Mysteryman4k</div><div class="setting-desc">© 2026 Mysteryman4k. All rights reserved.</div></div>
             <a class="link" href="https://github.com/Mysteryman4k/lifeplanner" target="_blank" rel="noopener">GitHub ${icon('external', 14)}</a></div>
         </div>
@@ -654,13 +654,13 @@ const VIEWS = {
 function remindersCard() {
   const r = state.reminders, a = state.autostart;
   return `
-    <div class="setting"><div><div class="setting-title">Daily reminder</div><div class="setting-desc">A notification with what's due today, what's overdue and job follow-ups. Only sent on days with something to do, while Trackademic is open (it can be minimised).</div></div>
+    <div class="setting"><div><div class="setting-title">Daily reminder</div><div class="setting-desc">A notification with what's due today, what's overdue and job follow-ups. Only sent on days with something to do, while EasyUniTrack is open (it can be minimised).</div></div>
       <button class="switch ${r.daily ? 'on' : ''}" role="switch" aria-checked="${r.daily}" data-action="toggle-reminders" aria-label="Daily reminder"><i></i></button></div>
     ${r.daily ? `<div class="setting"><div><div class="setting-title">Time</div><div class="setting-desc">If the app opens after this time, you get it then.</div></div>
       <div class="row-gap"><input class="input" type="time" id="reminderTime" value="${esc(r.time)}" aria-label="Reminder time">
       ${btn('test-reminder', 'Send test', 'bell', 'btn-ghost btn-sm keep-label')}</div></div>` : ''}
     <div class="setting"><div><div class="setting-title">Start with Windows</div><div class="setting-desc">${a.supported
-      ? 'Opens Trackademic minimised when you sign in, so reminders arrive without you opening it.'
+      ? 'Opens EasyUniTrack minimised when you sign in, so reminders arrive without you opening it.'
       : 'Available in the installed Windows app.'}</div></div>
       <button class="switch ${a.enabled ? 'on' : ''}" role="switch" aria-checked="${a.enabled}" data-action="toggle-autostart" aria-label="Start with Windows" ${a.supported ? '' : 'disabled'}><i></i></button></div>`;
 }
@@ -738,7 +738,7 @@ function renderUpdateBanner() {
   el.hidden = false;
   el.innerHTML = `
     <span class="update-dot" aria-hidden="true"></span>
-    <span><strong>Trackademic ${esc(u.latest)}</strong> is available <span class="muted">· you have ${esc(u.current)}</span></span>
+    <span><strong>EasyUniTrack ${esc(u.latest)}</strong> is available <span class="muted">· you have ${esc(u.current)}</span></span>
     <span class="spacer"></span>
     <a class="link" href="#/settings">What's new</a>
     ${u.can_install ? `<button class="btn btn-primary btn-sm keep-label" data-action="install-update">${icon('download', 15)}Update now</button>`
@@ -765,7 +765,7 @@ function updatesCard() {
   const current = state.info.version || '';
   if (state.info.store) {
     return `<div class="setting"><div><div class="setting-title">Version ${esc(current)}</div>
-      <div class="setting-desc">Trackademic updates itself through the Microsoft Store. Open the Store and check Downloads to update by hand.</div></div></div>`;
+      <div class="setting-desc">EasyUniTrack updates itself through the Microsoft Store. Open the Store and check Downloads to update by hand.</div></div></div>`;
   }
   const status = state.checkingUpdate ? 'Checking…'
     : u.available ? (u.can_install ? `Version ${esc(u.latest)} is ready to install` : `Version ${esc(u.latest)} is available`)
@@ -1221,7 +1221,7 @@ const ACTIONS = {
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = `${(state.info.name || 'trackademic').toLowerCase()}-backup-${todayStr()}.json`;
+      a.download = `${(state.info.name || 'easyunitrack').toLowerCase()}-backup-${todayStr()}.json`;
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(a.href), 2000);
       toast('Backup downloaded');
@@ -1245,7 +1245,7 @@ const ACTIONS = {
   },
   async 'install-update'() {
     const u = state.update;
-    if (!(await confirmDialog(`Update to ${u.latest}?`, 'Trackademic will close, install the update and open again. It takes about a minute.', 'Update now', 'primary'))) return;
+    if (!(await confirmDialog(`Update to ${u.latest}?`, 'EasyUniTrack will close, install the update and open again. It takes about a minute.', 'Update now', 'primary'))) return;
     $('#updateOverlay').hidden = false;
     try {
       await api('/api/update/install', { method: 'POST' });
@@ -1287,7 +1287,7 @@ const ACTIONS = {
   async 'toggle-autostart'() {
     try {
       state.autostart = await api('/api/settings/autostart', { method: 'PUT', body: { enabled: !state.autostart.enabled } });
-      stillRender(); toast(state.autostart.enabled ? 'Trackademic will start with Windows' : "Trackademic won't start with Windows");
+      stillRender(); toast(state.autostart.enabled ? 'EasyUniTrack will start with Windows' : "EasyUniTrack won't start with Windows");
     } catch (e) { toast(e.message, 'error'); }
   },
 
@@ -1305,7 +1305,7 @@ function stillRender() {
 async function restoreFromFile(file) {
   let data;
   try { data = JSON.parse(await file.text()); }
-  catch (_) { toast("That file isn't a Trackademic backup.", 'error'); return; }
+  catch (_) { toast("That file isn't an EasyUniTrack backup.", 'error'); return; }
   try {
     const p = await api('/api/import/preview', { method: 'POST', body: data });
     const c = p.counts;

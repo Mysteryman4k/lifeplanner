@@ -87,24 +87,24 @@ jobs:
       - name: Install
         run: pip install -r requirements-dev.txt
       - name: Build the app folder
-        run: pyinstaller --noconfirm Trackademic.spec
+        run: pyinstaller --noconfirm EasyUniTrack.spec
       - name: Check the build contains the app files
         shell: pwsh
         run: |
-          foreach ($f in "dist/Trackademic/Trackademic.exe", "dist/Trackademic/_internal/static/index.html", "dist/Trackademic/_internal/VERSION") {
+          foreach ($f in "dist/EasyUniTrack/EasyUniTrack.exe", "dist/EasyUniTrack/_internal/static/index.html", "dist/EasyUniTrack/_internal/VERSION") {
             if (-not (Test-Path $f)) { throw "Missing from build: $f" }
           }
       - name: Launch the packaged app and check it gets past the intro
-        run: python tools/smoke_desktop.py --max-seconds 45 dist/Trackademic/Trackademic.exe
+        run: python tools/smoke_desktop.py --max-seconds 45 dist/EasyUniTrack/EasyUniTrack.exe
       - name: Build the installer
         shell: pwsh
         run: |
           choco install innosetup -y --no-progress
-          iscc /DAppVersion=$((Get-Content VERSION -Raw).Trim()) installer\trackademic.iss
+          iscc /DAppVersion=$((Get-Content VERSION -Raw).Trim()) installer\easyunitrack.iss
       - name: Install, update from the last release, uninstall
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $v = (Get-Content VERSION -Raw).Trim()
-          python tools/install_test.py "dist/Trackademic-Setup-$v.exe" --version $v
+          python tools/install_test.py "dist/EasyUniTrack-Setup-$v.exe" --version $v

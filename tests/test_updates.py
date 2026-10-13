@@ -35,7 +35,7 @@ def test_is_newer(latest, current, newer):
 def fake_release(version, with_installer=True):
     assets = {}
     if with_installer:
-        assets[f"Trackademic-Setup-{version}.exe"] = f"https://github.com/x/y/releases/download/v{version}/setup.exe"
+        assets[f"EasyUniTrack-Setup-{version}.exe"] = f"https://github.com/x/y/releases/download/v{version}/setup.exe"
         assets["SHA256SUMS.txt"] = f"https://github.com/x/y/releases/download/v{version}/SHA256SUMS.txt"
     return {"version": version, "name": f"v{version}", "notes": "- New stuff", "url": "https://github.com/x/y/releases",
             "published_at": "2026-10-06T00:00:00Z", "assets": assets}
@@ -58,7 +58,7 @@ def test_check_survives_being_offline(monkeypatch):
 
 def test_downloads_only_from_github():
     with pytest.raises(ValueError):
-        updater._get("https://evil.example.com/Trackademic-Setup.exe")
+        updater._get("https://evil.example.com/EasyUniTrack-Setup.exe")
     with pytest.raises(ValueError):
         updater._get("http://github.com/insecure")
 
@@ -66,12 +66,12 @@ def test_downloads_only_from_github():
 def test_installer_checksum_is_verified(monkeypatch):
     rel = fake_release("3.3.0")
     good = b"installer bytes"
-    sums = f"{hashlib.sha256(good).hexdigest()}  Trackademic-Setup-3.3.0.exe\n".encode()
-    files = {rel["assets"]["SHA256SUMS.txt"]: sums, rel["assets"]["Trackademic-Setup-3.3.0.exe"]: good}
+    sums = f"{hashlib.sha256(good).hexdigest()}  EasyUniTrack-Setup-3.3.0.exe\n".encode()
+    files = {rel["assets"]["SHA256SUMS.txt"]: sums, rel["assets"]["EasyUniTrack-Setup-3.3.0.exe"]: good}
     monkeypatch.setattr(updater, "_get", lambda url, timeout=8.0: files[url])
     assert updater.download_installer(rel).read_bytes() == good
 
-    files[rel["assets"]["Trackademic-Setup-3.3.0.exe"]] = b"tampered"
+    files[rel["assets"]["EasyUniTrack-Setup-3.3.0.exe"]] = b"tampered"
     with pytest.raises(ValueError, match="checksum"):
         updater.download_installer(rel)
 
