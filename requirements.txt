@@ -1,3 +1,5 @@
 fastapi>=0.110
 uvicorn>=0.29
 pydantic>=2.5
+httpx>=0.27            # AI providers (preview)
+keyring>=25            # AI API keys in Windows Credential Manager

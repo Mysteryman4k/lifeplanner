@@ -114,6 +114,7 @@ async function loadAll() {
   api('/api/settings/reminders').then(r => { state.reminders = r; }).catch(() => {});
   api('/api/settings/autostart').then(a => { state.autostart = a; }).catch(() => {});
   api('/api/backups').then(b => { state.backups = b; }).catch(() => {});
+  api('/api/ai/state').then(a => { state.ai = a; }).catch(() => {});
   // The database copy is the source of truth (localStorage only avoids a flash on start-up)
   if (appearance && JSON.stringify(appearance) !== JSON.stringify(window.__appearance)) {
     saveAppearanceLocal(applyAppearance(appearance));
@@ -627,6 +628,8 @@ const VIEWS = {
         </div>
         <h2>Reminders</h2>
         <div class="card">${remindersCard()}</div>
+        <h2>Study assistant <span class="preview-badge">Preview</span></h2>
+        <div class="card" id="aiCard">${aiCard()}</div>
         <h2>Task types</h2>
         <div class="card">${taskTypesCard()}</div>
         <h2>Your data</h2>
@@ -793,6 +796,98 @@ function updatesCard() {
       <div class="setting-desc">Looks for new versions on GitHub when the app opens. Nothing about you or your data is sent.</div></div>
       <button class="switch ${state.updateSettings.auto_check ? 'on' : ''}" role="switch" aria-checked="${state.updateSettings.auto_check}"
         data-action="toggle-auto-update" aria-label="Check for updates automatically"><i></i></button></div>`;
+}
+
+
+// ── AI study assistant (preview): settings, About and Terms ───────
+// Everything AI stays hidden until the student agrees to the terms here. See ai/ on the server.
+function aiCard() {
+  const a = state.ai;
+  if (!a) return `<div class="setting"><div class="setting-desc">Loading…</div></div>`;
+  if (!a.terms.agreed) {
+    const desc = a.terms.needs_reagreement
+      ? 'The terms of use have been updated. Read and agree to the new version to keep using the AI features.'
+      : 'An AI tutor for your units and a coding helper, using your own AI provider or a free model on this PC. Off until you turn it on.';
+    return `<div class="setting"><div><div class="setting-title">AI study assistant and code workspace</div><div class="setting-desc">${desc}</div></div>
+      ${btn('ai-start', a.terms.needs_reagreement ? 'Read new terms' : 'Learn more', 'spark', 'btn-primary btn-sm keep-label')}</div>`;
+  }
+  const p = a.provider, preset = a.providers[p] || null;
+  const pill = (k, v) => `<button class="${p === k ? 'on' : ''}" data-action="ai-provider" data-id="${k}">${esc(v.name)}</button>`;
+  const links = preset ? [
+    preset.key_url ? `<a class="link" href="${esc(preset.key_url)}" target="_blank" rel="noopener">${p === 'ollama' ? 'Download Ollama' : 'Get an API key'} ${icon('external', 13)}</a>` : '',
+    preset.limit_url ? `<a class="link" href="${esc(preset.limit_url)}" target="_blank" rel="noopener">Set a spending limit (recommended) ${icon('external', 13)}</a>` : '',
+  ].filter(Boolean).join(' · ') : '';
+  const needsKey = preset && (preset.needs_key || p === 'custom');
+  const models = [...new Set([...(state.aiModels || []), a.model].filter(Boolean))];
+  const t = state.aiTest;
+  const sys = state.aiSystem;
+  return `
+    <div class="setting"><div><div class="setting-title">Study assistant</div><div class="setting-desc">Explain, practise and quiz yourself on your units with an AI tutor.</div></div>
+      <button class="switch ${a.assistant_enabled ? 'on' : ''}" role="switch" aria-checked="${a.assistant_enabled}" data-action="toggle-ai-assistant" aria-label="Study assistant"><i></i></button></div>
+    <div class="setting"><div><div class="setting-title">Code workspace</div><div class="setting-desc">Help with code in folders you link. Code only runs when you click Run.</div></div>
+      <button class="switch ${a.code_enabled ? 'on' : ''}" role="switch" aria-checked="${a.code_enabled}" data-action="toggle-ai-code" aria-label="Code workspace"><i></i></button></div>
+    <div class="setting ai-provider"><div style="flex:1;min-width:0"><div class="setting-title">AI provider</div>
+      <div class="segmented ai-pills" role="group" aria-label="AI provider">${Object.entries(a.providers).map(([k, v]) => pill(k, v)).join('')}</div>
+      ${preset ? `<div class="setting-desc ai-about-provider">${esc(preset.about)}</div>${links ? `<div class="small ai-links">${links}</div>` : ''}` : `<div class="setting-desc">Choose where the AI runs. You can change this any time.</div>`}
+    </div></div>
+    ${p === 'custom' ? `<div class="setting"><div><div class="setting-title">Base URL</div><div class="setting-desc">The service's OpenAI-compatible address, for example https://openrouter.ai/api/v1</div></div>
+      <input class="input" id="aiBaseUrl" type="url" value="${esc(a.base_url)}" placeholder="https://" style="max-width:300px" aria-label="Base URL"></div>` : ''}
+    ${needsKey ? `<div class="setting"><div><div class="setting-title">API key</div><div class="setting-desc">${a.key ? `Saved in Windows Credential Manager (${esc(a.key)}). Paste a new key to replace it.` : 'Stored in Windows Credential Manager on this PC, never in your backups.'}</div></div>
+      <div class="row-gap"><input class="input" id="aiKey" type="password" autocomplete="off" spellcheck="false" placeholder="${a.key ? 'Paste a new key' : 'Paste your API key'}" style="width:220px" aria-label="API key">
+      ${btn('ai-save-key', 'Save', 'check', 'btn-ghost btn-sm keep-label')}${a.key ? btn('ai-remove-key', 'Remove', 'trash', 'btn-danger-ghost btn-sm keep-label') : ''}</div></div>` : ''}
+    ${preset ? `<div class="setting"><div style="min-width:0"><div class="setting-title">Model</div>
+      <div class="setting-desc ${t ? (t.ok ? 'ai-ok' : 'ai-bad') : ''}" id="aiTestResult">${t ? esc(t.message) : 'Test the connection to load the models available to you.'}</div></div>
+      <div class="row-gap">${models.length ? `<select class="select" id="aiModel" style="max-width:260px" aria-label="Model">${models.map(m => opt(m, (state.aiCloud || []).includes(m) ? `${m} (Ollama cloud: data leaves this PC)` : m, a.model)).join('')}</select>` : ''}
+      ${btn('ai-test', state.aiTesting ? 'Testing…' : 'Test connection', 'refresh', 'btn-ghost btn-sm keep-label', state.aiTesting ? 'disabled' : '')}</div></div>` : ''}
+    ${p === 'ollama' ? `<div class="setting"><div><div class="setting-title">This PC</div><div class="setting-desc">${sys ? `${esc(sys.advice)} ${sys.ollama.running ? `Ollama ${esc(sys.ollama.version)} is running.` : 'Ollama isn\'t running.'}` : 'Checking…'}</div></div>${icon('monitor', 20)}</div>` : ''}
+    <div class="setting"><div><div class="setting-title">Terms of use</div><div class="setting-desc">Agreed to version ${esc(a.terms.agreed_version)} on ${esc(fmt(a.terms.agreed_at.slice(0, 10), { day: 'numeric', month: 'short', year: 'numeric' }))}. Saved only on this PC.</div></div>
+      <div class="row-gap">${btn('ai-view-terms', 'View', 'shield', 'btn-ghost btn-sm keep-label')}${btn('ai-withdraw', 'Turn off', 'power', 'btn-ghost btn-sm keep-label')}</div></div>
+    <div class="setting"><div><div class="setting-title">Remove all AI data</div><div class="setting-desc">Deletes your saved API keys and AI settings, including your agreement. Your planner data isn't touched.</div></div>
+      ${btn('ai-remove-all', 'Remove', 'trash', 'btn-danger-ghost btn-sm keep-label')}</div>`;
+}
+
+async function aiTerms() {
+  if (!state.aiTerms) state.aiTerms = await api('/api/ai/terms');
+  return state.aiTerms;
+}
+
+async function openAiAbout() {
+  const t = await aiTerms();
+  const body = `
+    <div class="ai-about">
+      <p class="muted small">AI features are a <b>beta</b>. Here's what to know before you turn them on.</p>
+      <ul>${t.about.map(x => `<li><b>${esc(x.title)}.</b> ${esc(x.text)}</li>`).join('')}</ul>
+      <p class="small muted">Next you'll read the terms of use. Nothing is set up until you agree.</p>
+    </div>`;
+  const foot = `<span class="spacer"></span><button class="btn btn-ghost" type="button" data-action="close-drawer">Not now</button>
+    <button class="btn btn-primary" type="button" data-action="ai-terms-next">Next: terms</button>`;
+  openDrawer('Before you turn this on', body, foot, 'ai-about');
+}
+
+async function openAiTerms(readOnly) {
+  const t = await aiTerms();
+  const body = `
+    <div class="ai-terms">
+      <p class="small muted">EasyUniTrack AI features · terms of use (beta) · version ${esc(t.version)}</p>
+      <div class="terms-box" tabindex="0" aria-label="Terms of use">${t.terms.map(x => `<h4>${esc(x.title)}</h4><p>${esc(x.text)}</p>`).join('')}</div>
+      ${readOnly ? '' : `<div class="ai-ticks">${Object.entries(t.ticks).map(([k, text]) => `
+        <label class="tick-row"><input type="checkbox" class="ai-tick" data-k="${k}"><span>${esc(text)}</span></label>`).join('')}</div>`}
+    </div>`;
+  const foot = readOnly
+    ? `<span class="spacer"></span><button class="btn btn-ghost" type="button" data-action="close-drawer">Close</button>`
+    : `<span class="spacer"></span><button class="btn btn-ghost" type="button" data-action="close-drawer">Not now</button>
+       <button class="btn btn-primary" type="button" id="aiAgree" data-action="ai-agree" disabled>Agree and continue</button>`;
+  openDrawer('Terms of use', body, foot, 'ai-terms');
+}
+
+async function aiSettings(body) {
+  state.ai = await api('/api/ai/settings', { method: 'PUT', body });
+  return state.ai;
+}
+
+async function aiLoadSystem() {
+  try { state.aiSystem = await api('/api/ai/system'); } catch (_) { /* shown as "Checking…" */ }
+  if (route() === 'settings') stillRender();
 }
 
 // ── Drawer (forms) ────────────────────────────────────────────────
@@ -1094,6 +1189,76 @@ function celebrate(from) {
 
 // ── Actions (event delegation) ────────────────────────────────────
 const ACTIONS = {
+  async 'ai-start'() {
+    try { await openAiAbout(); } catch (e) { toast(e.message, 'error'); }
+  },
+  'ai-terms-next': () => openAiTerms(false),
+  'ai-view-terms': () => openAiTerms(true),
+  async 'ai-agree'(el) {
+    const ticks = Object.fromEntries($$('.ai-tick').map(c => [c.dataset.k, c.checked]));
+    el.disabled = true;
+    try {
+      state.ai = await api('/api/ai/terms/agree', { method: 'POST', body: { version: state.aiTerms.version, ticks } });
+      closeDrawer();
+      toast('AI features are on (preview). Choose a provider to finish setting up.');
+      stillRender();
+    } catch (e) { el.disabled = false; toast(e.message, 'error'); }
+  },
+  async 'toggle-ai-assistant'() {
+    try { await aiSettings({ assistant_enabled: !state.ai.assistant_enabled }); stillRender(); } catch (e) { toast(e.message, 'error'); }
+  },
+  async 'toggle-ai-code'() {
+    try { await aiSettings({ code_enabled: !state.ai.code_enabled }); stillRender(); } catch (e) { toast(e.message, 'error'); }
+  },
+  async 'ai-provider'(el) {
+    if (el.dataset.id === state.ai.provider) return;
+    try {
+      await aiSettings({ provider: el.dataset.id, model: '' });
+      state.aiTest = null; state.aiModels = [];
+      stillRender();
+      if (el.dataset.id === 'ollama') aiLoadSystem();
+    } catch (e) { toast(e.message, 'error'); }
+  },
+  async 'ai-save-key'() {
+    const key = $('#aiKey').value.trim();
+    if (key.length < 8) { toast("That doesn't look like a full API key.", 'error'); return; }
+    try {
+      state.ai = await api('/api/ai/key', { method: 'PUT', body: { provider: state.ai.provider, key } });
+      state.aiTest = null;
+      toast('Key saved in Windows Credential Manager');
+      stillRender();
+    } catch (e) { toast(e.message, 'error'); }
+  },
+  async 'ai-remove-key'() {
+    if (!(await confirmDialog('Remove this API key?', 'It\'s deleted from Windows Credential Manager. You can add it again any time.', 'Remove'))) return;
+    try { state.ai = await api(`/api/ai/key/${state.ai.provider}`, { method: 'DELETE' }); state.aiTest = null; stillRender(); }
+    catch (e) { toast(e.message, 'error'); }
+  },
+  async 'ai-test'() {
+    const a = state.ai;
+    state.aiTesting = true; stillRender();
+    try {
+      const r = await api('/api/ai/test', { method: 'POST', body: { provider: a.provider, model: a.model, base_url: a.provider === 'custom' ? a.base_url : '' } });
+      state.aiTest = r; state.aiModels = r.models; state.aiCloud = r.cloud_models || [];
+      if (r.ok && r.suggested && !r.models.includes(a.model)) await aiSettings({ model: r.suggested });
+    } catch (e) { state.aiTest = { ok: false, message: e.message }; }
+    state.aiTesting = false;
+    stillRender();
+  },
+  async 'ai-withdraw'() {
+    if (!(await confirmDialog('Turn off AI features?', 'This withdraws your agreement to the terms. Your saved API keys stay until you remove them.', 'Turn off'))) return;
+    try { state.ai = await api('/api/ai/terms/withdraw', { method: 'POST' }); toast('AI features are off'); stillRender(); }
+    catch (e) { toast(e.message, 'error'); }
+  },
+  async 'ai-remove-all'() {
+    if (!(await confirmDialog('Remove all AI data?', 'Deletes your saved API keys and AI settings, including your agreement to the terms. Your planner data isn\'t touched.', 'Remove'))) return;
+    try {
+      state.ai = await api('/api/ai/all', { method: 'DELETE' });
+      state.aiTest = null; state.aiModels = []; state.aiSystem = null;
+      toast('AI data removed');
+      stillRender();
+    } catch (e) { toast(e.message, 'error'); }
+  },
   'new-task': el => openTask(null, el.dataset.due ? { due_date: el.dataset.due } : {}),
   'open-task': el => openTask(Number(el.dataset.id)),
   async 'toggle-task'(el) {
@@ -1335,6 +1500,12 @@ document.addEventListener('click', e => {
 
 document.addEventListener('change', async e => {
   if (e.target.id === 'importFile' && e.target.files[0]) { restoreFromFile(e.target.files[0]); return; }
+  if (e.target.classList.contains('ai-tick')) { $('#aiAgree').disabled = $$('.ai-tick').some(c => !c.checked); return; }
+  if (e.target.id === 'aiModel' || e.target.id === 'aiBaseUrl') {
+    try { await aiSettings(e.target.id === 'aiModel' ? { model: e.target.value } : { base_url: e.target.value.trim() }); state.aiTest = null; stillRender(); }
+    catch (err) { toast(err.message, 'error'); }
+    return;
+  }
   if (e.target.id === 'reminderTime') {
     if (!e.target.value) return;
     try {

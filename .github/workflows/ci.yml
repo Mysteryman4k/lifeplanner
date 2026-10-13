@@ -5,6 +5,7 @@ on:
     branches: ["**"]
   pull_request:
   workflow_call:          # the Release workflow runs these tests before building
+  workflow_dispatch:      # run by hand from the Actions tab (or gh workflow run Tests)
 
 permissions:
   contents: read
@@ -74,7 +75,7 @@ jobs:
   package:
     name: Windows build, start-up and install test
     runs-on: windows-latest
-    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
     env:
       PYTHONUTF8: "1"
     steps:

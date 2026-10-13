@@ -32,6 +32,22 @@ def server(tmp_path_factory):
                                     "published_at": "2026-01-01T00:00:00Z", "assets": {}}
     updater._cache.update({"at": 0.0, "data": None})
     A.enable_lockdown()          # test the real screens with the server protection on, as users get it
+    # AI features: an in-memory key store (never the real Credential Manager) and a fake network
+    import httpx
+    import keyring
+    from test_ai_setup import MemoryKeyring
+    real_vault = keyring.get_keyring()
+    A.vault = MemoryKeyring()
+    keyring.set_keyring(A.vault)
+    A.fake_net = {}
+
+    def fake_net(request):
+        key = f"{request.method} {request.url.host}{request.url.path}"
+        for prefix, (status, body) in A.fake_net.items():
+            if key.startswith(prefix):
+                return httpx.Response(status, json=body)
+        raise httpx.ConnectError("offline in tests", request=request)
+    A.AI_TRANSPORT["value"] = httpx.MockTransport(fake_net)
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         port = s.getsockname()[1]
@@ -44,6 +60,8 @@ def server(tmp_path_factory):
     yield f"http://127.0.0.1:{port}"
     srv.should_exit = True
     A.LOCKDOWN["on"] = False
+    A.AI_TRANSPORT["value"] = None
+    keyring.set_keyring(real_vault)
     updater.fetch_latest = real_fetch
     updater._cache.clear()
     updater._cache.update(real_cache)
@@ -243,3 +261,63 @@ def test_server_refuses_changes_without_the_window_token(server, page):
     added = page.evaluate("api('/api/tasks', {method: 'POST', body: {title: 'From the app'}}).then(t => t.title)")
     assert added == "From the app"
     page.errors.clear()                                           # the refused request is logged as an error
+
+
+def test_ai_is_hidden_until_turned_on_then_set_up(server, page):
+    """Off by default (nothing in the sidebar), then About -> Terms (all three ticks) -> setup."""
+    import app as A
+    page.goto(f"{server}/#/today")
+    page.wait_for_selector("#nav a")
+    nav = page.inner_text("#nav").lower()
+    assert "study" not in nav and "assistant" not in nav and "code" not in nav
+
+    page.goto(f"{server}/#/settings")
+    page.wait_for_selector("#aiCard [data-action=ai-start]")
+    assert "preview" in page.inner_text(".settings").lower()
+    page.click("#aiCard [data-action=ai-start]")
+    page.wait_for_selector("#drawer:not([hidden]) .ai-about")
+    assert "can be wrong" in page.inner_text("#drawerBody").lower()
+    page.click("[data-action=ai-terms-next]")
+    page.wait_for_selector(".terms-box")
+    assert "Australian Consumer Law" in page.inner_text(".terms-box")
+    agree = page.locator("#aiAgree")
+    ticks = page.locator(".ai-tick")
+    assert ticks.count() == 3 and agree.is_disabled()
+    ticks.nth(0).check()
+    ticks.nth(1).check()
+    assert agree.is_disabled()                                  # all three are needed
+    ticks.nth(2).check()
+    assert agree.is_enabled()
+    agree.click()
+    page.wait_for_selector("#aiCard [data-action=toggle-ai-assistant]")
+    assert page.get_attribute("[data-action=toggle-ai-assistant]", "aria-checked") == "true"
+    assert page.get_attribute("[data-action=toggle-ai-code]", "aria-checked") == "false"
+
+    # Ollama: this PC check, then models from the (fake) local Ollama
+    A.fake_net.update({"GET localhost/api/version": (200, {"version": "0.40.3"}),
+                       "GET localhost/api/tags": (200, {"models": [{"name": "qwen2.5:7b"}]}),
+                       "POST localhost/api/show": (200, {"capabilities": ["completion", "tools"]})})
+    page.click("[data-action=ai-provider][data-id=ollama]")
+    page.wait_for_selector("text=Ollama 0.40.3 is running")
+    page.click("[data-action=ai-test]")
+    page.wait_for_selector("#aiTestResult.ai-ok")
+    assert page.input_value("#aiModel") == "qwen2.5:7b"
+
+    # OpenAI: the key goes to the (in-memory) vault and only its last 4 characters come back
+    page.click("[data-action=ai-provider][data-id=openai]")
+    page.fill("#aiKey", "sk-test-abcd9876")
+    page.click("[data-action=ai-save-key]")
+    page.wait_for_selector("text=Saved in Windows Credential Manager (…9876)")
+    assert A.vault.store[("EasyUniTrack AI", "openai")] == "sk-test-abcd9876"
+    assert "sk-test-abcd9876" not in page.content()
+    page.click("[data-action=ai-test]")                          # offline in tests
+    page.wait_for_selector("#aiTestResult.ai-bad")
+
+    # Turn off: back to the start, and the sidebar never changed
+    page.click("[data-action=ai-withdraw]")
+    page.click("#confirmYes")
+    page.wait_for_selector("#aiCard [data-action=ai-start]")
+    assert "assistant" not in page.inner_text("#nav").lower()
+    page.click("[data-action=ai-start]")                         # clean up for other tests
+    page.keyboard.press("Escape")
+    assert page.errors == [], page.errors
