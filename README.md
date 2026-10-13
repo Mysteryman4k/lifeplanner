@@ -7,6 +7,12 @@ A personal planner for students: assignments and study tasks, job applications a
 
 EasyUniTrack was called Trackademic before version 3.6.0. Updating keeps all your data and settings.
 
+![Today: what's due, your workload for the week and job follow-ups](docs/screenshots/1-today.png)
+
+| Tasks | Calendar | Money |
+|---|---|---|
+| ![Tasks](docs/screenshots/2-tasks.png) | ![Calendar](docs/screenshots/3-calendar.png) | ![Money](docs/screenshots/5-money.png) |
+
 ## Features
 
 - **Today**: what's overdue and due this week, your workload for the next 7 days, job follow-ups and how much budget is left
@@ -19,6 +25,10 @@ EasyUniTrack was called Trackademic before version 3.6.0. Updating keeps all you
 - **Make it yours**: 6 colour themes (Sunset is the default), 5 text styles, light, dark or system mode, and an animated intro (can be turned off)
 - **Reminders**: a daily Windows notification with what's due, at the time you choose, and an optional start with Windows
 - **Backup and restore**: one-click backup file, restore from it, plus an automatic daily copy (last 10 kept in the `backups` folder next to your data)
+
+## Privacy
+
+EasyUniTrack has no accounts, ads or tracking, and your data never leaves your computer. See the [privacy policy](PRIVACY.md).
 
 ## Install (Windows)
 
