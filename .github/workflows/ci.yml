@@ -5,6 +5,7 @@ on:
     branches: ["**"]
   pull_request:
   workflow_call:          # the Release workflow runs these tests before building
+  workflow_dispatch:      # run by hand from the Actions tab (or gh workflow run Tests)
 
 permissions:
   contents: read
