@@ -104,8 +104,14 @@ def main():
         s.bind(("127.0.0.1", 0))
         port = s.getsockname()[1]
     server = uvicorn.Server(uvicorn.Config(A.app, host="127.0.0.1", port=port, log_level="warning"))
-    threading.Thread(target=server.run, daemon=True).start()
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.time() + 30
     while not server.started:
+        if not thread.is_alive():
+            sys.exit("The app's server stopped during start-up (see the error above).")
+        if time.time() > deadline:
+            sys.exit("The app's server didn't start within 30 seconds.")
         time.sleep(0.05)
     base = f"http://127.0.0.1:{port}"
 
