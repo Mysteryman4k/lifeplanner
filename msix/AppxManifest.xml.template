@@ -44,6 +44,5 @@
   <Capabilities>
     <!-- Needed because the app is a normal desktop program (Python plus a local web server) inside the package -->
     <rescap:Capability Name="runFullTrust" />
-    <Capability Name="internetClient" />
   </Capabilities>
 </Package>

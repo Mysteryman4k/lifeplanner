@@ -162,7 +162,9 @@ def main():
     set_windows_app_id()
     import system_integration
     from app import APP_NAME, APP_VERSION, DB_PATH
-    minimized = "--minimized" in sys.argv        # started by "Start with Windows"
+    import store
+    # started by "Start with Windows": the Run key passes --minimized, the Store's startup task can't
+    minimized = "--minimized" in sys.argv or store.launched_at_sign_in()
     print(f"--- {APP_NAME} {APP_VERSION} starting {time.strftime('%Y-%m-%d %H:%M:%S')}"
           f"{' (minimised)' if minimized else ''}", flush=True)
 

@@ -85,6 +85,11 @@ def test_store_mode_never_enables_autostart_for_source_runs(monkeypatch):
     assert not called                                  # the Store path isn't even tried
 
 
+def test_not_a_sign_in_launch_outside_the_store(monkeypatch):
+    monkeypatch.setenv("TRACKADEMIC_STORE", "0")
+    assert store.launched_at_sign_in() is False
+
+
 @pytest.mark.parametrize("version,expected", [("3.5.2", "3.5.2.0"), ("4.0.0-beta.1", "4.0.0.0")])
 def test_package_version(version, expected):
     assert load_builder().package_version(version) == expected
