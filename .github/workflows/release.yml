@@ -49,25 +49,27 @@ jobs:
         run: python tools/release_notes.py ${{ steps.version.outputs.version }} release-notes.md
 
       - name: Build the app
-        run: pyinstaller --noconfirm Trackademic.spec
+        run: pyinstaller --noconfirm EasyUniTrack.spec
 
       - name: Start-up test - launch the built app and check it gets past the intro
-        run: python tools/smoke_desktop.py --max-seconds 45 dist/Trackademic/Trackademic.exe
+        run: python tools/smoke_desktop.py --max-seconds 45 dist/EasyUniTrack/EasyUniTrack.exe
 
       - name: Build the installer
-        run: iscc /DAppVersion=${{ steps.version.outputs.version }} installer\trackademic.iss
+        run: iscc /DAppVersion=${{ steps.version.outputs.version }} installer\easyunitrack.iss
 
       - name: Install test - update from the last release, open, uninstall
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python tools/install_test.py "dist/Trackademic-Setup-${{ steps.version.outputs.version }}.exe" --version ${{ steps.version.outputs.version }}
+        run: python tools/install_test.py "dist/EasyUniTrack-Setup-${{ steps.version.outputs.version }}.exe" --version ${{ steps.version.outputs.version }}
 
       - name: Portable zip and checksums
         shell: pwsh
         run: |
           $v = "${{ steps.version.outputs.version }}"
-          Compress-Archive -Path dist/Trackademic/* -DestinationPath "dist/Trackademic-$v-windows-portable.zip"
-          $files = "Trackademic-Setup-$v.exe", "Trackademic-$v-windows-portable.zip"
+          Compress-Archive -Path dist/EasyUniTrack/* -DestinationPath "dist/EasyUniTrack-$v-windows-portable.zip"
+          # Copies installed before the rename (Trackademic 3.5.x) look for this name when they update
+          Copy-Item "dist/EasyUniTrack-Setup-$v.exe" "dist/Trackademic-Setup-$v.exe"
+          $files = "EasyUniTrack-Setup-$v.exe", "EasyUniTrack-$v-windows-portable.zip", "Trackademic-Setup-$v.exe"
           $lines = foreach ($f in $files) { "{0}  {1}" -f (Get-FileHash "dist/$f" -Algorithm SHA256).Hash.ToLower(), $f }
           $lines | Set-Content -Encoding ascii dist/SHA256SUMS.txt
           Get-Content dist/SHA256SUMS.txt
@@ -81,5 +83,6 @@ jobs:
           $extra = @()
           if ($v -match "-") { $extra += "--prerelease" }     # e.g. 3.3.0-beta.1
           gh release create "${{ github.ref_name }}" `
-            "dist/Trackademic-Setup-$v.exe" "dist/Trackademic-$v-windows-portable.zip" "dist/SHA256SUMS.txt" `
-            --title "Trackademic $v" --notes-file release-notes.md @extra
+            "dist/EasyUniTrack-Setup-$v.exe" "dist/EasyUniTrack-$v-windows-portable.zip" "dist/SHA256SUMS.txt" `
+            "dist/Trackademic-Setup-$v.exe" `
+            --title "EasyUniTrack $v" --notes-file release-notes.md @extra

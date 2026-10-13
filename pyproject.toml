@@ -1,5 +1,5 @@
 [project]
-name = "trackademic"
+name = "easyunitrack"
 dynamic = ["version"]
 description = "Student planner, job tracker and money manager"
 requires-python = ">=3.10"

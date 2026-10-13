@@ -162,8 +162,8 @@ def test_restore_older_backup_missing_columns(c):
 
 @pytest.mark.parametrize("bad", [
     {"hello": "world"},
-    {"app": "Trackademic", "tasks": "nope"},
-    {"app": "Trackademic", "tasks": [], "jobs_applications": [], "transactions": [1, 2]},
+    {"app": "EasyUniTrack", "tasks": "nope"},
+    {"app": "EasyUniTrack", "tasks": [], "jobs_applications": [], "transactions": [1, 2]},
     {"app": "SomethingElse", "tasks": []},
 ])
 def test_invalid_backup_rejected_and_nothing_changes(c, bad):
@@ -174,7 +174,7 @@ def test_invalid_backup_rejected_and_nothing_changes(c, bad):
 
 def test_broken_links_roll_back(c):
     c.post("/api/tasks", json={"title": "Keep me"})
-    backup = {"app": "Trackademic", "tasks": [{"id": 1, "title": "x", "subject_id": 42}], "subjects": []}
+    backup = {"app": "EasyUniTrack", "tasks": [{"id": 1, "title": "x", "subject_id": 42}], "subjects": []}
     r = c.post("/api/import", json=backup)
     assert r.status_code == 400
     assert [t["title"] for t in c.get("/api/tasks").json()] == ["Keep me"]
@@ -283,9 +283,9 @@ def test_autostart_unsupported_outside_installed_windows_app(c):
 
 
 def test_single_instance_lock(tmp_path):
-    assert system_integration.find_running_instance(tmp_path, "Trackademic") is None
+    assert system_integration.find_running_instance(tmp_path, "EasyUniTrack") is None
     system_integration.claim_instance(tmp_path, 1)          # nothing listens on port 1
-    assert system_integration.find_running_instance(tmp_path, "Trackademic") is None
+    assert system_integration.find_running_instance(tmp_path, "EasyUniTrack") is None
 
 
 def test_window_show_without_a_window(c):

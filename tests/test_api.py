@@ -82,7 +82,7 @@ def test_appearance_settings(c):
     assert r.status_code == 200
     assert c.get("/api/settings/appearance").json()["theme"] == "midnight"
     assert c.put("/api/settings/appearance", json={"theme": "rainbow"}).status_code == 422
-    assert c.get("/api/info").json()["name"] == "Trackademic"
+    assert c.get("/api/info").json()["name"] == "EasyUniTrack"
 
 
 def test_currency_setting(c):

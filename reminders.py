@@ -17,8 +17,8 @@ from datetime import date, datetime
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-# Matches the AppUserModelID the installer gives the Start-menu shortcut, so toasts say "Trackademic"
-APP_ID = "Mysteryman4k.Trackademic"
+# Matches the AppUserModelID the installer gives the Start-menu shortcut, so toasts say "EasyUniTrack"
+APP_ID = "Mysteryman4k.Trackademic"     # internal id from the old name; never change it
 POWERSHELL_APP_ID = r"{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe"
 ACTIVE_JOB_STATUSES = ("applied", "phone_screen", "interviewing", "offer")
 
@@ -97,7 +97,7 @@ def _has_start_menu_shortcut() -> bool:
     if not getattr(sys, "frozen", False):
         return False
     programs = Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Windows" / "Start Menu" / "Programs"
-    return (programs / "Trackademic.lnk").exists() or (programs / "Trackademic" / "Trackademic.lnk").exists()
+    return (programs / "EasyUniTrack.lnk").exists() or (programs / "EasyUniTrack" / "EasyUniTrack.lnk").exists()
 
 
 def notify(title: str, body: str) -> bool:
@@ -113,7 +113,7 @@ def notify(title: str, body: str) -> bool:
                     return _windows_toast(title, body, app_id)
             return _windows_toast(title, body, APP_ID if _has_start_menu_shortcut() else POWERSHELL_APP_ID)
         if shutil.which("notify-send"):
-            return subprocess.run(["notify-send", "-a", "Trackademic", title, body], timeout=10).returncode == 0
+            return subprocess.run(["notify-send", "-a", "EasyUniTrack", title, body], timeout=10).returncode == 0
     except Exception as e:
         print(f"Notification failed: {e!r}", flush=True)
     return False

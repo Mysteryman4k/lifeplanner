@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════
-   Trackademic — appearance engine
+   EasyUniTrack — appearance engine
    Colour themes × text styles × light/dark/system.
    Loaded in <head> so the saved look is applied before first paint.
    ═══════════════════════════════════════════════════════════════ */
@@ -50,7 +50,7 @@ const FONTS = {
 };
 
 const DEFAULT_APPEARANCE = { theme: 'sunset', font: 'rounded', mode: 'system' };
-const APPEARANCE_KEY = 'trackademic-appearance';
+const APPEARANCE_KEY = 'trackademic-appearance';   // kept from the old name so saved looks carry over
 
 function hsl(h, s, l) { return `hsl(${h} ${s}% ${l}%)`; }
 

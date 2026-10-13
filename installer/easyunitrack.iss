@@ -1,0 +1,102 @@
+; EasyUniTrack Windows installer (Inno Setup 6)
+; Built by the Release GitHub Action:  iscc /DAppVersion=3.2.0 installer\easyunitrack.iss
+; Installs per-user (no admin prompt) into %LOCALAPPDATA%\Programs\EasyUniTrack.
+; Your data lives in %APPDATA%\EasyUniTrack and is never touched by install, update or uninstall.
+
+#ifndef AppVersion
+  #define AppVersion "0.0.0"
+#endif
+#define AppName "EasyUniTrack"
+#define AppExe "EasyUniTrack.exe"
+
+[Setup]
+; Keep this AppId the same forever, so new versions update the existing install
+AppId={{6F3B2E7A-9C41-4D8E-A2B5-7E1C0D9F4A63}
+AppName={#AppName}
+AppVersion={#AppVersion}
+AppVerName={#AppName} {#AppVersion}
+AppPublisher=Mysteryman4k
+AppPublisherURL=https://github.com/Mysteryman4k/lifeplanner
+AppSupportURL=https://github.com/Mysteryman4k/lifeplanner/issues
+AppUpdatesURL=https://github.com/Mysteryman4k/lifeplanner/releases
+VersionInfoVersion={#AppVersion}
+DefaultDirName={localappdata}\Programs\{#AppName}
+DefaultGroupName={#AppName}
+; The app was called Trackademic before 3.6.0. Updating moves it to the new folder and Start-menu name
+; (see [Code]) instead of reusing the old ones
+UsePreviousAppDir=no
+UsePreviousGroup=no
+DisableProgramGroupPage=yes
+DisableDirPage=auto
+PrivilegesRequired=lowest
+OutputDir=..\dist
+OutputBaseFilename=EasyUniTrack-Setup-{#AppVersion}
+SetupIconFile=..\static\icon.ico
+UninstallDisplayIcon={app}\{#AppExe}
+UninstallDisplayName={#AppName}
+Compression=lzma2/max
+SolidCompression=yes
+WizardStyle=modern
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
+CloseApplications=force
+RestartApplications=no
+
+[Languages]
+Name: "english"; MessagesFile: "compiler:Default.isl"
+
+[Tasks]
+Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"
+
+[Files]
+; Clear out files from the previous version first, so nothing stale is left behind
+Source: "..\dist\EasyUniTrack\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+[InstallDelete]
+Type: filesandordirs; Name: "{app}\_internal"
+
+[Icons]
+; AppUserModelID must match APP_ID in reminders.py, so reminder notifications show as "EasyUniTrack"
+Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"; AppUserModelID: "Mysteryman4k.Trackademic"
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon; AppUserModelID: "Mysteryman4k.Trackademic"
+
+[Registry]
+; "Start with Windows" is switched on from inside the app; uninstalling removes it
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "{#AppName}"; Flags: uninsdeletevalue dontcreatekey
+; The entry from the old name, in case the app never got to move it across
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "Trackademic"; Flags: uninsdeletevalue dontcreatekey
+
+[Run]
+; Runs after a normal install (as a "Launch" checkbox) and after a silent in-app update
+Filename: "{app}\{#AppExe}"; Description: "Launch {#AppName}"; Flags: nowait postinstall
+
+[Code]
+// Leftovers from the old name (Trackademic, before 3.6.0). Removed only after the new version has
+// installed successfully, so a failed update never leaves the user without a working app.
+// The user's data is in %APPDATA% and isn't touched.
+procedure RemoveOldName();
+var
+  OldDir: String;
+  ResultCode: Integer;
+begin
+  OldDir := ExpandConstant('{localappdata}\Programs\Trackademic');
+  // A copy of the old app that's still open would stop its folder being removed. Its data is already
+  // saved (every change is written straight away), the same as when an update closes the app.
+  if FileExists(OldDir + '\Trackademic.exe') then begin
+    Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM Trackademic.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Sleep(1000);
+  end;
+  // Only the folder the old installer used, and only if it really holds the old app
+  if (CompareText(OldDir, ExpandConstant('{app}')) <> 0) and FileExists(OldDir + '\Trackademic.exe') then
+    DelTree(OldDir, True, True, True);
+  DeleteFile(ExpandConstant('{userprograms}\Trackademic\Trackademic.lnk'));
+  RemoveDir(ExpandConstant('{userprograms}\Trackademic'));        // only if now empty
+  DeleteFile(ExpandConstant('{userprograms}\Trackademic.lnk'));
+  DeleteFile(ExpandConstant('{userdesktop}\Trackademic.lnk'));
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+    RemoveOldName();
+end;

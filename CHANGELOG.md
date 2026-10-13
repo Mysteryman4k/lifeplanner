@@ -6,6 +6,14 @@ PATCH for fixes. Pushing a tag like `v3.2.0` publishes that version's section as
 
 ## [Unreleased]
 
+### Changed
+
+- Trackademic is now called EasyUniTrack. Updating keeps everything: your data is copied to the new `%APPDATA%\EasyUniTrack` folder (the old folder is left in place), "Start with Windows" stays on if you had it on, and backups made under the old name still restore
+
+### Added
+
+- EasyUniTrack can be packaged for the Microsoft Store, where the Store handles updates
+
 ## [3.5.2] - 2026-10-09
 
 ### Fixed
