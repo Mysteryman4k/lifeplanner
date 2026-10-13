@@ -14,3 +14,11 @@ class FakeProvider(Provider):
 
     def supports_tools(self, model: str):
         return self.tools
+
+    def stream_chat(self, model: str, system: str, messages: list):
+        if self.fail:
+            raise ProviderError(self.fail)
+        self.last = {"model": model, "system": system, "messages": messages}
+        for word in ("Hello ", "from ", "the ", "fake ", "tutor."):
+            yield {"type": "text", "text": word}
+        yield {"type": "usage", "input": 12, "output": 5}

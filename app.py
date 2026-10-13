@@ -1068,7 +1068,22 @@ def _put_setting(key: str, value: str):
 
 # ── AI features (preview, off by default): routes live in ai/routes.py ──
 AI_TRANSPORT = {"value": None}          # tests put an httpx.MockTransport here, so nothing goes online
-ai_routes.register(app, _get_setting, _put_setting, lambda: AI_TRANSPORT["value"])
+def _task_context(task_id: int) -> str:
+    """A task's details for "Help me with this" (sent to the student's chosen provider)."""
+    with db() as conn:
+        row = conn.execute("""SELECT t.title, t.description, t.notes, t.due_date, t.priority, t.estimated_hours,
+                                     s.name AS subject, c.name AS type
+                              FROM tasks t LEFT JOIN subjects s ON s.id = t.subject_id
+                              LEFT JOIN categories c ON c.id = t.category_id WHERE t.id = ?""", (task_id,)).fetchone()
+    if not row:
+        return ""
+    parts = [f"Task: {row['title']}"] + [f"{k.replace('_', ' ').capitalize()}: {row[k]}" for k in
+                                          ("subject", "type", "due_date", "priority", "estimated_hours", "description", "notes")
+                                          if row[k] not in (None, "")]
+    return "\n".join(parts)
+
+
+ai_routes.register(app, _get_setting, _put_setting, lambda: AI_TRANSPORT["value"], _task_context)
 
 
 class MoneySettings(BaseModel):

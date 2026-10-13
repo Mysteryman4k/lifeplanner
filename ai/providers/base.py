@@ -77,6 +77,49 @@ class Provider:
             msg += " Note: this is an Ollama cloud model, so your messages go to ollama.com, not just this PC."
         return Result(True, msg, models, tools, sorted(self.cloud_models))
 
+    def stream_chat(self, model: str, system: str, messages: list):
+        """Yield {"type": "text", "text": ...} chunks, then {"type": "usage", "input": n, "output": n}.
+        messages: [{"role": "user"|"assistant", "content": str}]"""
+        raise NotImplementedError
+
+    def stream_lines(self, path: str, headers: dict, json: dict):
+        """POST and yield each server-sent-event data line, with the same safety checks and plain
+        errors as request()."""
+        name = self.display_name()
+        if not self.base_url:
+            raise ProviderError("Enter the service's base URL first.")
+        if headers and any(h.lower() in CREDENTIAL_HEADERS for h in headers) and not secure_for_keys(self.base_url):
+            raise ProviderError("Your API key would be sent without encryption. Use an https:// address "
+                                "(plain http:// is only allowed for services running on this PC).")
+        try:
+            with self.client() as c, c.stream("POST", self.base_url + path, headers=headers, json=json,
+                                               timeout=httpx.Timeout(120.0, connect=6.0)) as r:
+                if r.status_code >= 400:
+                    r.read()
+                    self.raise_for_status(r.status_code, name)
+                for line in r.iter_lines():
+                    if line.startswith("data:"):
+                        data = line[5:].strip()
+                        if data and data != "[DONE]":
+                            yield data
+        except httpx.ConnectError:
+            raise ProviderError(self.unreachable_message()) from None
+        except httpx.TimeoutException:
+            raise ProviderError(f"{name} took too long to answer. Try again in a moment.") from None
+        except httpx.HTTPError as e:
+            raise ProviderError(f"The connection to {name} dropped ({e.__class__.__name__}). Try again.") from None
+
+    def raise_for_status(self, status: int, name: str):
+        if status in (401, 403):
+            raise ProviderError("That key wasn't accepted. Check it was copied in full, and that it's still active.")
+        if status == 404:
+            raise ProviderError(f"{name} doesn't recognise that address or model. Check the base URL and model.")
+        if status == 429:
+            raise ProviderError(f"{name} says you've hit a rate or spending limit. Wait a little, or check your "
+                                "account's credit and limits.")
+        if status >= 400:
+            raise ProviderError(f"{name} returned an error ({status}). Try again later.")
+
     def get(self, path: str, headers: dict = None) -> dict:
         return self.request("GET", path, headers=headers)
 
@@ -96,15 +139,8 @@ class Provider:
             raise ProviderError(f"{name} took too long to answer. Try again in a moment.") from None
         except httpx.HTTPError as e:
             raise ProviderError(f"Couldn't reach {name}: {e.__class__.__name__}.") from None
-        if r.status_code in (401, 403):
-            raise ProviderError("That key wasn't accepted. Check it was copied in full, and that it's still active.")
-        if r.status_code == 404:
-            raise ProviderError(f"{name} doesn't recognise that address. Check the base URL.")
-        if r.status_code == 429:
-            raise ProviderError(f"{name} says you've hit a rate or spending limit. Wait a little, or check your "
-                                "account's credit and limits.")
         if r.status_code >= 400:
-            raise ProviderError(f"{name} returned an error ({r.status_code}). Try again later.")
+            self.raise_for_status(r.status_code, name)
         try:
             return r.json()
         except ValueError:

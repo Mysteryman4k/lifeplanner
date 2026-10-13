@@ -10,11 +10,12 @@ from typing import Literal
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
-from . import keys, system, terms
+from . import keys, prompts, system, terms
 from .providers import PRESETS, get_provider, suggest_model
 
 ProviderId = Literal["", "anthropic", "openai", "deepseek", "ollama", "custom"]
 SETTING_KEY = "ai"
+MAX_HISTORY = 20            # messages sent with each request (older ones stay on screen only)
 
 
 class AISettings(BaseModel):
@@ -45,13 +46,24 @@ class KeyIn(BaseModel):
     key: str = Field(min_length=8, max_length=500)
 
 
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=20000)
+
+
+class ChatIn(BaseModel):
+    mode: Literal["explain", "practise"] = "explain"
+    messages: list[ChatMessage] = Field(min_length=1, max_length=200)
+    task_id: int = None
+
+
 class TestIn(BaseModel):
     provider: Literal["anthropic", "openai", "deepseek", "ollama", "custom"]
     model: str = Field(default="", max_length=200)
     base_url: str = Field(default="", max_length=500)
 
 
-def register(app, get_setting, put_setting, transport_hook=lambda: None):
+def register(app, get_setting, put_setting, transport_hook=lambda: None, task_context=lambda task_id: ""):
     """Add the /api/ai routes to the app. get_setting/put_setting are app.py's settings helpers.
     transport_hook lets tests supply an httpx.MockTransport so nothing goes over the network."""
 
@@ -154,6 +166,38 @@ def register(app, get_setting, put_setting, transport_hook=lambda: None):
             r = p.test_connection(suggested)              # report tool support for the model that will be used
         return {"ok": r.ok, "message": r.message, "models": r.models, "tools": r.tools,
                 "cloud_models": r.cloud_models, "suggested": suggested}
+
+    @app.post("/api/ai/chat")
+    def chat(c: ChatIn):
+        """Stream a reply as server-sent events: {"type": "text"|"usage"|"error"|"done", ...}."""
+        import json
+
+        from fastapi.responses import StreamingResponse
+        s = require_agreement()
+        if not s.assistant_enabled:
+            raise HTTPException(403, "Turn on the Study assistant in Settings first.")
+        if not s.provider or not s.model:
+            raise HTTPException(400, "Choose an AI provider and model in Settings first.")
+        if c.messages[-1].role != "user":
+            raise HTTPException(400, "The last message must be yours.")
+        history = [m.model_dump() for m in c.messages[-MAX_HISTORY:]]       # keeps cost and length down
+        while history and history[0]["role"] != "user":
+            history.pop(0)
+        system_text = prompts.system_prompt(c.mode, task_context(c.task_id) if c.task_id else "")
+        base = (s.base_url or None) if s.provider == "custom" else None
+        provider = get_provider(s.provider, key=keys.get(s.provider), base_url=base, transport=transport_hook())
+
+        def events():
+            try:
+                for ev in provider.stream_chat(s.model, system_text, history):
+                    yield f"data: {json.dumps(ev)}\n\n"
+            except Exception as e:                       # ProviderError has a plain message; others don't
+                from .providers import ProviderError
+                msg = str(e) if isinstance(e, ProviderError) else "Something went wrong while getting the reply. Try again."
+                yield f"data: {json.dumps({'type': 'error', 'message': msg})}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'model': s.model})}\n\n"
+
+        return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
 
     @app.get("/api/ai/system")
     def get_system():
