@@ -78,10 +78,15 @@ const REPEAT_SHORT = { daily: 'Daily', weekly: 'Weekly', fortnightly: 'Fortnight
 setCurrency('USD');   // replaced by the saved/suggested currency once settings load
 
 // ── API ───────────────────────────────────────────────────────────
+// Written into the page by the app; the local server refuses changes without it (see app.py)
+const APP_TOKEN = document.querySelector('meta[name="app-token"]')?.content || '';
+
 async function api(path, { method = 'GET', body } = {}) {
+  const headers = { 'X-EasyUniTrack-Token': APP_TOKEN };
+  if (body) headers['Content-Type'] = 'application/json';
   const res = await fetch(path, {
     method,
-    headers: body ? { 'Content-Type': 'application/json' } : undefined,
+    headers,
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) {

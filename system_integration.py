@@ -123,17 +123,27 @@ def find_running_instance(data_dir: Path, app_name: str):
     return None
 
 
-def bring_to_front(port: int) -> bool:
+def instance_token(data_dir: Path) -> str:
+    """The running copy's session token, so a second copy may ask it to come forward."""
     try:
-        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/window/show", method="POST")
+        return str(json.loads(_lock_file(data_dir).read_text(encoding="utf-8")).get("token", ""))
+    except Exception:
+        return ""
+
+
+def bring_to_front(port: int, token: str = "") -> bool:
+    try:
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/window/show", method="POST",
+                                     headers={"X-EasyUniTrack-Token": token})
         with urllib.request.urlopen(req, timeout=3):
             return True
     except Exception:
         return False
 
 
-def claim_instance(data_dir: Path, port: int):
+def claim_instance(data_dir: Path, port: int, token: str = ""):
     try:
-        _lock_file(data_dir).write_text(json.dumps({"port": port, "pid": os.getpid()}), encoding="utf-8")
+        _lock_file(data_dir).write_text(json.dumps({"port": port, "pid": os.getpid(), "token": token}),
+                                        encoding="utf-8")
     except OSError:
         pass

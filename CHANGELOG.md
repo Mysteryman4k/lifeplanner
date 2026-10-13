@@ -6,6 +6,10 @@ PATCH for fixes. Pushing a tag like `v3.2.0` publishes that version's section as
 
 ## [Unreleased]
 
+### Security
+
+- EasyUniTrack's built-in server now only answers EasyUniTrack itself. Websites open in your browser can no longer read or change your planner data, even with tricks that point a web address at your own computer
+
 ## [3.6.1] - 2026-10-13
 
 ### Fixed

@@ -54,7 +54,8 @@ def free_port(preferred: int = 8585) -> int:
 
 def start_server(port: int):
     import uvicorn
-    from app import app
+    from app import app, enable_lockdown
+    enable_lockdown()
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", use_colors=False)
     uvicorn.Server(config).run()
 
@@ -177,7 +178,8 @@ def main():
     if running:
         log(f"already running on port {running}; bringing it forward")
         if not minimized:
-            system_integration.bring_to_front(running)
+            if not system_integration.bring_to_front(running, system_integration.instance_token(DB_PATH.parent)):
+                log("couldn't ask the open window to come forward")
         return
 
     forced = os.environ.get("TRACKADEMIC_PORT")       # tests pin the port so they can find the app
@@ -185,7 +187,8 @@ def main():
     url = f"http://127.0.0.1:{port}/"
     threading.Thread(target=start_server, args=(port,), daemon=True).start()   # starts while the splash plays
     log(f"server starting on port {port}")
-    system_integration.claim_instance(DB_PATH.parent, port)
+    from app import SESSION_TOKEN
+    system_integration.claim_instance(DB_PATH.parent, port, SESSION_TOKEN)
 
     import app as backend
     threading.Thread(target=backend.auto_backup, name="backup", daemon=True).start()

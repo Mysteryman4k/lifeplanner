@@ -6,8 +6,10 @@ FastAPI backend + SQLite database.
 Run directly:  python app.py        (serves on http://127.0.0.1:8585)
 Desktop app:   python desktop.py
 """
+import hmac
 import os
 import re
+import secrets
 import sqlite3
 import sys
 import threading
@@ -18,7 +20,7 @@ from pathlib import Path
 from typing import Literal, Optional
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
@@ -1393,6 +1395,49 @@ def import_all(data: dict):
 NO_CACHE = {"Cache-Control": "no-cache"}
 
 
+# ── Local server protection ──────────────────────────────────────────
+# The server listens on 127.0.0.1 only, but a web page open in the user's browser can still try to
+# reach it. Two checks stop that:
+#  1. Host: only 127.0.0.1/localhost. This blocks "DNS rebinding", where a website points its own
+#     name at 127.0.0.1 so the browser treats the app as part of that website.
+#  2. Token: every request that changes something must carry a secret made at start-up. Only this
+#     app's own page (it's written into index.html) and a second copy of the app (instance.json in
+#     the data folder) know it.
+# The launchers (desktop.py, `python app.py`) switch this on; tests switch it on where they test it.
+SESSION_TOKEN = secrets.token_urlsafe(32)
+TOKEN_HEADER = "X-EasyUniTrack-Token"
+LOCAL_HOSTS = {"127.0.0.1", "localhost", "[::1]"}
+LOCKDOWN = {"on": False, "hosts": set(LOCAL_HOSTS)}
+CHANGES = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+def enable_lockdown(extra_hosts=()):
+    """Turn on the host and token checks. extra_hosts: other names allowed, for someone who
+    deliberately serves the app to other devices (TRACKADEMIC_HOST=0.0.0.0)."""
+    LOCKDOWN["on"] = True
+    LOCKDOWN["hosts"] = set(LOCAL_HOSTS) | {h.strip().lower() for h in extra_hosts if h.strip()}
+
+
+def _host_name(host_header: str) -> str:
+    host = (host_header or "").strip().lower()
+    if host.startswith("["):                         # IPv6, e.g. [::1]:8585
+        return host[:host.find("]") + 1]
+    return host.split(":", 1)[0]
+
+
+@app.middleware("http")
+async def protect_local_server(request, call_next):
+    if LOCKDOWN["on"]:
+        if _host_name(request.headers.get("host", "")) not in LOCKDOWN["hosts"]:
+            return JSONResponse({"detail": "This address isn't allowed."}, status_code=403)
+        if request.method in CHANGES and request.url.path.startswith("/api/"):
+            sent = request.headers.get(TOKEN_HEADER, "")
+            if not hmac.compare_digest(sent.encode(), SESSION_TOKEN.encode()):
+                return JSONResponse({"detail": "That request didn't come from the EasyUniTrack window."},
+                                    status_code=403)
+    return await call_next(request)
+
+
 @app.get("/")
 def index():
     """The page, with the version added to its script and style links (app.js?v=3.5.1), so after an
@@ -1400,6 +1445,8 @@ def index():
     (3.5.0 shipped without this: updated installs kept running the old screens.)"""
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     html = re.sub(r'(/static/[\w./-]+\.(?:js|css))(?=")', rf"\1?v={APP_VERSION}", html)
+    # The page sends this token with every change (see protect_local_server)
+    html = html.replace("<head>", f'<head>\n<meta name="app-token" content="{SESSION_TOKEN}">', 1)
     return HTMLResponse(html, headers=NO_CACHE)
 
 
@@ -1436,6 +1483,9 @@ if __name__ == "__main__":
     # 127.0.0.1 keeps your data private to this computer.
     # Set TRACKADEMIC_HOST=0.0.0.0 only if you deliberately want other devices to reach it.
     host = os.environ.get("TRACKADEMIC_HOST", "127.0.0.1")
+    # Serving to other devices also needs their address for this computer listed, e.g.
+    # TRACKADEMIC_ALLOWED_HOSTS=192.168.1.20,my-laptop.local
+    enable_lockdown(os.environ.get("TRACKADEMIC_ALLOWED_HOSTS", "").split(","))
     print(f"\n  {APP_NAME} {APP_VERSION} — http://127.0.0.1:{port}\n  Data: {DB_PATH}\n")
     auto_backup()
     uvicorn.run(app, host=host, port=port, log_level="info")
