@@ -22,7 +22,15 @@ def server(tmp_path_factory):
     import uvicorn
     os.environ["TRACKADEMIC_DATA_DIR"] = str(tmp_path_factory.mktemp("data"))
     import app as A
+    import updater
     importlib.reload(A)
+    # Every page load checks for updates. Never ask the real GitHub from tests: it's slow, rate-limited
+    # on shared CI machines and made this test fail at random. Pretend the running version is the latest.
+    real_fetch, real_cache = updater.fetch_latest, dict(updater._cache)
+    updater.fetch_latest = lambda: {"version": A.APP_VERSION, "name": f"v{A.APP_VERSION}", "notes": "",
+                                    "url": "https://github.com/Mysteryman4k/lifeplanner/releases",
+                                    "published_at": "2026-01-01T00:00:00Z", "assets": {}}
+    updater._cache.update({"at": 0.0, "data": None})
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         port = s.getsockname()[1]
@@ -34,6 +42,9 @@ def server(tmp_path_factory):
         time.sleep(0.05)
     yield f"http://127.0.0.1:{port}"
     srv.should_exit = True
+    updater.fetch_latest = real_fetch
+    updater._cache.clear()
+    updater._cache.update(real_cache)
 
 
 @pytest.fixture(scope="module")
@@ -90,7 +101,9 @@ def test_splash_hand_off_fades_into_the_app(server, page):
     assert page.request.put(f"{server}/api/settings/appearance", data=ap).ok
     page.goto(f"{server}/?{urlencode({'from': 'splash', 't': 2700, 'ap': json.dumps(ap)})}#/today")
     assert page.evaluate("document.documentElement.dataset.theme") == "berry"     # right look on the first frame
-    page.wait_for_selector("#intro", state="hidden", timeout=5000)
+    # The overlay leaves as soon as the data has loaded, and by itself after 6.65 s at the latest.
+    # Allow for slow CI machines rather than racing that safety net.
+    page.wait_for_selector("#intro", state="hidden", timeout=15000)
     assert "from=splash" not in page.url
     assert page.errors == [], page.errors
 
