@@ -135,3 +135,32 @@ def test_a_second_copy_can_still_bring_the_window_forward(A, tmp_path):
 
 def test_instance_token_is_empty_without_a_lock_file(tmp_path):
     assert system_integration.instance_token(tmp_path) == ""
+
+
+@pytest.mark.parametrize("value", ["true", "1", "yes", "on", "True"])
+def test_a_forced_update_check_needs_the_token(A, monkeypatch, value):
+    """It contacts GitHub, so another website mustn't be able to trigger it over and over."""
+    import updater
+    calls = []
+    monkeypatch.setattr(updater, "_cache", {"at": 0.0, "data": None})
+    monkeypatch.setattr(updater, "fetch_latest", lambda: calls.append(1) or {
+        "version": "0.0.1", "name": "v0.0.1", "notes": "", "url": "", "published_at": "", "assets": {}})
+    c = client(A)
+    assert c.get(f"/api/update/check?force={value}").status_code == 403
+    assert calls == []                                            # GitHub was never contacted
+    assert c.get(f"/api/update/check?force={value}", headers=token(A)).status_code == 200
+    assert calls == [1]
+
+
+@pytest.mark.parametrize("query", ["", "?force=false", "?force=0", "?force=no"])
+def test_a_normal_update_check_needs_no_token(A, monkeypatch, query):
+    import updater
+    monkeypatch.setattr(updater, "_cache", {"at": 0.0, "data": None})
+    monkeypatch.setattr(updater, "fetch_latest", lambda: {
+        "version": "0.0.1", "name": "v0.0.1", "notes": "", "url": "", "published_at": "", "assets": {}})
+    assert client(A).get(f"/api/update/check{query}").status_code == 200
+
+
+def test_an_unclear_force_value_is_treated_as_forced(A):
+    """Fail closed: anything that isn't clearly "false" needs the token."""
+    assert client(A).get("/api/update/check?force=anything").status_code == 403

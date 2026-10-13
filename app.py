@@ -1409,6 +1409,17 @@ TOKEN_HEADER = "X-EasyUniTrack-Token"
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "[::1]"}
 LOCKDOWN = {"on": False, "hosts": set(LOCAL_HOSTS)}
 CHANGES = {"POST", "PUT", "PATCH", "DELETE"}
+NOT_TRUE = {"", "0", "false", "f", "no", "n", "off"}
+
+
+def _needs_token(request) -> bool:
+    """Every change, plus reads with side effects: a forced update check contacts GitHub, so another
+    website could otherwise make the app use up GitHub's rate limit and break real update checks."""
+    path = request.url.path
+    if request.method in CHANGES and path.startswith("/api/"):
+        return True
+    force = request.query_params.get("force")
+    return path == "/api/update/check" and force is not None and force.strip().lower() not in NOT_TRUE
 
 
 def enable_lockdown(extra_hosts=()):
@@ -1430,7 +1441,7 @@ async def protect_local_server(request, call_next):
     if LOCKDOWN["on"]:
         if _host_name(request.headers.get("host", "")) not in LOCKDOWN["hosts"]:
             return JSONResponse({"detail": "This address isn't allowed."}, status_code=403)
-        if request.method in CHANGES and request.url.path.startswith("/api/"):
+        if _needs_token(request):
             sent = request.headers.get(TOKEN_HEADER, "")
             if not hmac.compare_digest(sent.encode(), SESSION_TOKEN.encode()):
                 return JSONResponse({"detail": "That request didn't come from the EasyUniTrack window."},
