@@ -163,16 +163,21 @@ def register(app, get_setting, put_setting, transport_hook=lambda: None):
     def remove_all():
         """Remove all AI data: saved keys and AI settings, including the agreement. (Chats and
         assistant-made notes join this list in later stages.)"""
-        failed = []
+        removed, failed = [], []
         for provider, preset in PRESETS.items():
             if preset["needs_key"] or provider == "custom":
+                had_key = keys.get(provider) is not None
                 try:
                     keys.delete(provider)
+                    if had_key:
+                        removed.append(preset["name"])
                 except Exception:
                     failed.append(preset["name"])
-        if failed:                       # settings stay as they were, so nothing claims to be removed
+        if failed:                       # AI settings stay as they were; say exactly what happened to the keys
+            done = (f" The key for {', '.join(removed)} was removed, so save it again if you still need it."
+                    if removed else " No keys were removed.")
             raise HTTPException(500, f"Couldn't remove the saved key for {', '.join(failed)} from Windows Credential "
-                                     "Manager, so nothing was removed. Try again.")
+                                     f"Manager.{done} Your AI settings weren't changed. Try again.")
         s = AISettings()
         save(s)
         return public_state(s)

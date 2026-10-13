@@ -374,7 +374,7 @@ def test_removing_data_reports_a_key_that_couldnt_be_deleted(c, monkeypatch):
         raise RuntimeError("vault locked")
     monkeypatch.setattr(ai.keys, "delete", broken)
     r = c.delete("/api/ai/all")
-    assert r.status_code == 500 and "nothing was removed" in r.json()["detail"]
+    assert r.status_code == 500 and "No keys were removed" in r.json()["detail"]
     assert c.get("/api/ai/state").json()["terms"]["agreed"] is True       # settings left as they were
     r = c.delete("/api/ai/key/openai")
     assert r.status_code == 500 and "Credential Manager" in r.json()["detail"]
@@ -384,3 +384,37 @@ def test_deleting_a_key_that_isnt_saved_is_fine(c):
     agree(c)
     assert c.delete("/api/ai/key/deepseek").status_code == 200
     assert c.delete("/api/ai/all").status_code == 200
+
+
+def test_partial_key_removal_is_reported_exactly(c, vault, monkeypatch):
+    """Two saved keys, the second fails: say which one was removed so it can be saved again."""
+    agree(c)
+    c.put("/api/ai/key", json={"provider": "anthropic", "key": "sk-ant-12345678"})
+    c.put("/api/ai/key", json={"provider": "openai", "key": "sk-openai-12345678"})
+    import ai.keys
+    real = ai.keys.delete
+
+    def fail_on_openai(provider):
+        if provider == "openai":
+            raise RuntimeError("vault locked")
+        real(provider)
+    monkeypatch.setattr(ai.keys, "delete", fail_on_openai)
+    detail = c.delete("/api/ai/all").json()["detail"]
+    assert "for OpenAI" in detail and "The key for Anthropic was removed" in detail and "weren't changed" in detail
+    assert ("EasyUniTrack AI", "anthropic") not in vault.store and ("EasyUniTrack AI", "openai") in vault.store
+    assert c.get("/api/ai/state").json()["terms"]["agreed"] is True
+
+
+@pytest.mark.parametrize("url,proxy", [("http://localhost:1234/v1", False), ("http://127.0.0.1:11434", False),
+                                       ("http://[::1]:8080/v1", False), ("https://api.openai.com/v1", True)])
+def test_services_on_this_pc_never_go_through_a_proxy(url, proxy, monkeypatch):
+    """With HTTP_PROXY set, a local http:// request (which may carry a key) must not be sent to the proxy."""
+    monkeypatch.setenv("HTTP_PROXY", "http://proxy.example:3128")
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.example:3128")
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    from ai.providers import get_provider
+    provider = get_provider("custom", key="sk-12345678", base_url=url)
+    with provider.client() as client:
+        assert client._trust_env is proxy
+        routed = client._transport_for_url(__import__("httpx").URL(url + "/models"))
+        assert (routed is not client._transport) is proxy             # a proxy transport only for remote https

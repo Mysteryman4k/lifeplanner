@@ -8,6 +8,17 @@ CREDENTIAL_HEADERS = {"authorization", "x-api-key"}
 LOOPBACK = {"localhost", "127.0.0.1", "::1", "[::1]"}
 
 
+def is_loopback(url: str) -> bool:
+    return httpx.URL(url).host in LOOPBACK
+
+
+def use_proxy_settings(url: str) -> bool:
+    """Never route requests for a service on this PC through a proxy from the environment (HTTP_PROXY and
+    friends): with plain http://, a key would otherwise cross the network to the proxy. Remote https://
+    providers keep proxy settings, which students on uni or work networks may need."""
+    return not is_loopback(url)
+
+
 def secure_for_keys(url: str) -> bool:
     """Keys may only travel over HTTPS, or plain HTTP to a service on this PC (e.g. LM Studio)."""
     u = httpx.URL(url)
@@ -45,7 +56,8 @@ class Provider:
 
     # ── shared ──
     def client(self) -> httpx.Client:
-        return httpx.Client(timeout=TIMEOUT, transport=self._transport, follow_redirects=False)
+        return httpx.Client(timeout=TIMEOUT, transport=self._transport, follow_redirects=False,
+                            trust_env=use_proxy_settings(self.base_url or "https://x"))
 
     def test_connection(self, model: str = "") -> Result:
         """A free check: listing models needs a valid key but uses no tokens."""

@@ -37,7 +37,7 @@ def local_model_advice(ram_gb: float) -> str:
 def ollama_status(transport=None) -> dict:
     import httpx
     try:
-        with httpx.Client(timeout=2.0, transport=transport) as c:
+        with httpx.Client(timeout=2.0, transport=transport, trust_env=False) as c:     # this PC: no proxy
             v = c.get("http://localhost:11434/api/version").json().get("version", "")
         return {"running": True, "version": v}
     except Exception:
