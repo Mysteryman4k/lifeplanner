@@ -22,7 +22,7 @@ Only people who can sign in to your Windows account can open these files, the sa
 ## Internet use
 
 - **Microsoft Store version:** the app doesn't connect to the internet. The Microsoft Store handles updates.
-- **Version from GitHub:** to tell you about new versions, the app asks GitHub for the latest release when it opens (at most every few hours). This request contains no information about you or your data. Like any website, GitHub can see your computer's IP address when it's contacted; see [GitHub's privacy statement](https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement). You can turn this off in **Settings → Updates**.
+- **Version from GitHub:** to tell you about new versions, the app asks GitHub for the latest release each time you open it, and when you press **Check now**. This request contains no information about you or your data. Like any website, GitHub can see your computer's IP address when it's contacted; see [GitHub's privacy statement](https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement). You can turn this off in **Settings → Updates**.
 - Links you click, such as a job advertisement link you saved, open in your own web browser.
 
 ## Notifications and Start with Windows
