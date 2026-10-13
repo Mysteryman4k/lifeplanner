@@ -23,7 +23,7 @@ VersionInfoVersion={#AppVersion}
 DefaultDirName={localappdata}\Programs\{#AppName}
 DefaultGroupName={#AppName}
 ; The app was called Trackademic before 3.6.0. Updating moves it to the new folder and Start-menu name
-; (see [InstallDelete]) instead of reusing the old ones
+; (see [Code]) instead of reusing the old ones
 UsePreviousAppDir=no
 UsePreviousGroup=no
 DisableProgramGroupPage=yes
@@ -54,11 +54,6 @@ Source: "..\dist\EasyUniTrack\*"; DestDir: "{app}"; Flags: ignoreversion recurse
 
 [InstallDelete]
 Type: filesandordirs; Name: "{app}\_internal"
-; Leftovers from the old name (Trackademic). The user's data is in %APPDATA% and isn't touched
-Type: filesandordirs; Name: "{localappdata}\Programs\Trackademic"
-Type: files; Name: "{userprograms}\Trackademic.lnk"
-Type: filesandordirs; Name: "{userprograms}\Trackademic"
-Type: files; Name: "{userdesktop}\Trackademic.lnk"
 
 [Icons]
 ; AppUserModelID must match APP_ID in reminders.py, so reminder notifications show as "EasyUniTrack"
@@ -74,3 +69,27 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 [Run]
 ; Runs after a normal install (as a "Launch" checkbox) and after a silent in-app update
 Filename: "{app}\{#AppExe}"; Description: "Launch {#AppName}"; Flags: nowait postinstall
+
+[Code]
+// Leftovers from the old name (Trackademic, before 3.6.0). Removed only after the new version has
+// installed successfully, so a failed update never leaves the user without a working app.
+// The user's data is in %APPDATA% and isn't touched.
+procedure RemoveOldName();
+var
+  OldDir: String;
+begin
+  OldDir := ExpandConstant('{localappdata}\Programs\Trackademic');
+  // Only the folder the old installer used, and only if it really holds the old app
+  if (CompareText(OldDir, ExpandConstant('{app}')) <> 0) and FileExists(OldDir + '\Trackademic.exe') then
+    DelTree(OldDir, True, True, True);
+  DeleteFile(ExpandConstant('{userprograms}\Trackademic\Trackademic.lnk'));
+  RemoveDir(ExpandConstant('{userprograms}\Trackademic'));        // only if now empty
+  DeleteFile(ExpandConstant('{userprograms}\Trackademic.lnk'));
+  DeleteFile(ExpandConstant('{userdesktop}\Trackademic.lnk'));
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+    RemoveOldName();
+end;

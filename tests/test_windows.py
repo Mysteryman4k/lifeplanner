@@ -50,40 +50,57 @@ def test_suggested_currency_reads_the_windows_region():
 
 
 def test_start_with_windows_moves_over_from_the_old_name(monkeypatch, tmp_path):
-    """Updating from Trackademic: an old "Start with Windows" entry becomes an EasyUniTrack one."""
+    """Updating from Trackademic: an old "Start with Windows" entry becomes an EasyUniTrack one,
+    unless the user had switched it off in Task Manager."""
     import winreg
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.setattr(sys, "executable", str(tmp_path / "EasyUniTrack.exe"))
+    monkeypatch.delenv("TRACKADEMIC_DATA_DIR", raising=False)       # only real (non-test) runs move it
+    run, approved = system_integration.RUN_KEY, system_integration.APPROVED_KEY
     names = (system_integration.RUN_VALUE, *system_integration.OLD_RUN_VALUES)
 
-    def read(name):
+    def read(subkey, name):
         try:
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, system_integration.RUN_KEY) as key:
-                return winreg.QueryValueEx(key, name)[0]
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, subkey) as key:
+                return winreg.QueryValueEx(key, name)
         except OSError:
             return None
 
-    def write(name, value):
-        with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, system_integration.RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
+    def write(subkey, name, value):                                 # value: (data, type) or None to delete
+        with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, subkey, 0, winreg.KEY_SET_VALUE) as key:
             if value is None:
                 try:
                     winreg.DeleteValue(key, name)
                 except FileNotFoundError:
                     pass
             else:
-                winreg.SetValueEx(key, name, 0, winreg.REG_SZ, value)
+                winreg.SetValueEx(key, name, 0, value[1], value[0])
 
-    before = {name: read(name) for name in names}                  # this machine's real entries
+    old_entry = (r'"C:\old\Trackademic.exe" --minimized', winreg.REG_SZ)
+    disabled = (bytes([3]) + bytes(11), winreg.REG_BINARY)          # how Task Manager marks "Disabled"
+    before = {(k, n): read(k, n) for k in (run, approved) for n in names}   # this machine's real entries
     try:
-        write("Trackademic", r'"C:\old\Trackademic.exe" --minimized')
-        write(system_integration.RUN_VALUE, None)
-        system_integration.migrate_autostart()
-        assert read("Trackademic") is None
-        assert read(system_integration.RUN_VALUE) == f'"{tmp_path / "EasyUniTrack.exe"}" --minimized'
+        for k, n in before:
+            write(k, n, None)
+        write(run, "Trackademic", old_entry)
+        monkeypatch.setenv("TRACKADEMIC_DATA_DIR", str(tmp_path))
+        system_integration.migrate_autostart()                      # a test run never touches it
+        assert read(run, "Trackademic")[0] == old_entry[0] and read(run, system_integration.RUN_VALUE) is None
+        monkeypatch.delenv("TRACKADEMIC_DATA_DIR")
 
-        write(system_integration.RUN_VALUE, None)                   # it was off: stays off
+        system_integration.migrate_autostart()                      # was on: moves to the new name
+        assert read(run, "Trackademic") is None
+        assert read(run, system_integration.RUN_VALUE)[0] == f'"{tmp_path / "EasyUniTrack.exe"}" --minimized'
+
+        write(run, system_integration.RUN_VALUE, None)              # was off: stays off
         system_integration.migrate_autostart()
-        assert read(system_integration.RUN_VALUE) is None
+        assert read(run, system_integration.RUN_VALUE) is None
+
+        write(run, "Trackademic", old_entry)                        # switched off in Task Manager: stays off
+        write(approved, "Trackademic", disabled)
+        system_integration.migrate_autostart()
+        assert read(run, "Trackademic") is None and read(approved, "Trackademic") is None
+        assert read(run, system_integration.RUN_VALUE) is None
     finally:
-        for name, value in before.items():                          # leave the machine as it was
-            write(name, value)
+        for (k, n), value in before.items():                        # leave the machine as it was
+            write(k, n, value)

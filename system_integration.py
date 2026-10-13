@@ -15,6 +15,18 @@ import store
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 RUN_VALUE = "EasyUniTrack"
 OLD_RUN_VALUES = ("Trackademic",)       # earlier names of the app
+# Where Windows records an entry switched off in Task Manager > Startup apps (the Run value stays put)
+APPROVED_KEY = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
+
+
+def _switched_off_in_task_manager(winreg, name: str) -> bool:
+    """The first byte is odd (0x03, 0x07) when the user disabled the entry, even when it's enabled."""
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, APPROVED_KEY) as key:
+            data = winreg.QueryValueEx(key, name)[0]
+        return bool(data) and data[0] & 1 == 1
+    except OSError:
+        return False
 
 
 def autostart_supported() -> bool:
@@ -63,6 +75,8 @@ def migrate_autostart():
     The old entry points at an .exe the update removed, so it's deleted either way."""
     if not autostart_supported() or store.is_store_build():
         return
+    if os.environ.get("TRACKADEMIC_DATA_DIR") or os.environ.get("LIFEPLANNER_DATA_DIR"):
+        return            # a test or custom-folder run: leave the computer's real startup entries alone
     import winreg
     was_on = False
     try:
@@ -70,12 +84,22 @@ def migrate_autostart():
             for old in OLD_RUN_VALUES:
                 try:
                     winreg.QueryValueEx(key, old)
-                    winreg.DeleteValue(key, old)
+                except FileNotFoundError:
+                    continue
+                if not _switched_off_in_task_manager(winreg, old):
                     was_on = True
+                winreg.DeleteValue(key, old)
+    except OSError:
+        return
+    try:                                                  # tidy the old Task Manager record too
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, APPROVED_KEY, 0, winreg.KEY_SET_VALUE) as key:
+            for old in OLD_RUN_VALUES:
+                try:
+                    winreg.DeleteValue(key, old)
                 except FileNotFoundError:
                     pass
     except OSError:
-        return
+        pass
     if was_on:
         set_autostart(True)
 
