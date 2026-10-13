@@ -36,9 +36,12 @@ def get(provider: str):
 
 
 def delete(provider: str):
+    """Remove a saved key. A key that isn't there is fine; any other failure is raised, so the app
+    never says a key was removed when it's still in Credential Manager."""
+    from keyring.errors import PasswordDeleteError
     try:
         _backend().delete_password(SERVICE, provider)
-    except Exception:
+    except PasswordDeleteError:
         pass
 
 

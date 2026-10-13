@@ -4,6 +4,14 @@ from dataclasses import dataclass, field
 import httpx
 
 TIMEOUT = httpx.Timeout(20.0, connect=6.0)
+CREDENTIAL_HEADERS = {"authorization", "x-api-key"}
+LOOPBACK = {"localhost", "127.0.0.1", "::1", "[::1]"}
+
+
+def secure_for_keys(url: str) -> bool:
+    """Keys may only travel over HTTPS, or plain HTTP to a service on this PC (e.g. LM Studio)."""
+    u = httpx.URL(url)
+    return u.scheme == "https" or (u.scheme == "http" and u.host in LOOPBACK)
 
 
 class ProviderError(Exception):
@@ -64,6 +72,9 @@ class Provider:
         name = self.display_name()
         if not self.base_url:
             raise ProviderError("Enter the service's base URL first.")
+        if headers and any(h.lower() in CREDENTIAL_HEADERS for h in headers) and not secure_for_keys(self.base_url):
+            raise ProviderError("Your API key would be sent without encryption. Use an https:// address "
+                                "(plain http:// is only allowed for services running on this PC).")
         try:
             with self.client() as c:
                 r = c.request(method, self.base_url + path, headers=headers or {}, json=json)

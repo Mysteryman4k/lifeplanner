@@ -31,7 +31,10 @@ class MemoryKeyring(keyring.backend.KeyringBackend):
         return self.store.get((service, user))
 
     def delete_password(self, service, user):
-        self.store.pop((service, user), None)
+        if (service, user) not in self.store:              # like the real vault
+            from keyring.errors import PasswordDeleteError
+            raise PasswordDeleteError("not found")
+        del self.store[(service, user)]
 
 
 @pytest.fixture()
@@ -325,3 +328,59 @@ def test_ollama_cloud_models_are_never_suggested_and_are_flagged(c, A):
     assert "Tools supported" in r["message"]                     # reported for the suggested model straight away
     r = c.post("/api/ai/test", json={"provider": "ollama", "model": "gemma4:31b-cloud"}).json()
     assert "ollama.com" in r["message"]
+
+
+
+# ── review fixes ──
+
+def test_a_key_is_never_sent_over_plain_http(c, A):
+    """Keys only travel over HTTPS, or plain HTTP to a service on this PC."""
+    agree(c)
+    c.put("/api/ai/key", json={"provider": "custom", "key": "sk-secret-12345678"})
+    r = c.post("/api/ai/test", json={"provider": "custom", "base_url": "http://example.com/v1"}).json()
+    assert r["ok"] is False and "without encryption" in r["message"]
+    assert A.net.seen == []                                   # refused before anything was sent
+    A.net.routes["GET localhost/v1/models"] = (200, {"data": [{"id": "local-model"}]})
+    r = c.post("/api/ai/test", json={"provider": "custom", "base_url": "http://localhost:1234/v1"}).json()
+    assert r["ok"] and A.net.seen[-1].headers["authorization"] == "Bearer sk-secret-12345678"
+
+
+@pytest.mark.parametrize("url,ok", [("https://api.example.com/v1", True), ("http://127.0.0.1:1234/v1", True),
+                                    ("http://localhost/v1", True), ("http://[::1]:8080/v1", True),
+                                    ("http://example.com/v1", False), ("http://192.168.1.5:1234/v1", False),
+                                    ("http://localhost.example.com/v1", False)])
+def test_where_keys_may_go(url, ok):
+    from ai.providers.base import secure_for_keys
+    assert secure_for_keys(url) is ok
+
+
+def test_preset_providers_ignore_an_address_override(c, A):
+    """A saved OpenAI key must only ever go to OpenAI, whatever the request asks for."""
+    agree(c)
+    c.put("/api/ai/key", json={"provider": "openai", "key": "sk-openai-12345678"})
+    A.net.routes["GET api.openai.com/v1/models"] = (200, {"data": [{"id": "gpt-x-mini"}]})
+    r = c.post("/api/ai/test", json={"provider": "openai", "base_url": "https://attacker.example/v1"}).json()
+    assert r["ok"]
+    assert {req.url.host for req in A.net.seen} == {"api.openai.com"}
+
+
+def test_removing_data_reports_a_key_that_couldnt_be_deleted(c, monkeypatch):
+    agree(c)
+    c.put("/api/ai/settings", json={"provider": "openai"})
+    c.put("/api/ai/key", json={"provider": "openai", "key": "sk-openai-12345678"})
+    import ai.keys
+
+    def broken(provider):
+        raise RuntimeError("vault locked")
+    monkeypatch.setattr(ai.keys, "delete", broken)
+    r = c.delete("/api/ai/all")
+    assert r.status_code == 500 and "nothing was removed" in r.json()["detail"]
+    assert c.get("/api/ai/state").json()["terms"]["agreed"] is True       # settings left as they were
+    r = c.delete("/api/ai/key/openai")
+    assert r.status_code == 500 and "Credential Manager" in r.json()["detail"]
+
+
+def test_deleting_a_key_that_isnt_saved_is_fine(c):
+    agree(c)
+    assert c.delete("/api/ai/key/deepseek").status_code == 200
+    assert c.delete("/api/ai/all").status_code == 200

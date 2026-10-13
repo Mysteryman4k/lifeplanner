@@ -134,13 +134,19 @@ def register(app, get_setting, put_setting, transport_hook=lambda: None):
     @app.delete("/api/ai/key/{provider}")
     def delete_key(provider: Literal["anthropic", "openai", "deepseek", "custom"]):
         require_agreement()
-        keys.delete(provider)
+        try:
+            keys.delete(provider)
+        except Exception:
+            raise HTTPException(500, "Couldn't remove the key from Windows Credential Manager. Try again, or "
+                                     "remove \"EasyUniTrack AI\" there yourself.") from None
         return public_state(load())
 
     @app.post("/api/ai/test")
     def test(t: TestIn):
         s = require_agreement()
-        base = (t.base_url or (s.base_url if t.provider == "custom" else "")) or None
+        # Only the custom provider has a user-chosen address; presets always use their own, so a saved
+        # Anthropic/OpenAI/DeepSeek key can never be sent somewhere else
+        base = (t.base_url or s.base_url or None) if t.provider == "custom" else None
         p = get_provider(t.provider, key=keys.get(t.provider), base_url=base, transport=transport_hook())
         r = p.test_connection(t.model)
         suggested = suggest_model(t.provider, r.models, avoid=r.cloud_models) if r.ok else ""
@@ -157,9 +163,16 @@ def register(app, get_setting, put_setting, transport_hook=lambda: None):
     def remove_all():
         """Remove all AI data: saved keys and AI settings, including the agreement. (Chats and
         assistant-made notes join this list in later stages.)"""
+        failed = []
         for provider, preset in PRESETS.items():
             if preset["needs_key"] or provider == "custom":
-                keys.delete(provider)
+                try:
+                    keys.delete(provider)
+                except Exception:
+                    failed.append(preset["name"])
+        if failed:                       # settings stay as they were, so nothing claims to be removed
+            raise HTTPException(500, f"Couldn't remove the saved key for {', '.join(failed)} from Windows Credential "
+                                     "Manager, so nothing was removed. Try again.")
         s = AISettings()
         save(s)
         return public_state(s)
