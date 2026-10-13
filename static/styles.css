@@ -334,6 +334,10 @@ a.tile:hover { border-color: var(--line-strong); transform: translateY(-1px); }
 .cal-dots { display: none; }
 .cal-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 24px; align-items: start; }
 .day-panel h3 { font-family: var(--display); font-weight: var(--display-weight); letter-spacing: var(--display-track); font-size: 21px; margin-bottom: 2px; }
+/* The day panel is narrow: put priority and due date under the title instead of squeezing it */
+.day-panel .task { grid-template-columns: auto minmax(0, 1fr); align-items: start; }
+.day-panel .task-side { grid-column: 2; flex-wrap: wrap; margin-top: -6px; }
+.day-panel .task-title { white-space: normal; overflow-wrap: anywhere; }
 
 /* ── Subjects ─────────────────────────────────────────── */
 .subjects { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }

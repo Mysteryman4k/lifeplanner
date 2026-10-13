@@ -6,6 +6,10 @@ PATCH for fixes. Pushing a tag like `v3.2.0` publishes that version's section as
 
 ## [Unreleased]
 
+### Fixed
+
+- In the calendar's day panel, task names are no longer cut short and their details are easier to read
+
 ## [3.6.0] - 2026-10-13
 
 ### Changed
