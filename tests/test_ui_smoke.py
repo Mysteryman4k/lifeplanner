@@ -31,6 +31,7 @@ def server(tmp_path_factory):
                                     "url": "https://github.com/Mysteryman4k/lifeplanner/releases",
                                     "published_at": "2026-01-01T00:00:00Z", "assets": {}}
     updater._cache.update({"at": 0.0, "data": None})
+    A.enable_lockdown()          # test the real screens with the server protection on, as users get it
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         port = s.getsockname()[1]
@@ -42,6 +43,7 @@ def server(tmp_path_factory):
         time.sleep(0.05)
     yield f"http://127.0.0.1:{port}"
     srv.should_exit = True
+    A.LOCKDOWN["on"] = False
     updater.fetch_latest = real_fetch
     updater._cache.clear()
     updater._cache.update(real_cache)
@@ -98,7 +100,9 @@ def test_splash_hand_off_fades_into_the_app(server, page):
     from urllib.parse import urlencode
     ap = {"theme": "berry", "font": "techy", "mode": "dark"}
     # In the real app the splash passes the saved look, so save it first to match
-    assert page.request.put(f"{server}/api/settings/appearance", data=ap).ok
+    import app as A
+    assert page.request.put(f"{server}/api/settings/appearance", data=ap,
+                            headers={A.TOKEN_HEADER: A.SESSION_TOKEN}).ok
     page.goto(f"{server}/?{urlencode({'from': 'splash', 't': 2700, 'ap': json.dumps(ap)})}#/today")
     assert page.evaluate("document.documentElement.dataset.theme") == "berry"     # right look on the first frame
     # The overlay leaves as soon as the data has loaded, and by itself after 6.65 s at the latest.
@@ -226,3 +230,16 @@ def test_window_loads_new_screens_after_an_update(server, page):
     finally:
         A.APP_VERSION = real
     assert page.errors == [], page.errors
+
+
+def test_server_refuses_changes_without_the_window_token(server, page):
+    """The protection is really on in these tests: a request without the token (as another website or
+    program would send) is refused, while the app's own screens keep working."""
+    page.goto(f"{server}/#/tasks")
+    page.wait_for_selector("#content > *")
+    status = page.evaluate("""fetch('/api/tasks', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                                   body: JSON.stringify({title: 'Sneaky'})}).then(r => r.status)""")
+    assert status == 403
+    added = page.evaluate("api('/api/tasks', {method: 'POST', body: {title: 'From the app'}}).then(t => t.title)")
+    assert added == "From the app"
+    page.errors.clear()                                           # the refused request is logged as an error
