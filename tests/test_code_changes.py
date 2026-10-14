@@ -295,3 +295,47 @@ def test_recover_an_apply_when_the_file_is_something_else(c, A, fake, proj):
 
 def test_recover_an_undo(c, A, fake, proj):
     assert cut_off(c, A, fake, proj, ORIGINAL, status="undoing")[0] == "undone"
+
+
+def test_without_hard_links_nothing_is_overwritten_either(tmp_path, monkeypatch):
+    import errno
+    import os
+    from ai.code_changes import ChangeStore, Conflict
+
+    def no_links(*a):
+        raise OSError(errno.EPERM, "no hard links here")
+    monkeypatch.setattr(os, "link", no_links)
+    src, target = tmp_path / "src", tmp_path / "target.py"
+    src.write_bytes(b"mine\n")
+    target.write_bytes(b"theirs\n")
+    with pytest.raises(Conflict):
+        ChangeStore._put(src, target)
+    assert target.read_bytes() == b"theirs\n" and src.exists()
+    target.unlink()
+    ChangeStore._put(src, target)
+    assert target.read_bytes() == b"mine\n" and not src.exists()
+
+
+def test_recover_puts_back_a_file_moved_aside_during_apply(c, A, fake, proj):
+    from ai.code_changes import ChangeStore
+    f = setup(c, proj)
+    card = cards(propose(c, fake, f, {"path": "calc.py", "find": "a - b", "replace": "a + b", "summary": "fix"}))[0]
+    store = ChangeStore(A.db, A.DB_PATH.parent)
+    store.set(card["change_id"], status="applying")
+    (proj / "calc.py").rename(ChangeStore.hold_path(proj / "calc.py", str(card["change_id"])))   # crash here
+    store.recover()
+    assert (proj / "calc.py").read_bytes() == ORIGINAL and store.get(card["change_id"])["status"] == "proposed"
+    assert [p.name for p in proj.iterdir() if p.name.startswith(".eut-")] == []
+
+
+def test_recover_finishes_undoing_a_new_file(c, A, fake, proj):
+    from ai.code_changes import ChangeStore
+    f = setup(c, proj)
+    card = cards(propose(c, fake, f, {"path": "notes.txt", "replace": "hello\n", "summary": "new"}))[0]
+    c.post(f"/api/code/changes/{card['change_id']}/apply")
+    store = ChangeStore(A.db, A.DB_PATH.parent)
+    store.set(card["change_id"], status="undoing")
+    (proj / "notes.txt").rename(ChangeStore.hold_path(proj / "notes.txt", str(card["change_id"])))   # crash here
+    store.recover()
+    assert not (proj / "notes.txt").exists() and store.get(card["change_id"])["status"] == "undone"
+    assert [p.name for p in proj.iterdir() if p.name.startswith(".eut-")] == []

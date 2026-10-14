@@ -163,15 +163,27 @@ class ChangeStore:
             os.link(src, target)
         except FileExistsError:
             raise Conflict() from None
-        except OSError:                                    # no hard links here (FAT drives, some network shares)
-            if target.exists():
+        except OSError:                                    # no hard links here (FAT drives, some network shares):
+            data, mode = src.read_bytes(), stat.S_IMODE(src.stat().st_mode)   # create it exclusively instead,
+            try:                                                               # which also fails if it exists
+                fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), mode)
+            except FileExistsError:
                 raise Conflict() from None
-            os.replace(src, target)
-            return
+            try:
+                with os.fdopen(fd, "wb") as f:
+                    f.write(data)
+            except BaseException:
+                target.unlink(missing_ok=True)                                 # ours, half-written
+                raise
         os.unlink(src)
 
+    @staticmethod
+    def hold_path(target: Path, tag: str) -> Path:
+        """Where swap moves the file aside: named after the change, so recover() can find it after a crash."""
+        return target.with_name(f".eut-hold-{tag}-{target.name}")
+
     @classmethod
-    def swap(cls, target: Path, data, expected):
+    def swap(cls, target: Path, data, expected, tag: str = ""):
         """Replace target with data (or remove it, if data is None), but only if it still is the file with hash
         `expected` (None: there must be no file). An edit saved at any moment is never overwritten: the file is
         moved aside in one step, the moved copy is checked, and the new one is put in place only if nothing has
@@ -185,7 +197,7 @@ class ChangeStore:
                 if target.exists():
                     raise Conflict()
             else:
-                hold = target.with_name(f".eut-hold-{os.getpid()}-{target.name}")
+                hold = cls.hold_path(target, tag or str(os.getpid()))
                 try:
                     os.replace(target, hold)               # one step: from here, edits to target can't touch it
                 except FileNotFoundError:
@@ -235,7 +247,7 @@ class ChangeStore:
                 self.write(Path(backup), current)
             # Recorded before the file is touched, so a change cut off part-way can be sorted out (recover)
             self.set(change_id, backup=backup, applied_hash=sha(new))
-            self.swap(target, new, c["base_hash"])
+            self.swap(target, new, c["base_hash"], str(change_id))
         except Conflict:
             self.set(change_id, status="stale")
             raise stale from None
@@ -262,7 +274,7 @@ class ChangeStore:
             raise HTTPException(409, "That change was already undone.")
         try:
             original = Path(c["backup"]).read_bytes() if c["backup"] else None   # None: the change made the file
-            self.swap(target, original, c["applied_hash"])
+            self.swap(target, original, c["applied_hash"], str(change_id))
         except Conflict:
             self.set(change_id, status="applied")
             raise changed from None
@@ -290,6 +302,15 @@ class ChangeStore:
         for c in rows:
             try:
                 target = Folder(c["folder_path"]).resolve(c["path"])
+                hold = self.hold_path(target, str(c["id"]))
+                if hold.is_file() and not target.exists():   # the crash came while the file was moved aside
+                    if c["status"] == "undoing" and not c["backup"]:
+                        hold.unlink()                        # Undo of a file the change made: it should be gone
+                    else:
+                        try:
+                            self._put(hold, target)          # put the file back as it was before the click
+                        except Conflict:
+                            pass
                 now = sha(target.read_bytes()) if target.exists() else None
             except (CodeError, OSError):
                 now = "unknown"
