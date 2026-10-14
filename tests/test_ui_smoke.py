@@ -1071,3 +1071,72 @@ def test_cs_quick_actions(server, page, tmp_path_factory):
         page.evaluate("chatReset()")
         page.request.post(f"{server}/api/ai/terms/withdraw", headers=tok)
         A.fake_net.pop("POST localhost/v1/chat/completions", None)
+
+
+@pytest.mark.ui
+def test_saved_chats_quiz_and_videos(server, page):
+    """A chat is kept after the reply, listed under Recent chats after a reload, and opens again. Quiz me shows
+    answer buttons, Videos asks for YouTube searches, and a chat can be deleted."""
+    import json
+    import os
+
+    import app as A
+    tok = {A.TOKEN_HEADER: A.SESSION_TOKEN}
+    terms = page.request.get(f"{server}/api/ai/terms").json()
+    page.request.post(f"{server}/api/ai/terms/agree", headers=tok,
+                      data={"version": terms["version"], "ticks": {k: True for k in terms["ticks"]}})
+    page.request.put(f"{server}/api/ai/settings", headers=tok, data={"provider": "ollama", "model": "qwen2.5:7b"})
+    for ch in page.request.get(f"{server}/api/ai/chats").json():                # start from no saved chats
+        page.request.delete(f"{server}/api/ai/chats/{ch['id']}", headers=tok)
+    nl = chr(10)
+
+    def say(text):
+        return "data: " + json.dumps({"choices": [{"delta": {"content": text}}]}) + nl + nl
+    question = nl.join(["Question 1: What does a stack return first?", "A) The oldest item", "B) The newest item",
+                        "C) A random item", "D) The smallest item"])
+    A.fake_net["POST localhost/v1/chat/completions"] = (200, [say(question), say("Correct! Stacks are last in, first out."),
+                                                              say("[Search YouTube: stacks](https://www.youtube.com/results?search_query=stack+data+structure)")])
+
+    def last_request():
+        return json.loads([r for r in A.fake_net_seen if r.url.path.endswith("/chat/completions")][-1].content)
+    try:
+        page.goto(f"{server}/#/study")
+        page.reload()
+        page.click("[data-action=chat-new]")
+        page.click("[data-action=chat-mode][data-mode=quiz]")
+        page.fill("#chatInput", "Quiz me on stacks")
+        page.keyboard.press("Enter")
+        page.wait_for_selector(".quiz-choices button >> text=B")
+        assert "Mode: Quiz me" in last_request()["messages"][0]["content"]
+        assert page.locator(".quiz-choices button").count() == 4
+        page.click(".quiz-choices button >> text=B")
+        page.wait_for_selector(".chat-msg.ai >> text=Correct!")
+        assert last_request()["messages"][-1]["content"] == "B"
+        page.click(".chat-msg.ai:last-child [data-action=chat-videos]")
+        page.wait_for_selector(".chat-msg.ai a.link >> text=Search YouTube: stacks")
+        assert "Task: suggest videos" in last_request()["messages"][0]["content"]
+        page.wait_for_selector(".nav-chat >> text=Quiz me on stacks")
+
+        # After a reload the chat is still there, and opens with its messages and mode
+        page.reload()
+        page.wait_for_selector(".nav-chat >> text=Quiz me on stacks")
+        page.click("[data-action=chat-new]")
+        assert page.locator(".chat-msg").count() == 0
+        page.click(".nav-chat >> text=Quiz me on stacks")
+        page.wait_for_selector(".chat-msg.ai >> text=Correct!")
+        assert page.locator(".chat-msg.me").count() == 3
+        assert page.locator("[data-action=chat-mode].on").inner_text() == "Quiz me"
+        if os.environ.get("EUT_SHOTS"):
+            page.screenshot(path=os.path.join(os.environ["EUT_SHOTS"], "stage10-chats.png"))
+
+        # The Chats list, and deleting one
+        page.click("[data-action=chats-all]")
+        page.wait_for_selector("#drawer .chat-list-row >> text=Quiz me on stacks")
+        page.click("#drawer [data-action=chat-delete]")
+        page.click("#confirmYes")
+        page.wait_for_selector("#drawer >> text=No saved chats yet")
+        assert page.request.get(f"{server}/api/ai/chats").json() == []
+    finally:
+        page.evaluate("chatReset()")
+        page.request.post(f"{server}/api/ai/terms/withdraw", headers=tok)
+        A.fake_net.pop("POST localhost/v1/chat/completions", None)

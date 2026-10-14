@@ -27,6 +27,20 @@ MODES = {
              "Write the notes directly; don't ask questions back. Use plain language suited to a university student.",
     "practise": "Mode: Practise. Give one similar practice question at a time, with a hint if asked. Only show a "
                 "worked solution after the student has tried, or asks for it.",
+    "quiz": "Mode: Quiz me. Run a short quiz (5 questions unless the student asks for a different number) on the topic "
+            "or material they give. Ask one question at a time and wait for the answer. Mix multiple choice and short "
+            "answers; write multiple-choice options on their own lines as A) B) C) D). Mark each answer (correct, "
+            "partly or not quite) with a one or two sentence explanation, then ask the next question. At the end, "
+            "give the score and what to revise.",
+    "check": "Mode: Check my attempt. The student shares their own working, answer or draft. Give feedback without "
+             "rewriting it: what's right, where it goes wrong (quote the part), and a hint for fixing each problem. "
+             "Don't give the corrected answer unless they ask, and never write it for them to submit.",
+}
+
+STUDY_ACTIONS = {
+    "videos": "Task: suggest videos. Give 3 or 4 YouTube searches that would help with the topic so far, each as a "
+              "search link in the required format, with a line on what to look for. You may name well-known channels "
+              "that cover it, as plain text. Don't make up video titles or other links.",
 }
 
 
@@ -110,8 +124,10 @@ def code_prompt(folder_mode: str, name: str, subject: str, files: str, fmt: str 
     return "\n\n".join(parts)
 
 
-def system_prompt(mode: str, context: str = "", fmt: str = "auto") -> str:
+def system_prompt(mode: str, context: str = "", fmt: str = "auto", action: str = "") -> str:
     parts = [BASE, MODES.get(mode, MODES["explain"])]
+    if action in STUDY_ACTIONS:
+        parts.append(STUDY_ACTIONS[action])
     if fmt in FORMATS:
         parts.append(FORMATS[fmt])
     if context:
