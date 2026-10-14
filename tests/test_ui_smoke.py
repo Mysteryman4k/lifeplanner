@@ -985,3 +985,63 @@ def test_running_code(server, page, tmp_path_factory):
     assert "ZeroDivisionError" in asked["messages"][-1]["content"] and "from running" in asked["messages"][-1]["content"]
     page.evaluate("chatReset()")
     page.request.post(f"{server}/api/ai/terms/withdraw", headers=tok)
+
+
+@pytest.mark.ui
+def test_cs_quick_actions(server, page, tmp_path_factory):
+    """Trace, Big-O, Visualise, tests, practice and Explain my change send their action (and the diff)."""
+    import json
+    import os
+
+    import app as A
+    tok = {A.TOKEN_HEADER: A.SESSION_TOKEN}
+    root = tmp_path_factory.mktemp("lab9")
+    code = ["def find(xs, t):", "    for i, x in enumerate(xs):", "        if x == t:", "            return i",
+            "    return -1", ""]
+    (root / "search.py").write_text("\n".join(code), encoding="utf-8")
+    terms = page.request.get(f"{server}/api/ai/terms").json()
+    page.request.post(f"{server}/api/ai/terms/agree", headers=tok,
+                      data={"version": terms["version"], "ticks": {k: True for k in terms["ticks"]}})
+    page.request.put(f"{server}/api/ai/settings", headers=tok,
+                     data={"provider": "ollama", "model": "qwen2.5:7b", "code_enabled": True})
+    folder = page.request.post(f"{server}/api/code/folders", headers=tok, data={"path": str(root)}).json()
+    nl = chr(10)
+    say = "data: " + json.dumps({"choices": [{"delta": {"content": "| Step | Line | i | x |"}}]}) + nl + nl
+    A.fake_net["POST localhost/v1/chat/completions"] = (200, say)
+
+    def last_request():
+        return json.loads([r for r in A.fake_net_seen if r.url.path.endswith("/chat/completions")][-1].content)
+
+    page.goto(f"{server}/#/code")
+    page.reload()
+    page.wait_for_selector(".code-tree")
+    if page.locator("#codeFolder").count():
+        page.select_option("#codeFolder", str(folder["id"]))
+    page.click(".tree-row >> text=search.py")
+    page.wait_for_selector(".code-file-head >> text=search.py")
+    assert page.locator(".chat-quick [data-kind=tests]").inner_text().strip() == "Plan tests"     # an Assignment
+    for kind, task, said in (("trace", "dry-run table", "Trace search.py step by step"),
+                             ("big_o", "Big-O", "What's the Big-O of search.py?"),
+                             ("visualise", "Mermaid diagram", "Visualise the data structures in search.py"),
+                             ("tests", "Don't write the test code", "Help me plan tests for search.py"),
+                             ("practice", "Don't give the solution", "Give me a practice problem like search.py")):
+        n = page.locator(".chat-msg.ai .chat-tools").count()
+        page.click(f".chat-quick [data-kind={kind}]")
+        page.wait_for_function(f"document.querySelectorAll('.chat-msg.ai .chat-tools').length > {n}")
+        asked = last_request()
+        assert task in asked["messages"][0]["content"] and said in asked["messages"][-1]["content"], kind
+
+    # Explain my change: nothing changed yet, then an edit made outside the app
+    page.click(".chat-quick [data-kind=explain_change]")
+    page.wait_for_selector("#toast.show >> text=hasn't changed")
+    (root / "search.py").write_text((root / "search.py").read_text().replace("return -1", "return None"), encoding="utf-8")
+    n = page.locator(".chat-msg.ai .chat-tools").count()
+    page.click(".chat-quick [data-kind=explain_change]")
+    page.wait_for_function(f"document.querySelectorAll('.chat-msg.ai .chat-tools').length > {n}")
+    system = last_request()["messages"][0]["content"]
+    assert "Task: explain my change" in system and "-    return -1" in system and "+    return None" in system
+    page.wait_for_selector(".code-text >> text=return None")                        # the viewer shows it as it is now
+    if os.environ.get("EUT_SHOTS"):
+        page.screenshot(path=os.path.join(os.environ["EUT_SHOTS"], "stage9-actions.png"))
+    page.evaluate("chatReset()")
+    page.request.post(f"{server}/api/ai/terms/withdraw", headers=tok)

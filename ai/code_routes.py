@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from . import terms
 from .code_changes import ChangeStore, CodeTools
 from .codebase import CodeError, Folder, language, link_problem
+from .codediff import changes as file_changes
 from .runner import DEFAULT_TIMEOUT, Runner, suggestions, toolchains
 
 FolderMode = Literal["assignment", "personal"]
@@ -35,6 +36,11 @@ class RunIn(BaseModel):
     command: str = Field(min_length=1, max_length=2000)
     keep_running: bool = False
     timeout: int = Field(default=DEFAULT_TIMEOUT, ge=5, le=600)
+
+
+class DiffIn(BaseModel):
+    path: str = Field(min_length=1, max_length=1000)
+    baseline: Optional[str] = Field(default=None, max_length=300_000)   # the file when the student opened it
 
 
 class InputIn(BaseModel):
@@ -172,6 +178,16 @@ def register(app, db, load_ai_settings, data_dir: Path, window: dict):
             return runner.get(run_id)
         except KeyError:
             raise HTTPException(404, "That run has finished and isn't kept any more.") from None
+
+    @app.post("/api/code/folders/{folder_id}/diff")
+    def diff(folder_id: int, d: DiffIn):
+        """What changed in a file: since the last git commit, or since the student opened it (baseline)."""
+        gate()
+        _, folder = open_folder(folder_id)
+        try:
+            return file_changes(folder, d.path, d.baseline)
+        except CodeError as e:
+            raise HTTPException(400, str(e)) from None
 
     @app.get("/api/code/toolchains")
     def get_toolchains(refresh: bool = False):

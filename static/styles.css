@@ -808,3 +808,10 @@ fieldset.field { border: 0; padding: 0; margin: 0; min-width: 0; }
 .run-input { display: flex; gap: 6px; padding: 6px 8px; border-top: 1px solid var(--line); }
 .run-input .input { flex: 1; height: 32px; font-family: ui-monospace, 'Cascadia Code', Consolas, monospace; font-size: 12.5px; }
 .run-card .run-suggestion { margin: 6px 0; }
+
+/* ── CS quick actions (stage 9) ──────────── */
+.chat-quick { gap: 6px; }
+.chat-quick .chip { display: inline-flex; align-items: center; gap: 5px; font: inherit; font-size: 12.5px; font-weight: 600;
+  color: var(--ink-2); background: var(--surface); border: 1px solid var(--line); border-radius: 99px; padding: 5px 10px; cursor: pointer; }
+.chat-quick .chip:hover:not(:disabled) { border-color: var(--accent-line); color: var(--accent-text); }
+.chat-quick .chip:disabled { opacity: .5; cursor: default; }
