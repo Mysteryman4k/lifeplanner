@@ -138,8 +138,24 @@ def test_the_size_budget(project, monkeypatch):
 
 
 def test_the_context_has_line_numbers(project):
-    text, sent = project.context(["helpers.py"])
+    text, sent, left_out = project.context(["helpers.py", "logo.png", ".env"])
+    assert [x["path"] for x in left_out] == ["logo.png", ".env"] and "binary" in left_out[0]["why"]
     assert sent == ["helpers.py"] and "--- helpers.py (Python) ---" in text and "   2|     return a + b" in text
+
+
+def test_the_file_count_limit_is_reported_as_such(project, monkeypatch):
+    import ai.codebase as cb
+    monkeypatch.setattr(cb, "MAX_SEND_FILES", 1)
+    _, sent, left_out = project.context(["helpers.py", "main.py"])
+    assert sent == ["helpers.py"] and left_out == [{"path": "main.py", "why": "only 1 files go with one message"}]
+
+
+def test_names_in_a_long_error_walk_the_folder_once(project, monkeypatch):
+    calls = []
+    real = os.walk
+    monkeypatch.setattr(os, "walk", lambda *a, **k: calls.append(1) or real(*a, **k))
+    log = "".join(f'  File "x{i}.py", line 1\n' for i in range(300)) + 'File "helpers.py", line 2'
+    assert project.referenced(log) == ["helpers.py"] and len(calls) == 1
 
 
 def test_gitignore_rules():

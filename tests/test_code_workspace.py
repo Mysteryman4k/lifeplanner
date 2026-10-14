@@ -109,6 +109,17 @@ def test_a_code_question_sends_only_the_chosen_files(c, proj, fake):
     assert "fix freely" in fake.last["system"] and "give hints first" not in fake.last["system"]
 
 
+def test_a_binary_file_is_left_out_not_an_error(c, proj, fake):
+    code_on(c)
+    (proj / "data.bin").write_bytes(b"\x00\x01binary")
+    f = link(c, proj)
+    r = c.post("/api/ai/chat", json={"mode": "code", "code": {"folder_id": f["id"], "files": ["data.bin", "main.py"]},
+                                     "messages": [{"role": "user", "content": "hi"}]})
+    assert r.status_code == 200
+    first = events(r)[0]
+    assert first["files"] == ["main.py"] and "binary" in first["left_out"][0]["why"]
+
+
 def test_code_questions_need_the_code_switch_and_a_folder(c, proj, fake):
     ready(c)
     msg = [{"role": "user", "content": "hi"}]

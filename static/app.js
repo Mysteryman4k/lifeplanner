@@ -2093,13 +2093,13 @@ const ACTIONS = {
     const k = codeState(), p = el.dataset.path;
     k.pinned = k.pinned.filter(x => x !== p);
     if (!k.removed.includes(p)) k.removed.push(p);
-    codeChoose('').then(() => { if (k.open?.path === p) $('#codeMain').innerHTML = codeViewer(); });
+    codeChoose('').then(() => { const main = $('#codeMain'); if (k.open?.path === p && main) main.innerHTML = codeViewer(); });
   },
   'code-send-open'(el) {
     const k = codeState(), p = el.dataset.path;
     k.removed = k.removed.filter(x => x !== p);
     if (!k.pinned.includes(p)) k.pinned.push(p);
-    codeChoose('').then(() => { if (k.open?.path === p) $('#codeMain').innerHTML = codeViewer(); });
+    codeChoose('').then(() => { const main = $('#codeMain'); if (k.open?.path === p && main) main.innerHTML = codeViewer(); });
   },
   'code-explain-error'() {
     const box = $('#chatInput'), text = box?.value.trim();

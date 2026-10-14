@@ -291,14 +291,23 @@ class Folder:
                 return PurePosixPath(name).as_posix()
         except CodeError:
             pass
-        base = PurePosixPath(name).name
-        for dirpath, dirnames, filenames in os.walk(self.root):
-            dirnames[:] = [d for d in dirnames if d.lower() not in SKIP_DIRS]
-            if base in filenames:
-                rel = Path(dirpath, base).relative_to(self.root).as_posix()
-                if rel.endswith(name) or "/" not in name:
-                    return rel
+        for rel in self._names().get(PurePosixPath(name).name, ()):
+            if rel.endswith(name) or "/" not in name:
+                return rel
         return None
+
+    def _names(self) -> dict:
+        """File name -> relative paths, built once per Folder (one walk, however many names an error has)."""
+        if getattr(self, "_name_index", None) is None:
+            self._name_index, count = {}, 0
+            for dirpath, dirnames, filenames in os.walk(self.root):
+                dirnames[:] = [d for d in dirnames if d.lower() not in SKIP_DIRS]
+                for f in filenames:
+                    count += 1
+                    if count > 20 * MAX_ENTRIES:
+                        return self._name_index
+                    self._name_index.setdefault(f, []).append(Path(dirpath, f).relative_to(self.root).as_posix())
+        return self._name_index
 
     def imports(self, rel: str, text: str) -> list:
         """Local files the open file imports (Python, JavaScript/TypeScript, C/C++ includes, Java same folder)."""
@@ -387,18 +396,27 @@ class Folder:
         return {"files": files, "left_out": left_out, "budget": SEND_BUDGET, "used": used}
 
     def context(self, paths: list) -> tuple:
-        """The text sent to the model for these files (with line numbers), and the paths actually sent."""
-        blocks, sent, used = [], [], 0
-        for path in paths[:MAX_SEND_FILES]:
-            text = self.read(path)
+        """The text sent to the model for these files (with line numbers), the paths actually sent, and the
+        ones left out with why ([{path, why}])."""
+        blocks, sent, left_out, used = [], [], [], 0
+        for path in paths:
+            try:
+                text = self.read(path)                    # hidden, binary or gone: left out, the rest still go
+            except CodeError as e:
+                left_out.append({"path": path, "why": str(e)})
+                continue
+            if len(sent) >= MAX_SEND_FILES:
+                left_out.append({"path": path, "why": f"only {MAX_SEND_FILES} files go with one message"})
+                continue
             if used + len(text) > SEND_BUDGET:
+                left_out.append({"path": path, "why": "over the size limit for one message"})
                 continue
             used += len(text)
             info = language(path)
             numbered = "\n".join(f"{n:>4}| {line}" for n, line in enumerate(text.split("\n"), 1))
             blocks.append(f"--- {path} ({info['language']}) ---\n{numbered}")
             sent.append(path)
-        return "\n\n".join(blocks), sent
+        return "\n\n".join(blocks), sent, left_out
 
 
 def link_problem(path: str, data_dir: Path) -> str:

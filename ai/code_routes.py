@@ -147,18 +147,7 @@ def register(app, db, load_ai_settings, data_dir: Path, window: dict):
         """For the chat: the folder's mode and name, and the files' text with line numbers."""
         gate()
         r, folder = open_folder(folder_id)
-        sent, left_out, blocks = [], [], []
-        for p in paths:
-            try:
-                folder.check_readable(p)
-                blocks.append(p)
-            except CodeError as e:
-                left_out.append({"path": p, "why": str(e)})
-        try:
-            text, sent = folder.context(blocks)
-        except CodeError as e:
-            raise HTTPException(400, str(e)) from None
-        left_out += [{"path": p, "why": "over the size limit for one message"} for p in blocks if p not in sent]
+        text, sent, left_out = folder.context(paths)
         return {"mode": r["mode"], "name": r["name"], "subject": r.get("subject_name") or "",
                 "text": text, "sent": sent, "left_out": left_out}
 
