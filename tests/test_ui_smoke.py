@@ -1120,6 +1120,8 @@ def test_saved_chats_quiz_and_videos(server, page):
             if [x["count"] for x in page.request.get(f"{server}/api/ai/chats").json()] == [6]:
                 break
             page.wait_for_timeout(100)
+        else:
+            pytest.fail("The chat wasn't saved with all six messages")
 
         # After a reload the chat is still there, and opens with its messages and mode
         page.reload()

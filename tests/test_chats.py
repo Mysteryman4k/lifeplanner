@@ -97,10 +97,29 @@ def test_quiz_and_check_modes(c, fake, mode, expect):
     assert expect in fake.last["system"] and "not an answer writer" in fake.last["system"]
 
 
+def test_code_backups_that_cant_be_deleted_are_reported(c, A, monkeypatch):
+    import ai.chats
+    agree(c)
+    c.post("/api/ai/chats", json=chat_body(("hi", "hello")))
+    (A.DB_PATH.parent / "code-backups").mkdir()
+
+    def stuck(path, *a, **k):
+        raise PermissionError(13, "in use")
+    monkeypatch.setattr(ai.chats.shutil, "rmtree", stuck)
+    r = c.delete("/api/ai/all")
+    assert r.status_code == 500 and "couldn't be deleted" in r.json()["detail"]
+    monkeypatch.undo()
+    assert c.delete("/api/ai/all").status_code == 200                       # trying again finishes the job
+    assert not (A.DB_PATH.parent / "code-backups").exists()
+
+
 def test_the_videos_action(c, fake):
     ready(c)
     c.post("/api/ai/chat", json={"action": "videos", "messages": [{"role": "user", "content": "Find videos on this"}]})
     assert "Task: suggest videos" in fake.last["system"] and "Don't make up video titles" in fake.last["system"]
+    c.post("/api/ai/chat", json={"action": "videos", "format": "diagram",
+                                 "messages": [{"role": "user", "content": "Find videos on this"}]})
+    assert "Task: suggest videos" in fake.last["system"] and "Format: diagram" not in fake.last["system"]
     c.post("/api/ai/chat", json={"messages": [{"role": "user", "content": "hi"}]})
     assert "Task: suggest videos" not in fake.last["system"]
     assert c.post("/api/ai/chat", json={"action": "essay", "messages": [{"role": "user", "content": "hi"}]}).status_code == 422

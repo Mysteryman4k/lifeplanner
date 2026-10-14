@@ -1472,6 +1472,7 @@ function recentChats() {
 const CHAT_SAVE_MAX = 400;                       // MAX_MESSAGES in ai/chats.py
 
 function chatSave() {
+  if (chatSave.blocked) return Promise.resolve();  // Remove all AI data is running
   const c = chatState();
   // The newest 400 (the server's limit): a very long chat keeps saving, without its oldest messages
   const messages = c.messages.filter(m => m.content || m.cards?.length || m.error).slice(-CHAT_SAVE_MAX).map(m => ({
@@ -2618,13 +2619,15 @@ const ACTIONS = {
   },
   async 'ai-remove-all'() {
     if (!(await confirmDialog('Remove all AI data?', 'Deletes your saved API keys, chats, linked code folders (the folders themselves aren\'t touched), suggested changes and their backups, and your AI settings and agreement. Your notes and planner data stay.', 'Remove'))) return;
+    chatSave.blocked = true;                      // no save may land after the chats are removed
     try {
+      await chatSave.queue;
       state.ai = await api('/api/ai/all', { method: 'DELETE' });
       state.aiTest = null; state.aiModels = []; state.aiSystem = null;
       state.chats = []; state.code = null; chatReset();                    // chats and folder links are gone too
       toast('AI data removed');
       stillRender();
-    } catch (e) { toast(e.message, 'error'); }
+    } catch (e) { toast(e.message, 'error'); } finally { chatSave.blocked = false; }
   },
   'new-task': el => openTask(null, el.dataset.due ? { due_date: el.dataset.due } : {}),
   'open-task': el => openTask(Number(el.dataset.id)),

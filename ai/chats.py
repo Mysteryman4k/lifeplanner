@@ -127,6 +127,12 @@ def register(app, db, load_ai_settings, data_dir: Path):
         with db() as conn:
             for table in ("messages", "conversations", "file_changes", "ai_actions", "code_folders"):
                 conn.execute(f"DELETE FROM {table}")
-        shutil.rmtree(Path(data_dir) / "code-backups", ignore_errors=True)
+        target = Path(data_dir) / "code-backups"
+        if target.exists():
+            try:
+                shutil.rmtree(target)
+            except OSError as e:                          # say so, rather than report everything removed
+                raise HTTPException(500, "Your chats and folder links were removed, but some code backups couldn't be "
+                                         f"deleted ({target}). Close any program using them and click Remove again.") from e
 
     return remove_ai_data
