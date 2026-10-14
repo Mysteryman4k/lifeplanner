@@ -375,3 +375,27 @@ def test_recover_keeps_an_edit_saved_just_before_an_undo_moved_the_file(c, A, fa
     store.recover()
     assert (proj / "notes.txt").read_bytes() == b"hello, with my edit\n"
     assert store.get(card["change_id"])["status"] == "applied" and not hold.exists()
+
+
+@pytest.mark.parametrize("args", [
+    {"path": "calc.py", "replace": "def add(a, b):\n    return a + b\n", "whole_file": True},     # a whole-file rewrite
+    {"path": "calc.py", "find": "    return a - b", "replace": "\n".join(f"    x{i} = {i}" for i in range(20))},  # big
+])
+def test_apply_follows_the_folders_mode_now(c, fake, proj, args):
+    """Suggested while the folder was Personal, then the folder became an Assignment: Apply refuses until it's
+    Personal again."""
+    f = setup(c, proj, mode="personal")
+    card = cards(propose(c, fake, f, {"summary": "fix", **args}))[0]
+    c.put(f"/api/code/folders/{f['id']}", json={"mode": "assignment"})
+    r = c.post(f"/api/code/changes/{card['change_id']}/apply")
+    assert r.status_code == 409 and "now an Assignment" in r.json()["detail"]
+    assert (proj / "calc.py").read_bytes() == ORIGINAL
+    c.put(f"/api/code/folders/{f['id']}", json={"mode": "personal"})
+    assert c.post(f"/api/code/changes/{card['change_id']}/apply").status_code == 200
+
+
+def test_a_small_edit_still_applies_after_switching_to_assignment(c, fake, proj):
+    f = setup(c, proj, mode="personal")
+    card = cards(propose(c, fake, f, {"path": "calc.py", "find": "a - b", "replace": "a + b", "summary": "fix"}))[0]
+    c.put(f"/api/code/folders/{f['id']}", json={"mode": "assignment"})
+    assert c.post(f"/api/code/changes/{card['change_id']}/apply").status_code == 200

@@ -286,6 +286,7 @@ def init_db():
                 status TEXT NOT NULL,                -- proposed, applying, applied, undoing, undone, dismissed, stale
                 base_hash TEXT,                      -- the file when proposed (NULL: a new file)
                 new_content TEXT NOT NULL,
+                kind TEXT NOT NULL DEFAULT 'edit',  -- edit, whole (a whole file replaced) or new (a new file)
                 eol TEXT NOT NULL DEFAULT 'LF',      -- line endings to write: LF or CRLF
                 backup TEXT NOT NULL DEFAULT '',     -- code-backups/ copy of the original, '' for a new file
                 applied_hash TEXT,

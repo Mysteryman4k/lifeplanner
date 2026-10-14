@@ -109,15 +109,17 @@ class ChangeStore:
             raise HTTPException(404, "That change isn't known any more.")
         return dict(r)
 
-    def add(self, folder_id: int, path: str, summary: str, base_hash, new_content: str, eol: str) -> int:
+    def add(self, folder_id: int, path: str, summary: str, base_hash, new_content: str, eol: str, kind: str) -> int:
+        """kind: edit (find and replace), whole (a whole existing file replaced) or new (a new file)."""
         with self.db() as conn:
-            return conn.execute("INSERT INTO file_changes (folder_id, path, summary, base_hash, new_content, eol, status) "
-                                "VALUES (?, ?, ?, ?, ?, ?, 'proposed')",
-                                (folder_id, path, summary, base_hash, new_content, eol)).lastrowid
+            return conn.execute("INSERT INTO file_changes (folder_id, path, summary, base_hash, new_content, eol, kind, "
+                                "status) VALUES (?, ?, ?, ?, ?, ?, ?, 'proposed')",
+                                (folder_id, path, summary, base_hash, new_content, eol, kind)).lastrowid
 
-    def update(self, change_id: int, summary: str, new_content: str):
+    def update(self, change_id: int, summary: str, new_content: str, kind: str):
         with self.db() as conn:
-            conn.execute("UPDATE file_changes SET summary=?, new_content=? WHERE id=?", (summary, new_content, change_id))
+            conn.execute("UPDATE file_changes SET summary=?, new_content=?, kind=? WHERE id=?",
+                         (summary, new_content, kind, change_id))
 
     def claim(self, change_id: int, from_status: str, to_status: str) -> bool:
         """Move the change on in one step, so a double-click can't apply or undo it twice."""
@@ -236,6 +238,11 @@ class ChangeStore:
         if (sha(current) if current is not None else None) != c["base_hash"]:
             self.claim(change_id, "proposed", "stale")
             raise stale
+        if c["folder_mode"] == "assignment":             # the folder may have become an Assignment since
+            before = current.decode("utf-8", errors="replace").replace("\r\n", "\n") if current is not None else ""
+            if c["kind"] == "whole" or changed_count(before, c["new_content"]) > ASSIGNMENT_MAX_LINES:
+                raise HTTPException(409, "This folder is now an Assignment, and this change is bigger than Assignment "
+                                         "folders allow. Ask for a smaller one, or switch the folder back to Personal.")
         if not self.claim(change_id, "proposed", "applying"):
             raise HTTPException(409, "That change was already applied or dismissed.")
         new = c["new_content"].replace("\n", "\r\n" if c["eol"] == "CRLF" else "\n").encode("utf-8")
@@ -392,6 +399,7 @@ class CodeTools:
             else:
                 current, base_hash, eol = "", None, "LF"
             before = current
+        whole = False
         if find:
             if not exists and change_id is None:
                 raise CodeError(f"{path} doesn't exist. To create it, leave out find.")
@@ -410,6 +418,7 @@ class CodeTools:
                     raise CodeError(f"{path} already exists. Give find (the exact text to replace), or set "
                                     "whole_file to replace the whole file.")
             new = replace if replace.endswith("\n") or not replace else replace + "\n"
+            whole = exists or change_id is not None
         if new == current:
             raise CodeError("That change doesn't change anything.")
         if len(new.encode("utf-8")) > MAX_FILE:
@@ -418,9 +427,11 @@ class CodeTools:
             raise CodeError(f"In an Assignment folder a change can be at most {ASSIGNMENT_MAX_LINES} changed lines. "
                             "Explain the rest instead, so the student writes it.")
         if change_id is None:
-            change_id = self.store.add(self.folder_id, path, summary, base_hash, new, eol)
+            kind = "whole" if whole else ("edit" if exists else "new")
+            change_id = self.store.add(self.folder_id, path, summary, base_hash, new, eol, kind)
             self.pending[path] = (change_id, before)
         else:
-            self.store.update(change_id, summary, new)
+            kind = "whole" if whole else self.store.get(change_id)["kind"]
+            self.store.update(change_id, summary, new, kind)
         return {"type": "change", "change_id": change_id, "path": path, "summary": summary,
                 "new_file": not exists, "diff": diff_lines(before, new)}
