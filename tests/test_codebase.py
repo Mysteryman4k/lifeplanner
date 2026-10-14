@@ -164,6 +164,9 @@ def test_names_in_errors_match_whole_path_segments(tmp_path):
     assert f._find("b/x.py") == "src/b/x.py"                  # not ab/x.py, which only ends with the same text
     assert f._find("other/x.py") is None
     assert f._find("lab3/app/main.py") == "app/main.py"       # a longer path from somewhere else still matches
+    make(tmp_path, {"x.py": "root = 1\n", "src/x.py": "src = 1\n"})
+    f = Folder(str(tmp_path))
+    assert f._find("other/src/x.py") == "src/x.py"            # the longest matching path, not the root x.py
 
 
 def test_gitignore_rules():

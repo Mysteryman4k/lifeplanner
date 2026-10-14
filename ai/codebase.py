@@ -291,11 +291,19 @@ class Folder:
                 return PurePosixPath(name).as_posix()
         except CodeError:
             pass
-        for rel in self._names().get(PurePosixPath(name).name, ()):
-            # whole path segments only: "b/x.py" mustn't match "ab/x.py"; a longer path in an error matches its end
-            if "/" not in name or rel == name or rel.endswith("/" + name) or name.endswith("/" + rel):
+        candidates = self._names().get(PurePosixPath(name).name, [])
+        if "/" not in name:
+            return candidates[0] if candidates else None
+        # Whole path segments only ("b/x.py" mustn't match "ab/x.py"), and the closest match wins: the same path,
+        # then a file whose path ends with the name, then the longest path that the name (from another PC) ends with
+        for rel in candidates:
+            if rel == name:
                 return rel
-        return None
+        ends = [rel for rel in candidates if rel.endswith("/" + name)]
+        if ends:
+            return min(ends, key=len)
+        inside = [rel for rel in candidates if name.endswith("/" + rel)]
+        return max(inside, key=len) if inside else None
 
     def _names(self) -> dict:
         """File name -> relative paths, built once per Folder (one walk, however many names an error has)."""
