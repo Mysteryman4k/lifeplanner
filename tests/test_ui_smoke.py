@@ -1169,6 +1169,14 @@ def test_saved_chats_quiz_and_videos(server, page):
         page.wait_for_timeout(2500)
         page.unroute(f"**/api/ai/chats/{slow['id']}")
         assert page.evaluate("chatState().id") == other["id"] and page.locator(".chat-msg.ai >> text=slow answer").count() == 0
+        # New chat while one is still opening: the new chat stays
+        page.route(f"**/api/ai/chats/{slow['id']}", lambda route: (page.wait_for_timeout(1500), route.continue_())
+                   if route.request.method == "GET" else route.continue_())
+        page.evaluate(f"() => {{ chatOpen({slow['id']}); }}")           # not waited for: it's still loading
+        page.click("[data-action=chat-new]")
+        page.wait_for_timeout(2500)
+        page.unroute(f"**/api/ai/chats/{slow['id']}")
+        assert page.evaluate("chatState().id") is None and page.locator(".chat-msg").count() == 0
         page.request.delete(f"{server}/api/ai/chats/{slow['id']}", headers=tok)
         page.request.delete(f"{server}/api/ai/chats/{other['id']}", headers=tok)
         page.evaluate("loadChats()")

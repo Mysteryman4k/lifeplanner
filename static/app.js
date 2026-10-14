@@ -1446,7 +1446,12 @@ function chatCard(card, i, n) {
       </div></div>`;
 }
 
-function chatReset(taskId = null, code = null) {
+let chatOpening = 0;                             // the latest chat asked for: a slower, older one is ignored
+
+/** A fresh chat. Any chat still being opened is cancelled (New chat, another task, Remove all AI data),
+ *  except when chatOpen itself resets on the way to showing the chat it opened (fromOpen). */
+function chatReset(taskId = null, code = null, fromOpen = false) {
+  if (!fromOpen) chatOpening++;
   const c = chatState();
   c.controller?.abort();                       // stop any reply still streaming for the old chat
   // A new session: saves still queued for the chat that was showing can't touch this one (chatSave)
@@ -1499,8 +1504,6 @@ function chatSave() {
   return chatSave.queue;
 }
 
-let chatOpening = 0;                             // the latest chat asked for: a slower, older one is ignored
-
 async function chatOpen(id) {
   const asked = ++chatOpening, stale = () => asked !== chatOpening;
   let ch;
@@ -1511,10 +1514,10 @@ async function chatOpen(id) {
     if (!k.folders) await codeLoad();
     if (stale()) return;
     if (!ch.folder_id || !k.folders.some(f => f.id === ch.folder_id)) { toast('That chat\'s folder isn\'t linked any more.', 'error'); return; }
-    if (k.folderId !== ch.folder_id) codeSelectFolder(ch.folder_id);
-    chatReset(null, ch.folder_id);
+    if (k.folderId !== ch.folder_id) codeSelectFolder(ch.folder_id, true);
+    chatReset(null, ch.folder_id, true);
   } else {
-    chatReset(ch.task_id);
+    chatReset(ch.task_id, null, true);
   }
   const c = chatState();
   Object.assign(c, { id: ch.id, tokens: ch.tokens, format: ch.format || 'auto',
@@ -1594,11 +1597,11 @@ async function codeLoadTree() {
   }
 }
 
-function codeSelectFolder(id) {
+function codeSelectFolder(id, fromOpen = false) {
   const k = codeState();
   Object.assign(k, { folderId: id, tree: null, treeError: '', expanded: new Set(), open: null, files: [], pinned: [], removed: [], marks: {},
     commands: null, cmd: '', cmdEdited: false, customRun: false });
-  chatReset(null, id);
+  chatReset(null, id, fromOpen);
   codeLoadTree();
 }
 
