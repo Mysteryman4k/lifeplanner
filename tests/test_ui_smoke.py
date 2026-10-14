@@ -1116,6 +1116,10 @@ def test_saved_chats_quiz_and_videos(server, page):
         page.wait_for_selector(".chat-msg.ai a.link >> text=Search YouTube: stacks")
         assert "Task: suggest videos" in last_request()["messages"][0]["content"]
         page.wait_for_selector(".nav-chat >> text=Quiz me on stacks")
+        for _ in range(100):                                    # saving happens just after each reply
+            if [x["count"] for x in page.request.get(f"{server}/api/ai/chats").json()] == [6]:
+                break
+            page.wait_for_timeout(100)
 
         # After a reload the chat is still there, and opens with its messages and mode
         page.reload()
