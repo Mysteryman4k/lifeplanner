@@ -40,6 +40,20 @@ def test_the_tutor_rule_and_mode_are_in_the_system_prompt(c, fake):
     c.post("/api/ai/chat", json={"mode": "practise", "messages": [{"role": "user", "content": "hi"}]})
     system = fake.last["system"]
     assert "not an answer writer" in system and "Mode: Practise" in system and "Australian spelling" in system
+    assert "```mermaid" in system and "$$...$$" in system and "Format:" not in system     # any format by default
+
+
+@pytest.mark.parametrize("fmt,expect", [("diagram", "Format: diagram"), ("both", "Format: notes and diagram"),
+                                        ("maths", "Format: maths"), ("code", "Format: code")])
+def test_the_chosen_format_is_in_the_system_prompt(c, fake, fmt, expect):
+    ready(c)
+    c.post("/api/ai/chat", json={"format": fmt, "messages": [{"role": "user", "content": "hi"}]})
+    assert expect in fake.last["system"]
+
+
+def test_an_unknown_format_is_refused(c, fake):
+    ready(c)
+    assert c.post("/api/ai/chat", json={"format": "poem", "messages": [{"role": "user", "content": "hi"}]}).status_code == 422
 
 
 @pytest.mark.parametrize("setup,status", [

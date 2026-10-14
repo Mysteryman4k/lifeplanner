@@ -620,3 +620,110 @@ def test_task_actions_from_the_chat(server, page):
     page.evaluate("chatReset()")
     page.request.post(f"{server}/api/ai/terms/withdraw", headers=tok)
     page.errors.clear()
+
+
+@pytest.mark.ui
+def test_maths_code_and_diagrams_in_replies(server, page):
+    """Maths with KaTeX, highlighted code with Copy, Mermaid diagrams drawn after the reply, a broken diagram
+    offering Try again, the format choice, and AI text that tries to inject HTML or script staying inert."""
+    import json
+    import os
+
+    import app as A
+    tok = {A.TOKEN_HEADER: A.SESSION_TOKEN}
+    terms = page.request.get(f"{server}/api/ai/terms").json()
+    page.request.post(f"{server}/api/ai/terms/agree", headers=tok,
+                      data={"version": terms["version"], "ticks": {k: True for k in terms["ticks"]}})
+    page.request.put(f"{server}/api/ai/settings", headers=tok, data={"provider": "ollama", "model": "qwen2.5:7b"})
+    nl, f = chr(10), chr(96) * 3
+
+    def say(*parts):
+        return "".join("data: " + json.dumps({"choices": [{"delta": {"content": t}}]}) + nl + nl for t in parts)
+
+    reply = nl.join([
+        "## Stacks", "Push is $O(1)$, and in total:", r"$$\sum_{i=1}^{n} i = \frac{n(n+1)}{2}$$",
+        "It costs $5 and $10 at the shop.",
+        f + "python", "def push(x):", "    stack.append(x)  # O(1)", f,
+        f + "mermaid", "flowchart LR", '  A["Push (O(1))"] --> B["Pop"]', f,
+        f + "mermaid", "sequenceDiagram", "  Student->>App: Ask", "  App-->>Student: Answer", f,
+        f + "mermaid", "flowchart LR", "  A --> [[[", f,
+        f + "mermaid", "graph TD", "    A[Stack: []] --> B(Push 5);", "    B --> C[Stack: [5]];", "    C --> D{Top: 5}", f,
+        f + "mermaid", "flowchart LR", '  A["<img src=x onerror=window.pwned=1>"] --> B',
+        '  click A href "javascript:window.pwned=1"', f,
+        r'<img src=x onerror="window.pwned=1"> and $\href{javascript:window.pwned=1}{x}$',
+        "and [click](javascript:window.pwned=1)",
+    ])
+    replies = [say(reply[:200], reply[200:]), say("Fixed it."), say("Here it is.")]
+    A.fake_net["POST localhost/v1/chat/completions"] = (200, replies)
+
+    page.goto(f"{server}/#/study")
+    page.reload()
+    page.wait_for_selector("#chatInput")
+    page.evaluate("chatReset(); chatRefresh()")
+    assert page.evaluate("typeof window.mermaid") == "undefined"        # loaded only when a diagram appears
+    page.select_option("#chatFormat", "both")
+    page.fill("#chatInput", "Explain stacks")
+    page.keyboard.press("Enter")
+    page.wait_for_selector(".chat-msg.ai .chat-tools")
+    page.wait_for_selector(".chat-msg.ai .diagram-svg svg")
+    page.wait_for_function("document.querySelectorAll('.chat-msg.ai .chat-diagram:not(.drawing)').length === 5")
+    msg = page.locator(".chat-msg.ai").first
+
+    asked = json.loads([r for r in A.fake_net_seen if r.url.path.endswith("/chat/completions")][-1].content)
+    assert "Format: notes and diagram" in asked["messages"][0]["content"]
+    assert msg.locator(".katex").count() >= 2 and msg.locator(".katex-display").count() == 1
+    assert "It costs $5 and $10 at the shop." in msg.inner_text()            # prices aren't maths
+    assert msg.locator(".code-head", has_text="python").count() == 1
+    assert msg.locator("pre code .hljs-keyword", has_text="def").count() == 1
+    assert msg.locator(".diagram-svg svg").count() == 4                       # the injection attempt draws as text
+    assert msg.locator(".diagram-src summary", has_text="labels put in quotes").count() == 1   # A[Stack: [5]] repaired
+    broken = msg.locator(".chat-diagram", has_text="couldn't be drawn")
+    assert broken.count() == 1 and broken.locator("[data-action=diagram-retry]").count() == 1
+    assert page.evaluate("window.pwned") is None
+    unsafe = ".chat-msg.ai [onerror], .chat-msg.ai img, .chat-msg.ai a[href^='javascript'], .chat-msg.ai foreignObject"
+    assert page.locator(unsafe).count() == 0
+    if os.environ.get("EUT_SHOTS"):
+        for name, where in (("top", "0"), ("bottom", "log.scrollHeight")):
+            page.evaluate(f"(() => {{ const log = document.querySelector('#chatLog'); log.scrollTop = {where}; }})()")
+            page.screenshot(path=os.path.join(os.environ["EUT_SHOTS"], f"stage5-{name}.png"))
+        page.emulate_media(color_scheme="dark")
+        page.evaluate("chatRefresh()")
+        page.wait_for_function("document.querySelectorAll('.chat-msg.ai .chat-diagram:not(.drawing)').length === 5")
+        page.wait_for_timeout(300)
+        page.evaluate("document.querySelector('#chatLog').scrollTop = 120")
+        page.screenshot(path=os.path.join(os.environ["EUT_SHOTS"], "stage5-dark.png"))
+        page.emulate_media(color_scheme="light")
+        page.evaluate("chatRefresh()")
+
+    # Saved as a note, the diagrams draw there too (Try again is only for the chat)
+    page.click("[data-action=chat-save-note]")
+    page.click("#drawerFoot [type=submit]")
+    page.wait_for_selector("#toast.show >> text=Note saved")
+    page.evaluate("openNote(state.notes[0].id)")
+    page.wait_for_selector("#drawer .note-body .diagram-svg svg")
+    page.wait_for_function("document.querySelectorAll('#drawer .chat-diagram:not(.drawing)').length === 5")
+    assert page.locator("#drawer .katex-display").count() == 1
+    assert page.locator("#drawer [data-action=diagram-retry]").count() == 0
+    page.evaluate("closeDrawer()")
+
+    page.context.grant_permissions(["clipboard-read", "clipboard-write"])
+    page.click("[data-action=code-copy]")
+    page.wait_for_selector("#toast.show >> text=Copied")
+    copied = page.evaluate("navigator.clipboard.readText()").replace(chr(13), "")
+    assert copied == "def push(x):" + nl + "    stack.append(x)  # O(1)"
+
+    # Try again asks the assistant to fix the diagram
+    broken.locator("[data-action=diagram-retry]").click()
+    page.wait_for_selector(".chat-msg.me >> text=didn't draw")
+    page.wait_for_function("document.querySelectorAll('.chat-msg.ai .chat-tools').length === 2")
+
+    # Show as… asks for the last answer again in another format
+    page.select_option(".chat-reformat", "diagram")
+    page.wait_for_selector(".chat-msg.me >> text=Show that again as a diagram.")
+    page.wait_for_function("document.querySelectorAll('.chat-msg.ai .chat-tools').length === 3")
+    asked = json.loads([r for r in A.fake_net_seen if r.url.path.endswith("/chat/completions")][-1].content)
+    assert "Format: diagram" in asked["messages"][0]["content"]
+    assert page.input_value("#chatFormat") == "diagram"
+
+    page.evaluate("chatReset()")
+    page.request.post(f"{server}/api/ai/terms/withdraw", headers=tok)
