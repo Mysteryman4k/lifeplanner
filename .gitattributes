@@ -1,0 +1,2 @@
+# Third-party libraries, copied unchanged from their npm packages (see static/vendor/README.md)
+static/vendor/** linguist-vendored -diff
