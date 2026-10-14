@@ -264,7 +264,18 @@ def init_db():
                 updated_at TEXT DEFAULT (datetime('now','localtime'))
             );
             CREATE INDEX IF NOT EXISTS ix_notes_subject ON notes(subject_id);
+
+            -- What the study assistant changed (or wants to), so Undo and Keep/Delete work
+            CREATE TABLE IF NOT EXISTS ai_actions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                status TEXT NOT NULL,                -- pending, applying, done, undoing, undone, rejected
+                summary TEXT NOT NULL DEFAULT '',
+                data TEXT NOT NULL DEFAULT '[]',     -- pending: the tool calls; otherwise what's needed to undo
+                created_at TEXT DEFAULT (datetime('now','localtime'))
+            );
         """)
+        # A change cut off part-way (the app was closed mid-change) keeps the undo steps saved so far: offer Undo
+        conn.execute("UPDATE ai_actions SET status='done' WHERE status IN ('applying', 'undoing')")
         conn.execute("INSERT INTO settings (key, value) VALUES ('last_run_version', ?) "
                      "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (json.dumps(APP_VERSION),))
 
@@ -1214,7 +1225,142 @@ def _task_context(task_id: int) -> str:
     return "\n".join(parts)
 
 
-ai_routes.register(app, _get_setting, _put_setting, lambda: AI_TRANSPORT["value"], _task_context)
+class TaskStore:
+    """The study assistant's way into tasks: the same functions the app's own screens use."""
+    COLUMNS = ("title", "description", "due_date", "planned_start_date", "planned_end_date", "priority", "status",
+               "category_id", "subject_id", "unit_id", "target_grade", "progress", "estimated_hours",
+               "actual_hours", "notes", "is_recurring", "recurrence_pattern", "created_at", "updated_at")
+
+    @staticmethod
+    def _wrap(fn, *args):
+        from pydantic import ValidationError
+
+        from ai.tools import ToolError
+        try:
+            return fn(*args)
+        except ValidationError as e:
+            err = e.errors()[0]
+            raise ToolError(f"{'/'.join(map(str, err.get('loc', ())))}: {err.get('msg', 'invalid')}") from None
+        except HTTPException as e:
+            raise ToolError(str(e.detail)) from None
+
+    def get(self, task_id: int):
+        with db() as conn:
+            row = conn.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
+        return dict(row) if row else None
+
+    def list(self, status: str = "open", search: str = "", **_):
+        q = ("SELECT t.id, t.title, t.due_date, t.priority, t.status, s.name AS subject FROM tasks t "
+             "LEFT JOIN subjects s ON s.id = t.subject_id WHERE 1=1")
+        args = []
+        if status == "open":
+            q += " AND t.status != 'completed'"
+        elif status == "done":
+            q += " AND t.status = 'completed'"
+        if search:
+            q += " AND t.title LIKE ?"
+            args.append(f"%{search}%")
+        with db() as conn:
+            return [dict(r) for r in conn.execute(q + " ORDER BY t.due_date IS NULL, t.due_date, t.id LIMIT 60", args)]
+
+    def create(self, fields: dict) -> dict:
+        return self._wrap(lambda: create_task(TaskCreate(**fields)))
+
+    def update(self, task_id: int, fields: dict) -> dict:
+        return self._wrap(lambda: update_task(task_id, TaskUpdate(**fields)))
+
+    def delete(self, task_id: int):
+        delete_task(task_id)
+
+    def note_ids(self, task_id: int) -> list:
+        """Notes linked to a task (deleting the task unlinks them, so Undo links them again)."""
+        with db() as conn:
+            return [r["id"] for r in conn.execute("SELECT id FROM notes WHERE task_id=?", (task_id,))]
+
+    def relink_notes(self, task_id: int, note_ids: list):
+        with db() as conn:
+            conn.executemany("UPDATE notes SET task_id=? WHERE id=? AND task_id IS NULL", [(task_id, n) for n in note_ids])
+
+    LINKS = (("category_id", "categories"), ("subject_id", "subjects"), ("unit_id", "units"))
+
+    def restore(self, row: dict):
+        """Put a task back exactly as it was (Undo): update it if it still exists, otherwise re-create it.
+        A category, subject or unit deleted since is left empty rather than stopping the Undo."""
+        row = dict(row)
+        cols = [c for c in self.COLUMNS if c in row]
+        with db() as conn:
+            for col, table in self.LINKS:
+                if row.get(col) is not None and not conn.execute(f"SELECT 1 FROM {table} WHERE id=?",
+                                                                 (row[col],)).fetchone():
+                    row[col] = None
+            if conn.execute("SELECT 1 FROM tasks WHERE id=?", (row["id"],)).fetchone():
+                conn.execute(f"UPDATE tasks SET {', '.join(f'{c}=?' for c in cols)} WHERE id=?",
+                             [row[c] for c in cols] + [row["id"]])
+            else:
+                conn.execute(f"INSERT INTO tasks (id, {', '.join(cols)}) VALUES (?, {', '.join('?' * len(cols))})",
+                             [row["id"]] + [row[c] for c in cols])
+
+    def subject_id(self, name: str):
+        with db() as conn:
+            row = conn.execute("SELECT id FROM subjects WHERE lower(name)=lower(?)", (name.strip(),)).fetchone()
+        return row["id"] if row else None
+
+    def subject_names(self) -> list:
+        with db() as conn:
+            return [r["name"] for r in conn.execute("SELECT name FROM subjects ORDER BY name")]
+
+
+class ActionLog:
+    """ai_actions: changes made (for Undo) and changes waiting for the student's Keep / Delete."""
+
+    def start(self, summary: str) -> int:
+        """A change about to be made. Its undo steps are saved (progress) before each task is touched."""
+        with db() as conn:
+            return conn.execute("INSERT INTO ai_actions (status, summary, data) VALUES ('applying', ?, '[]')",
+                                (summary,)).lastrowid
+
+    def progress(self, action_id: int, ops: list):
+        with db() as conn:
+            conn.execute("UPDATE ai_actions SET data=? WHERE id=?", (json.dumps(ops), action_id))
+
+    def pending(self, calls: list, summaries: list) -> int:
+        with db() as conn:
+            return conn.execute("INSERT INTO ai_actions (status, summary, data) VALUES ('pending', ?, ?)",
+                                ("; ".join(summaries), json.dumps(calls))).lastrowid
+
+    def _take(self, action_id: int, status: str) -> list:
+        """Claim the action in one step, so a double-click can't apply (or undo) it twice."""
+        with db() as conn:
+            row = conn.execute("SELECT status, data FROM ai_actions WHERE id=?", (action_id,)).fetchone()
+            # A claimed pending action's data starts again as undo steps (none yet), in the same step
+            claimed = row and conn.execute(
+                "UPDATE ai_actions SET status=?, data=CASE WHEN ?='pending' THEN '[]' ELSE data END "
+                "WHERE id=? AND status=?",
+                ({"pending": "applying", "done": "undoing"}[status], status, action_id, status)).rowcount
+        if not row:
+            raise HTTPException(404, "That change isn't known any more.")
+        if not claimed:
+            raise HTTPException(409, {"pending": "That change was already confirmed or declined.",
+                                      "done": "That change can't be undone now (it was already undone)."}[status])
+        return json.loads(row["data"])
+
+    def take_pending(self, action_id: int) -> list:
+        return self._take(action_id, "pending")
+
+    def take_done(self, action_id: int) -> list:
+        return self._take(action_id, "done")
+
+    def complete_pending(self, action_id: int, ops: list):
+        with db() as conn:
+            conn.execute("UPDATE ai_actions SET status='done', data=? WHERE id=?", (json.dumps(ops), action_id))
+
+    def set_status(self, action_id: int, status: str):
+        with db() as conn:
+            conn.execute("UPDATE ai_actions SET status=? WHERE id=?", (status, action_id))
+
+
+ai_routes.register(app, _get_setting, _put_setting, lambda: AI_TRANSPORT["value"], _task_context,
+                   TaskStore(), ActionLog())
 
 
 class MoneySettings(BaseModel):

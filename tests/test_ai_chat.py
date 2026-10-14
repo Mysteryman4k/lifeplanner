@@ -101,6 +101,8 @@ def test_openai_compatible_stream_is_parsed(c, A):
     seen = []
 
     def handler(req):
+        if req.url.path == "/api/show":                           # tool support check
+            return httpx.Response(200, json={"capabilities": ["completion"]})
         seen.append(json.loads(req.content))
         return httpx.Response(200, text=sse({"choices": [{"delta": {"content": "Re"}}]},
                                             {"choices": [{"delta": {"content": "cursion"}}]},
@@ -110,6 +112,7 @@ def test_openai_compatible_stream_is_parsed(c, A):
     assert "".join(e.get("text", "") for e in ev) == "Recursion"
     assert {"type": "usage", "input": 9, "output": 3} in ev
     assert seen[0]["messages"][0]["role"] == "system" and seen[0]["stream"] is True
+    assert "tools" not in seen[0]                                 # this model can't use tools
 
 
 def test_streaming_keeps_the_https_rule(c, A):

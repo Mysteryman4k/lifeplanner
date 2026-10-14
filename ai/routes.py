@@ -11,11 +11,13 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
 from . import keys, prompts, system, terms
+from .tools import TOOLS, TaskTools, system_addendum
 from .providers import PRESETS, get_provider, suggest_model
 
 ProviderId = Literal["", "anthropic", "openai", "deepseek", "ollama", "custom"]
 SETTING_KEY = "ai"
 MAX_HISTORY = 20            # messages sent with each request (older ones stay on screen only)
+MAX_TOOL_ROUNDS = 5         # tool calls and replies in one turn, so a confused model can't loop forever
 
 
 class AISettings(BaseModel):
@@ -57,13 +59,23 @@ class ChatIn(BaseModel):
     task_id: Optional[int] = None
 
 
+class ConfirmIn(BaseModel):
+    action_id: int
+    approve: bool
+
+
+class UndoIn(BaseModel):
+    action_id: int
+
+
 class TestIn(BaseModel):
     provider: Literal["anthropic", "openai", "deepseek", "ollama", "custom"]
     model: str = Field(default="", max_length=200)
     base_url: str = Field(default="", max_length=500)
 
 
-def register(app, get_setting, put_setting, transport_hook=lambda: None, task_context=lambda task_id: ""):
+def register(app, get_setting, put_setting, transport_hook=lambda: None, task_context=lambda task_id: "",
+             task_store=None, action_log=None):
     """Add the /api/ai routes to the app. get_setting/put_setting are app.py's settings helpers.
     transport_hook lets tests supply an httpx.MockTransport so nothing goes over the network."""
 
@@ -186,11 +198,31 @@ def register(app, get_setting, put_setting, transport_hook=lambda: None, task_co
         system_text = prompts.system_prompt(c.mode, task_context(c.task_id) if c.task_id else "")
         base = (s.base_url or None) if s.provider == "custom" else None
         provider = get_provider(s.provider, key=keys.get(s.provider), base_url=base, transport=transport_hook())
+        # Task tools when the app provides them, the mode is a conversation, and the model can use tools
+        use_tools = task_store is not None and c.mode in ("explain", "practise") and provider.supports_tools(s.model) is not False
+        tools = TaskTools(task_store, action_log) if use_tools else None
+        if tools:
+            system_text += "\n\n" + system_addendum()
 
         def events():
+            messages, state = list(history), {"changes": 0, "ask_first": False}
             try:
-                for ev in provider.stream_chat(s.model, system_text, history):
-                    yield f"data: {json.dumps(ev)}\n\n"
+                for _ in range(MAX_TOOL_ROUNDS):
+                    calls = None
+                    for ev in provider.stream_chat(s.model, system_text, messages, TOOLS if tools else None):
+                        if ev["type"] == "tool_calls":
+                            calls = ev
+                        else:
+                            yield f"data: {json.dumps(ev)}\n\n"
+                    if not calls or not tools:
+                        break
+                    results, app_events = tools.run_round(calls["calls"], state)
+                    for ev in app_events:
+                        yield f"data: {json.dumps(ev)}\n\n"
+                    messages += [calls["assistant"], *provider.tool_results(results)]
+                else:
+                    stopped = {"type": "error", "message": "The assistant took too many steps and was stopped."}
+                    yield f"data: {json.dumps(stopped)}\n\n"
             except Exception as e:                       # ProviderError has a plain message; others don't
                 from .providers import ProviderError
                 msg = str(e) if isinstance(e, ProviderError) else "Something went wrong while getting the reply. Try again."
@@ -198,6 +230,22 @@ def register(app, get_setting, put_setting, transport_hook=lambda: None, task_co
             yield f"data: {json.dumps({'type': 'done', 'model': s.model})}\n\n"
 
         return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
+
+    @app.post("/api/ai/confirm")
+    def confirm(c: ConfirmIn):
+        """The student's Keep / Delete (or Do it / Don't) on a change the assistant asked about."""
+        require_agreement()
+        if task_store is None:
+            raise HTTPException(400, "Task actions aren't available.")
+        return TaskTools(task_store, action_log).confirm(c.action_id, c.approve)
+
+    @app.post("/api/ai/undo")
+    def undo(u: UndoIn):
+        """Undo a change the assistant made: the task goes back exactly as it was."""
+        require_agreement()
+        if task_store is None:
+            raise HTTPException(400, "Task actions aren't available.")
+        return TaskTools(task_store, action_log).undo(u.action_id)
 
     @app.get("/api/ai/system")
     def get_system():

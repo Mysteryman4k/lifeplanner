@@ -100,9 +100,15 @@ class Provider:
             msg += " Note: this is an Ollama cloud model, so your messages go to ollama.com, not just this PC."
         return Result(True, msg, models, tools, sorted(self.cloud_models))
 
-    def stream_chat(self, model: str, system: str, messages: list):
-        """Yield {"type": "text", "text": ...} chunks, then {"type": "usage", "input": n, "output": n}.
-        messages: [{"role": "user"|"assistant", "content": str}]"""
+    def stream_chat(self, model: str, system: str, messages: list, tools: list = None):
+        """Yield {"type": "text", "text": ...} chunks, then {"type": "usage", "input": n, "output": n}, and
+        {"type": "tool_calls", "calls": [{"id", "name", "args"}], "assistant": <native message>} when the model
+        asks to use tools. messages: text messages, plus any native messages from earlier rounds.
+        tools: [{"name", "description", "parameters": <JSON schema>}]"""
+        raise NotImplementedError
+
+    def tool_results(self, results: list) -> list:
+        """Native messages giving the model the results of its tool calls. results: [(call, text)]"""
         raise NotImplementedError
 
     def stream_lines(self, path: str, headers: dict, json: dict):
