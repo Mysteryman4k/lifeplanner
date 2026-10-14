@@ -1312,20 +1312,22 @@ async function chatSend(text) {
   text = text.trim();
   if (!text || c.streaming) return;
   const folderId = c.code;
+  const run = {};                              // this send; a reset (New chat, another folder or task) replaces it
+  const current = () => c.run === run;
   if (folderId) {
     if (c.preparing) return;
     c.preparing = true;
+    c.run = run;
     try { await codeChoose(text); }            // add files named in the message (an error's traceback, say)
     finally { c.preparing = false; }
-    if (c.streaming || c.code !== folderId) return;
+    if (c.streaming || c.code !== folderId || !current()) return;
     codeMarkErrors(text);
   }
   c.messages.push({ role: 'user', content: text }, { role: 'assistant', content: '' });
   const asked = c.messages[c.messages.length - 2];
   c.streaming = true;
   c.controller = new AbortController();
-  const run = c.run = {};                      // a newer chat (New chat, another task) takes over the state
-  const current = () => c.run === run;
+  c.run = run;                                 // a newer chat (New chat, another task) takes over the state
   chatRefresh();
   const reply = c.messages[c.messages.length - 1];
   let tasksChanged = false;
@@ -2053,7 +2055,7 @@ const ACTIONS = {
     editNote(null, { title: t.topic.slice(0, 200), body: t.text, subject_id: t.subjectId, source: 'topic' });
   },
   'chat-new'() {
-    chatReset();
+    chatReset(null, route() === 'code' ? codeState().folderId : null);   // a new chat stays in the same folder
     chatRefresh();
   },
   'chat-mode'(el) { if (!chatState().streaming) { chatState().mode = el.dataset.mode; chatRefresh(); } },

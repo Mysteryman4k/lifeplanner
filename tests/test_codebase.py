@@ -143,6 +143,12 @@ def test_the_context_has_line_numbers(project):
     assert sent == ["helpers.py"] and "--- helpers.py (Python) ---" in text and "   2|     return a + b" in text
 
 
+def test_a_binary_file_is_caught_even_when_it_starts_like_text(tmp_path):
+    make(tmp_path, {"data.dat": b"x" * 20_000 + b"\x00binary"})
+    with pytest.raises(CodeError, match="binary"):
+        Folder(str(tmp_path)).read("data.dat")
+
+
 def test_the_file_count_limit_is_reported_as_such(project, monkeypatch):
     import ai.codebase as cb
     monkeypatch.setattr(cb, "MAX_SEND_FILES", 1)

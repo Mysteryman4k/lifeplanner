@@ -207,7 +207,7 @@ class Folder:
     def read(self, rel: str) -> str:
         full = self.check_readable(rel)
         data = full.read_bytes()
-        if b"\x00" in data[:8192]:
+        if b"\x00" in data:                                  # the whole file (at most 200 KB), not just the start
             raise CodeError(f"{rel} is a binary file, so it isn't read or sent.")
         return data.decode("utf-8", errors="replace").replace("\r\n", "\n")
 
