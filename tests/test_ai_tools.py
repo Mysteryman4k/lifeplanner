@@ -1,0 +1,209 @@
+# ruff: noqa: F811, E501  (shared pytest fixtures; recorded provider data is kept on one line)
+"""v4 stage 4: task actions through the study assistant, with Undo and Keep/Delete confirmations."""
+import json
+
+import httpx
+import pytest
+
+from test_ai_chat import events, ready
+from test_ai_setup import A, agree, c, vault  # noqa: F401  (fixtures)
+
+
+@pytest.fixture()
+def fake(monkeypatch):
+    from ai.providers.fake import FakeProvider
+    import ai.routes
+    p = FakeProvider()
+    p.script = []
+    monkeypatch.setattr(ai.routes, "get_provider", lambda *a, **k: p)
+    return p
+
+
+def calls(*items):
+    return {"type": "tool_calls", "calls": [{"id": f"c{i}", "name": n, "args": a} for i, (n, a) in enumerate(items)]}
+
+
+def chat(c, text="hi"):
+    return events(c.post("/api/ai/chat", json={"messages": [{"role": "user", "content": text}]}))
+
+
+def tasks(c):
+    return {t["title"]: t for t in c.get("/api/tasks").json()}
+
+
+def test_adding_a_task_shows_an_undoable_card(c, fake):
+    ready(c)
+    fake.script = [[calls(("add_task", {"title": "Draft lab report", "due_date": "2026-11-02", "priority": "high"}))],
+                   [{"type": "text", "text": "Added it."}]]
+    ev = chat(c, "add a lab report task")
+    action = next(e for e in ev if e["type"] == "action")
+    assert action["summary"] == "Add “Draft lab report” (due 2026-11-02)"
+    t = tasks(c)["Draft lab report"]
+    assert t["priority"] == "high" and t["due_date"] == "2026-11-02"
+    assert "Done: Add" in json.dumps(fake.rounds[1]["messages"])      # the model is told it worked
+    assert fake.rounds[0]["tools"] and "manage the student's tasks" in fake.rounds[0]["system"]
+    assert c.post("/api/ai/undo", json={"action_id": action["action_id"]}).json() == {"status": "undone"}
+    assert "Draft lab report" not in tasks(c)
+    assert c.post("/api/ai/undo", json={"action_id": action["action_id"]}).status_code == 409    # only once
+
+
+def test_update_and_undo_restore_exactly(c, fake):
+    ready(c)
+    s = c.post("/api/subjects", json={"name": "Networks", "color": "#3B6EA8"}).json()
+    t = c.post("/api/tasks", json={"title": "Read ch 3", "priority": "low", "due_date": "2026-11-01"}).json()
+    fake.script = [[calls(("update_task", {"id": t["id"], "title": "Read chapter 3", "subject": "networks",
+                                           "priority": "urgent"}))], [{"type": "text", "text": "ok"}]]
+    action = next(e for e in chat(c) if e["type"] == "action")
+    changed = tasks(c)["Read chapter 3"]
+    assert changed["priority"] == "urgent" and changed["subject_id"] == s["id"]
+    c.post("/api/ai/undo", json={"action_id": action["action_id"]})
+    back = c.get(f"/api/tasks/{t['id']}").json()
+    assert (back["title"], back["priority"], back["subject_id"], back["due_date"]) == ("Read ch 3", "low", None, "2026-11-01")
+
+
+def test_completing_a_repeating_task_and_undoing_removes_the_next_one(c, fake):
+    ready(c)
+    t = c.post("/api/tasks", json={"title": "Weekly reading", "due_date": "2026-11-02", "recurrence_pattern": "weekly"}).json()
+    fake.script = [[calls(("complete_task", {"id": t["id"]}))], [{"type": "text", "text": "Done!"}]]
+    action = next(e for e in chat(c) if e["type"] == "action")
+    titles = [x["title"] for x in c.get("/api/tasks").json()]
+    assert titles.count("Weekly reading") == 2                         # the next occurrence was added
+    c.post("/api/ai/undo", json={"action_id": action["action_id"]})
+    left = [x for x in c.get("/api/tasks").json() if x["title"] == "Weekly reading"]
+    assert len(left) == 1 and left[0]["status"] != "completed" and left[0]["recurrence_pattern"] == "weekly"
+
+
+def test_deleting_always_asks_first(c, fake):
+    ready(c)
+    t = c.post("/api/tasks", json={"title": "Old task", "priority": "high", "notes": "keep these notes"}).json()
+    fake.script = [[calls(("delete_task", {"id": t["id"]}))], [{"type": "text", "text": "Waiting for you."}]]
+    ev = chat(c)
+    card = next(e for e in ev if e["type"] == "confirm")
+    assert card["danger"] is True and card["items"] == ["Delete “Old task”"]
+    assert "Old task" in tasks(c)                                       # nothing happened yet
+    assert "Waiting for the student to confirm" in json.dumps(fake.rounds[1]["messages"])
+    assert c.post("/api/ai/confirm", json={"action_id": card["action_id"], "approve": True}).json()["status"] == "done"
+    assert "Old task" not in tasks(c)
+    assert c.post("/api/ai/confirm", json={"action_id": card["action_id"], "approve": True}).status_code == 409
+    c.post("/api/ai/undo", json={"action_id": card["action_id"]})       # undo the approved delete
+    back = c.get(f"/api/tasks/{t['id']}").json()
+    assert back["title"] == "Old task" and back["notes"] == "keep these notes" and back["priority"] == "high"
+
+
+def test_keep_leaves_the_task_alone(c, fake):
+    ready(c)
+    t = c.post("/api/tasks", json={"title": "Keep me"}).json()
+    fake.script = [[calls(("delete_task", {"id": t["id"]}))], [{"type": "text", "text": "ok"}]]
+    card = next(e for e in chat(c) if e["type"] == "confirm")
+    assert c.post("/api/ai/confirm", json={"action_id": card["action_id"], "approve": False}).json() == {"status": "rejected"}
+    assert "Keep me" in tasks(c)
+    assert c.post("/api/ai/undo", json={"action_id": card["action_id"]}).status_code == 409
+
+
+def test_more_than_three_changes_ask_first_together(c, fake):
+    ready(c)
+    fake.script = [[calls(*[("add_task", {"title": f"Step {i}"}) for i in range(1, 6)])], [{"type": "text", "text": "ok"}]]
+    ev = chat(c, "break my assignment into 5 steps")
+    assert [e["summary"] for e in ev if e["type"] == "action"] == [f"Add “Step {i}”" for i in (1, 2, 3)]
+    card = next(e for e in ev if e["type"] == "confirm")
+    assert card["items"] == ["Add “Step 4”", "Add “Step 5”"] and card["danger"] is False
+    assert sorted(t for t in tasks(c) if t.startswith("Step")) == ["Step 1", "Step 2", "Step 3"]
+    r = c.post("/api/ai/confirm", json={"action_id": card["action_id"], "approve": True}).json()
+    assert r == {"status": "done", "done": 2, "failed": []}
+    assert sorted(t for t in tasks(c) if t.startswith("Step")) == [f"Step {i}" for i in range(1, 6)]
+    c.post("/api/ai/undo", json={"action_id": card["action_id"]})       # undo the batch together
+    assert sorted(t for t in tasks(c) if t.startswith("Step")) == ["Step 1", "Step 2", "Step 3"]
+
+
+def test_list_tasks_and_mistakes_go_back_to_the_model(c, fake):
+    ready(c)
+    c.post("/api/tasks", json={"title": "Stats quiz"})
+    fake.script = [[calls(("list_tasks", {"search": "quiz"}), ("update_task", {"id": 9999, "title": "x"}),
+                          ("add_task", {"title": "Bad subject", "subject": "Astrology"}), ("add_task", {"title": ""}),
+                          ("make_coffee", {}))], [{"type": "text", "text": "Sorry."}]]
+    ev = chat(c)
+    assert not [e for e in ev if e["type"] in ("action", "confirm")]
+    told = json.dumps(fake.rounds[1]["messages"])
+    assert "Stats quiz" in told and "no task with id 9999" in told and "no subject called" in told
+    assert "needs a title" in told and "no tool called make_coffee" in told
+    assert "Bad subject" not in tasks(c)
+
+
+def test_tool_rounds_are_limited(c, fake):
+    ready(c)
+    fake.script = [[calls(("list_tasks", {}))] for _ in range(8)]
+    ev = chat(c)
+    assert any(e["type"] == "error" and "too many steps" in e["message"] for e in ev) and ev[-1]["type"] == "done"
+    assert len(fake.rounds) == 5
+
+
+def test_no_tools_for_notes_mode_or_models_without_tool_support(c, fake):
+    ready(c)
+    c.post("/api/ai/chat", json={"mode": "notes", "messages": [{"role": "user", "content": "Write notes on heaps"}]})
+    assert fake.rounds[-1]["tools"] is None
+    fake.supports_tools = lambda model: False
+    chat(c)
+    assert fake.rounds[-1]["tools"] is None and "manage the student's tasks" not in fake.rounds[-1]["system"]
+
+
+def test_confirm_and_undo_need_the_terms(c):
+    assert c.post("/api/ai/confirm", json={"action_id": 1, "approve": True}).status_code == 403
+    assert c.post("/api/ai/undo", json={"action_id": 1}).status_code == 403
+
+
+def test_unknown_actions_are_404(c, fake):
+    ready(c)
+    assert c.post("/api/ai/undo", json={"action_id": 424242}).status_code == 404
+
+
+# ── real provider formats ──
+
+def sse(*objs):
+    return "".join(f"data: {json.dumps(o)}\n\n" for o in objs)
+
+
+def test_anthropic_tool_use_round_trip(c, A):
+    ready(c, "anthropic", "claude-haiku-5-5")
+    c.put("/api/ai/key", json={"provider": "anthropic", "key": "sk-ant-12345678"})
+    bodies = []
+    first = sse({"type": "message_start", "message": {"usage": {"input_tokens": 20}}},
+                {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
+                {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Adding it. "}},
+                {"type": "content_block_start", "index": 1, "content_block": {"type": "tool_use", "id": "tu_1", "name": "add_task"}},
+                {"type": "content_block_delta", "index": 1, "delta": {"type": "input_json_delta", "partial_json": '{"title": "Ess'}},
+                {"type": "content_block_delta", "index": 1, "delta": {"type": "input_json_delta", "partial_json": 'ay plan"}'}},
+                {"type": "message_delta", "usage": {"output_tokens": 9}})
+    second = sse({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Done."}})
+
+    def handler(req):
+        bodies.append(json.loads(req.content))
+        return httpx.Response(200, text=first if len(bodies) == 1 else second)
+    A.AI_TRANSPORT["value"] = httpx.MockTransport(handler)
+    ev = chat(c, "add an essay plan task")
+    assert "".join(e.get("text", "") for e in ev) == "Adding it. Done."
+    assert any(e["type"] == "action" for e in ev) and "Essay plan" in tasks(c)
+    assert bodies[0]["tools"][0]["input_schema"]
+    assistant, results = bodies[1]["messages"][-2:]
+    assert assistant["content"][1] == {"type": "tool_use", "id": "tu_1", "name": "add_task", "input": {"title": "Essay plan"}}
+    assert results["content"][0]["tool_use_id"] == "tu_1" and "Done: Add" in results["content"][0]["content"]
+
+
+def test_openai_tool_calls_round_trip_including_ollama_style_arguments(c, A):
+    ready(c, "ollama", "qwen2.5:7b")
+    bodies = []
+    first = sse({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "call_a", "function": {"name": "add_task", "arguments": '{"title": "Revise'}}]}}]},
+                {"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": ' trees"}'}}]}}]},
+                {"choices": [{"delta": {"tool_calls": [{"index": 1, "id": "call_b", "function": {"name": "add_task", "arguments": {"title": "Revise graphs"}}}]}}]})
+    second = sse({"choices": [{"delta": {"content": "Added both."}}]})
+
+    def handler(req):
+        if req.url.path == "/api/show":
+            return httpx.Response(200, json={"capabilities": ["completion", "tools"]})
+        bodies.append(json.loads(req.content))
+        return httpx.Response(200, text=first if len(bodies) == 1 else second)
+    A.AI_TRANSPORT["value"] = httpx.MockTransport(handler)
+    ev = chat(c, "add revision tasks")
+    assert [e["summary"] for e in ev if e["type"] == "action"] == ["Add “Revise trees”", "Add “Revise graphs”"]
+    assert bodies[0]["tools"][0]["function"]["name"] == "list_tasks"
+    msgs = bodies[1]["messages"]
+    assert msgs[-3]["tool_calls"][0]["id"] == "call_a" and msgs[-2]["role"] == "tool" and msgs[-1]["tool_call_id"] == "call_b"
