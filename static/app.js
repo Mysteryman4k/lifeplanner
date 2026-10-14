@@ -1410,8 +1410,8 @@ function chatCard(card, i, n) {
         <b>${card.status === 'ran' ? 'Ran' : card.status === 'cancelled' ? 'Not run' : 'Run this?'}</b>${card.why ? ` <span class="muted small">${esc(card.why)}</span>` : ''}
         <pre class="chat-code run-suggestion"><code>${esc(card.command)}</code></pre>
         ${card.status === 'pending' ? '<span class="muted small">It runs only if you click Run.</span>' : ''}</div>
-      ${card.status === 'pending' ? `<div class="chat-card-btns"><button class="btn btn-ghost btn-sm" data-action="run-suggest-cancel" ${ref}>Cancel</button>
-        <button class="btn btn-primary btn-sm" data-action="run-suggest-run" ${ref}>${icon('up', 14)}Run</button></div>` : ''}</div>`;
+      ${card.status === 'pending' ? `<div class="chat-card-btns"><button class="btn btn-ghost btn-sm" data-action="run-suggest-cancel" ${ref} ${card.busy ? 'disabled' : ''}>Cancel</button>
+        <button class="btn btn-primary btn-sm" data-action="run-suggest-run" ${ref} ${card.busy ? 'disabled' : ''}>${icon('up', 14)}${card.busy ? 'Starting…' : 'Run'}</button></div>` : ''}</div>`;
   }
   if (card.kind === 'action' || card.status === 'approved' || card.status === 'undone') {
     const undone = card.status === 'undone';
@@ -1611,12 +1611,21 @@ async function codeLoadCommands() {
       k.cmd = pick?.command || '';
       k.keep = !!pick?.keep_running;
     }
-  } catch (_) { k.commands = { commands: [], explain_only: '' }; }
+  } catch (_) { if (k.folderId === id) k.commands = { commands: [], explain_only: '' }; }
 }
 
+const codeStarting = new Set();                 // folders with a run being started (a double-click starts one)
+
 async function codeStartRun(command) {
-  const k = codeState(), f = codeFolder();
+  const f = codeFolder();
   if (!f || !command.trim()) { toast('Type a command to run first.', 'error'); return false; }
+  if (codeStarting.has(f.id)) return false;
+  codeStarting.add(f.id);
+  try { return await codeStartRunIn(f, command); } finally { codeStarting.delete(f.id); }
+}
+
+async function codeStartRunIn(f, command) {
+  const k = codeState();
   if (!state.ai?.run_notice) {
     const ok = await confirmDialog('Before you run code',
       'Code runs on this PC with your permissions, so it can read and change your files, and read the AI key saved in EasyUniTrack. Only run code you trust. ' +
@@ -1627,10 +1636,11 @@ async function codeStartRun(command) {
   try {
     const r = await api(`/api/code/folders/${f.id}/run`, { method: 'POST',
       body: { command: command.trim(), keep_running: !!k.keep, timeout: Number(k.limit) || 30 } });
-    k.run = { ...r, text: r.output };
+    const run = { ...r, text: r.output };
+    k.runs[f.id] = run;                          // the folder that started it, even if another is shown now
+    if (k.folderId === f.id) codeRunRefresh();
+    codePoll(run);
   } catch (e) { toast(e.message, 'error'); return false; }
-  codeRunRefresh();
-  codePoll();
   return true;
 }
 
@@ -2348,12 +2358,15 @@ const ACTIONS = {
   },
   'run-suggest-run'(el) {
     const card = chatState().messages[Number(el.dataset.i)]?.cards?.[Number(el.dataset.c)];
-    if (!card) return;
+    if (!card || card.busy) return;
     const k = codeState();
     k.cmd = card.command; k.cmdEdited = true;
+    card.busy = true; chatRefresh();                         // one click starts one run
     codeRunRefresh();
-    codeStartRun(card.command).then(started => {            // "Ran" only once it really started
-      if (started) { card.status = 'ran'; chatRefresh(); }
+    codeStartRun(card.command).then(started => {             // "Ran" only once it really started
+      card.busy = false;
+      if (started) card.status = 'ran';
+      chatRefresh();
     });
   },
   'run-suggest-cancel'(el) {

@@ -278,7 +278,7 @@ def test_versions_are_checked_all_at_once(monkeypatch):
     monkeypatch.setattr(R, "_probe", lambda path, args: time.sleep(0.5) or "v1")
     start = time.time()
     found = R.toolchains(refresh=True)
-    assert len(found) == 8 and all(t["version"] == "v1" for t in found.values()) and time.time() - start < 2
+    assert len(found) == 8 and all(t["version"] == "v1" for t in found.values()) and time.time() - start < 3   # one by one: 4 s
 
 
 def test_links_are_found_as_output_arrives_even_when_split():

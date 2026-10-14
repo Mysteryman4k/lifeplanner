@@ -962,6 +962,12 @@ def test_running_code(server, page, tmp_path_factory):
     page.wait_for_selector("#runStatus >> text=Stopped")
     assert page.locator("#confirm:not([hidden])").count() == 0                                # not asked again
 
+    # A double-click starts one run, not two
+    started = page.evaluate("c => Promise.all([codeStartRun(c), codeStartRun(c)])", f"{py} hello.py")
+    assert sorted(started) == [False, True]
+    page.click("[data-action=code-run-stop]")
+    page.wait_for_selector("#runStatus >> text=Stopped")
+
     # A crash: the line is linked and marked, and Explain the error sends the output
     page.click(".tree-row >> text=crash.py")
     page.wait_for_selector(".code-file-head >> text=crash.py")
