@@ -302,3 +302,27 @@ def test_a_run_that_cant_be_resumed_is_ended_not_left_hanging(folder, monkeypatc
     with pytest.raises(OSError, match="couldn't be started"):
         run.start(R.clean_env())
     assert run.proc.wait(timeout=10) is not None
+
+
+def test_the_running_limit_holds_when_starts_arrive_together(folder, monkeypatch):
+    """Several requests at the same moment (two folders, say) can't get past the limit together."""
+    import threading
+    monkeypatch.setattr(R, "MAX_RUNNING", 2)
+    runner, go, results = R.Runner(), threading.Barrier(6), []
+
+    def start():
+        go.wait()
+        try:
+            results.append(runner.start(1, str(folder), f"{PY} spawn.py", keep_running=True))
+        except RuntimeError:
+            results.append(None)
+    threads = [threading.Thread(target=start) for _ in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(30)
+    started = [r for r in results if r]
+    try:
+        assert len(results) == 6 and len(started) == 2
+    finally:
+        runner.stop_all()

@@ -456,25 +456,30 @@ class Runner:
 
     def __init__(self):
         self.runs = {}
+        self._lock = threading.Lock()                     # requests come in on several threads at once
 
     def start(self, folder_id: int, cwd: str, command: str, timeout: int = DEFAULT_TIMEOUT,
               keep_running: bool = False) -> Run:
-        running = [r for r in self.runs.values() if r.status == "running"]
-        if len(running) >= MAX_RUNNING:
-            raise RuntimeError(f"{MAX_RUNNING} programs are already running. Stop one first.")
-        run = Run(folder_id, command, cwd, timeout, keep_running)
-        run.start(clean_env())
-        self.runs[run.id] = run
-        for old in sorted((r for r in self.runs.values() if r.status != "running"), key=lambda r: r.id)[:-20]:
-            self.runs.pop(old.id, None)                   # keep the last few finished runs
+        with self._lock:                                  # the limit check and the start as one step
+            running = [r for r in self.runs.values() if r.status == "running"]
+            if len(running) >= MAX_RUNNING:
+                raise RuntimeError(f"{MAX_RUNNING} programs are already running. Stop one first.")
+            run = Run(folder_id, command, cwd, timeout, keep_running)
+            run.start(clean_env())
+            self.runs[run.id] = run
+            for old in sorted((r for r in self.runs.values() if r.status != "running"), key=lambda r: r.id)[:-20]:
+                self.runs.pop(old.id, None)               # keep the last few finished runs
         return run
 
     def get(self, run_id: int) -> Run:
-        run = self.runs.get(run_id)
+        with self._lock:
+            run = self.runs.get(run_id)
         if not run:
             raise KeyError(run_id)
         return run
 
     def stop_all(self):
-        for r in self.runs.values():
+        with self._lock:
+            runs = list(self.runs.values())
+        for r in runs:
             r.stop()
