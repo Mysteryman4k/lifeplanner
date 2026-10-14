@@ -222,12 +222,14 @@ const ROUTES = {
   jobs: { label: 'Jobs', icon: 'jobs' },
   money: { label: 'Money', icon: 'money' },
   study: { label: 'Study assistant', icon: 'spark' },
+  code: { label: 'Code workspace', icon: 'code' },
   settings: { label: 'Settings', icon: 'settings' },
 };
 const aiOn = () => !!state.ai?.assistant_enabled;
+const codeOn = () => !!state.ai?.code_enabled;
 const route = () => {
   const r = location.hash.replace(/^#\/?/, '').split('?')[0];
-  if (r === 'study' && !aiOn()) return 'today';           // AI features are invisible while off
+  if ((r === 'study' && !aiOn()) || (r === 'code' && !codeOn())) return 'today';   // AI features are invisible while off
   return ROUTES[r] ? r : 'today';
 };
 
@@ -244,7 +246,7 @@ function renderNav() {
   };
   $('#nav').innerHTML = `
     <div class="nav-label">Plan</div>${['today', 'tasks', 'calendar', 'subjects'].map(item).join('')}
-    ${aiOn() ? `<div class="nav-label">Study <span class="preview-badge sm">Preview</span></div>${item('study')}` : ''}
+    ${aiOn() || codeOn() ? `<div class="nav-label">Study <span class="preview-badge sm">Preview</span></div>${aiOn() ? item('study') : ''}${codeOn() ? item('code') : ''}` : ''}
     <div class="nav-label">Track</div>${['jobs', 'money'].map(item).join('')}`;
   $('#navFoot').innerHTML = item('settings');
   $('#tabbar').innerHTML = ['today', 'tasks', 'calendar', 'jobs', 'money'].map(k =>
@@ -597,8 +599,47 @@ const VIEWS = {
 
 
   study() {
+    if (chatState().code) chatReset();             // coming from the code workspace: a fresh study chat
     setHeader('Study assistant', 'Preview · your AI tutor', btn('chat-new', 'New chat', 'plus', 'btn-ghost'));
     $('#content').innerHTML = `<div class="study">${chatShell(false)}</div>`;
+    chatAfterRender();
+  },
+
+  code() {
+    const k = codeState();
+    if (!k.folders) {
+      setHeader('Code workspace', 'Preview');
+      $('#content').innerHTML = `<div class="card muted">Loading your folders…</div>`;
+      codeLoad();
+      return;
+    }
+    const f = codeFolder();
+    if (!f) {
+      setHeader('Code workspace', 'Preview · help with your code');
+      $('#content').innerHTML = `<div class="card">${emptyState('folder', 'Link a code folder',
+        'Pick a folder with your code. The assistant reads only that folder, skips secrets like .env files and anything in .gitignore, and never changes or runs anything by itself.',
+        btn('code-link', 'Link a folder', 'plus'))}</div>`;
+      return;
+    }
+    if (chatState().code !== f.id) chatReset(null, f.id);
+    const modeBtn = (m, label) => `<button class="${f.mode === m ? 'on' : ''}" data-action="code-mode" data-mode="${m}">${label}</button>`;
+    setHeader(f.name, `Code workspace · Preview${f.subject_name ? ' · ' + f.subject_name : ''}`,
+      `<div class="segmented code-modes" role="group" aria-label="How the assistant helps">${modeBtn('assignment', 'Assignment · hints first')}${modeBtn('personal', 'Personal · fix freely')}</div>` +
+      btn('code-link', 'Link a folder', 'plus', 'btn-ghost'));
+    const others = k.folders.length > 1 ? `<select class="select select-sm" id="codeFolder" aria-label="Linked folder">
+      ${k.folders.map(x => opt(x.id, x.name, f.id)).join('')}</select>` : `<b class="code-folder-name">${icon('folder', 15)}${esc(f.name)}</b>`;
+    const treePane = `<aside class="card code-tree">
+        <div class="code-pane-head">${others}<span class="spacer"></span>
+          <button class="icon-btn" data-action="code-refresh" aria-label="Refresh the file list" title="Refresh">${icon('refresh', 16)}</button>
+          <button class="icon-btn" data-action="code-unlink" aria-label="Unlink this folder" title="Unlink (your files aren't touched)">${icon('x', 16)}</button></div>
+        <div class="code-tree-list" id="codeTree">${k.treeError ? '' : k.tree ? codeTreeNodes(k.tree.children) +
+          (k.tree.truncated ? '<p class="muted small">Only the first 3,000 items are shown.</p>' : '') : '<p class="muted small">Loading…</p>'}</div></aside>`;
+    const main = k.treeError
+      ? `<section class="card code-main">${emptyState('alert', "This folder can't be found", esc(k.treeError),
+          btn('code-unlink', 'Unlink it', 'x', 'btn-ghost'))}</section>`
+      : `<section class="card code-main" id="codeMain">${codeViewer()}</section>`;
+    $('#content').innerHTML = `<div class="code-ws">${treePane}${main}<section class="code-chat">${chatShell(false)}</section></div>`;
+    codeScrollToMark();
     chatAfterRender();
   },
 
@@ -1136,7 +1177,13 @@ function chatReportUrl(i) {
 }
 
 function chatMessage(m, i) {
-  if (m.role === 'user') return `<div class="chat-msg me">${esc(m.content).replace(/\n/g, '<br>')}</div>`;
+  if (m.role === 'user') {
+    const sent = m.files ? `<div class="chat-sent">${m.files.length ? `Sent with this: ${m.files.map(p =>
+        `<button class="link-btn" data-action="code-open" data-path="${esc(p)}">${esc(p)}</button>`).join(', ')}` : 'No files were sent with this.'}
+      ${(m.leftOut || []).map(x => `<span class="muted" title="${esc(x.why)}">· not sent: ${esc(x.path)}</span>`).join(' ')}</div>` : '';
+    const body = m.content.includes('```') ? `<div class="chat-text">${chatMarkdown(m.content)}</div>` : esc(m.content).replace(/\n/g, '<br>');
+    return `<div class="chat-msg me">${body}</div>${sent}`;
+  }
   const c = chatState();
   const live = c.streaming && i === c.messages.length - 1;
   const last = !live && i === c.messages.length - 1 && !c.streaming;
@@ -1158,19 +1205,31 @@ function chatShell(inPanel) {
   const c = chatState(), a = state.ai || {};
   const ready = a.provider && a.model;
   const task = c.taskId && state.tasks.find(t => t.id === c.taskId);
-  const modes = Object.entries(CHAT_MODES).map(([k, v]) =>
-    `<button class="${c.mode === k ? 'on' : ''}" data-action="chat-mode" data-mode="${k}" ${c.streaming ? 'disabled' : ''}>${v}</button>`).join('');
-  const intro = !c.messages.length ? `<div class="chat-empty">
+  const folder = c.code && codeFolder();
+  const modes = folder
+    ? `<div class="chat-quick">
+        <button class="btn btn-ghost btn-sm keep-label" data-action="code-explain-error" ${c.streaming ? 'disabled' : ''}>${icon('alert', 14)}Explain the error</button>
+        <button class="btn btn-ghost btn-sm keep-label" data-action="code-debug" ${c.streaming ? 'disabled' : ''}>${icon('search', 14)}Debug</button></div>`
+    : `<div class="segmented" role="group" aria-label="Study mode">${Object.entries(CHAT_MODES).map(([k, v]) =>
+        `<button class="${c.mode === k ? 'on' : ''}" data-action="chat-mode" data-mode="${k}" ${c.streaming ? 'disabled' : ''}>${v}</button>`).join('')}</div>`;
+  const intro = !c.messages.length ? (folder ? `<div class="chat-empty">
+      ${icon('code', 26)}<h3>Ask about your code</h3>
+      <p class="muted small">${folder.mode === 'personal'
+        ? 'Personal project: the assistant explains problems and shows fixes straight away.'
+        : 'Assignment: the assistant points at the problem and asks guiding questions, so the work stays yours.'}
+        Paste an error and click Explain the error, or ask anything about the open file.</p></div>` : `<div class="chat-empty">
       ${icon('spark', 26)}<h3>${task ? 'What would you like help with?' : 'Ask about anything in your units'}</h3>
       <p class="muted small">${c.mode === 'explain' ? 'Explain gives clear explanations and checks you understood.' : 'Practise gives you questions like the ones you\'ll face, one at a time.'}</p>
       ${task ? '' : `<div class="chat-ideas">${CHAT_IDEAS.map(x => `<button class="chip" data-action="chat-idea">${esc(x)}</button>`).join('')}</div>`}
-    </div>` : '';
+    </div>`) : '';
+  const cloud = folder && a.provider && a.provider !== 'ollama'
+    ? `<div class="code-cloud-note">${icon('shield', 14)}<span>Code you send goes to ${esc(a.providers?.[a.provider]?.name || a.provider)}. To keep it on this PC, use Ollama in Settings.</span></div>` : '';
   if (!ready) return `<div class="card chat-setup">${emptyState('spark', 'Choose an AI provider first',
     'Pick a provider and model in Settings, then come back here.', '<a class="btn btn-primary" href="#/settings">Open Settings</a>')}</div>`;
   return `
     <div class="chat ${inPanel ? 'in-panel' : ''}">
       <div class="chat-bar">
-        <div class="segmented" role="group" aria-label="Study mode">${modes}</div>
+        ${modes}
         <select class="select select-sm" id="chatFormat" aria-label="Format of replies" ${c.streaming ? 'disabled' : ''}>
           ${Object.entries(CHAT_FORMATS).map(([k, v]) => opt(k, v, c.format)).join('')}</select>
         <span class="spacer"></span>
@@ -1178,8 +1237,9 @@ function chatShell(inPanel) {
       </div>
       ${task ? `<div class="chat-attached">${icon('tasks', 15)}<div><b>${esc(task.title)}</b><span class="muted small">${[task.subject_name, task.due_date ? 'due ' + fmt(task.due_date, { weekday: 'short', day: 'numeric', month: 'short' }) : ''].filter(Boolean).map(esc).join(' · ')}</span></div></div>` : ''}
       <div class="chat-log" id="chatLog" aria-live="polite">${intro}${c.messages.map(chatMessage).join('')}</div>
+      ${folder ? codeSendList() + cloud : ''}
       <form class="chat-composer" id="chatForm">
-        <textarea class="textarea" id="chatInput" rows="2" maxlength="20000" placeholder="${task ? 'Ask about this task' : 'Ask a question, or paste something to work through'}" aria-label="Message" ${c.streaming ? 'disabled' : ''}></textarea>
+        <textarea class="textarea" id="chatInput" rows="2" maxlength="20000" placeholder="${folder ? 'Ask about this code, or paste an error message' : task ? 'Ask about this task' : 'Ask a question, or paste something to work through'}" aria-label="Message" ${c.streaming ? 'disabled' : ''}></textarea>
         ${c.streaming
           ? `<button class="btn btn-ghost" type="button" data-action="chat-stop">${icon('x', 16)}Stop</button>`
           : `<button class="btn btn-primary" type="submit" aria-label="Send">${icon('up', 17)}Send</button>`}
@@ -1251,19 +1311,35 @@ async function chatSend(text) {
   const c = chatState();
   text = text.trim();
   if (!text || c.streaming) return;
+  const folderId = c.code;
+  const run = {};                              // this send; a reset (New chat, another folder or task) replaces it
+  const current = () => c.run === run;
+  if (folderId) {
+    if (c.preparing) return;
+    c.preparing = true;
+    c.run = run;
+    try { await codeChoose(text); }            // add files named in the message (an error's traceback, say)
+    finally { c.preparing = false; }
+    if (c.streaming || c.code !== folderId || !current()) return;
+    codeMarkErrors(text);
+  }
   c.messages.push({ role: 'user', content: text }, { role: 'assistant', content: '' });
+  const asked = c.messages[c.messages.length - 2];
   c.streaming = true;
   c.controller = new AbortController();
-  const run = c.run = {};                      // a newer chat (New chat, another task) takes over the state
-  const current = () => c.run === run;
+  c.run = run;                                 // a newer chat (New chat, another task) takes over the state
   chatRefresh();
   const reply = c.messages[c.messages.length - 1];
   let tasksChanged = false;
   let history = c.messages.slice(0, -1).filter(m => m.content && !m.error).map(m => ({ role: m.role, content: m.content })).slice(-20);
   while (history.length && history[0].role !== 'user') history = history.slice(1);   // same window as the server
   try {
-    await streamChat({ mode: c.mode, format: c.format || 'auto', messages: history, ...(c.taskId ? { task_id: c.taskId } : {}) }, c.controller.signal, ev => {
+    const payload = folderId
+      ? { mode: 'code', format: c.format || 'auto', messages: history, code: { folder_id: folderId, files: (codeState().files || []).map(f => f.path) } }
+      : { mode: c.mode, format: c.format || 'auto', messages: history, ...(c.taskId ? { task_id: c.taskId } : {}) };
+    await streamChat(payload, c.controller.signal, ev => {
       if (!current()) return false;
+      if (ev.type === 'files') { asked.files = ev.files; asked.leftOut = ev.left_out; chatRefresh(); return true; }
       if (ev.type === 'text') reply.content += ev.text;
       else if (ev.type === 'usage') c.tokens += (ev.input || 0) + (ev.output || 0);
       else if (ev.type === 'error') reply.error = ev.message;
@@ -1320,10 +1396,168 @@ function chatCard(card, i, n) {
       </div></div>`;
 }
 
-function chatReset(taskId = null) {
+function chatReset(taskId = null, code = null) {
   const c = chatState();
   c.controller?.abort();                       // stop any reply still streaming for the old chat
-  Object.assign(c, { messages: [], tokens: 0, taskId, streaming: false, controller: null, run: null });
+  Object.assign(c, { messages: [], tokens: 0, taskId, code, streaming: false, controller: null, run: null });
+}
+
+// ── Code workspace: a linked folder's tree, a file viewer, and the files sent with each question ──
+function codeLinkForm(subjectId = null) {
+  const radio = (value, title, text, on) => `<label class="radio-card"><input type="radio" name="mode" value="${value}" ${on ? 'checked' : ''}>
+      <span><b>${title}</b><span class="muted small">${text}</span></span></label>`;
+  const body = `
+    <form id="drawerForm" class="form-stack" data-kind="code-folder" autocomplete="off">
+      ${field('Folder', `<div class="input-row"><input class="input" name="path" required maxlength="1000" placeholder="C:\\Users\\you\\Documents\\project" autofocus>
+        <button class="btn btn-ghost" type="button" data-action="code-browse">${icon('folder', 16)}Browse…</button></div>`)}
+      ${field('Subject', `<select class="select" name="subject_id">${noteSubjectOptions(subjectId)}</select>`)}
+      <fieldset class="field"><span>How should the assistant help?</span>
+        ${radio('assignment', 'Assignment · hints first', 'Points at problems and asks guiding questions. Fixes only when you ask, and small.', true)}
+        ${radio('personal', 'Personal project · fix freely', 'Explains problems and shows fixes straight away.', false)}
+        <span class="muted small">You can change this later.</span></fieldset>
+      <p class="muted small">The assistant only reads this folder. It skips secrets (.env, keys), anything in .gitignore, dependency and build folders, binary files and files over 200 KB. It never changes or runs anything by itself.</p>
+    </form>`;
+  openDrawer('Link a code folder', body, footer(''), 'code-folder');
+}
+
+function codeRender() { $('#content').classList.add('still'); VIEWS.code(); }   // redraw without the page fade
+
+function codeState() {
+  return state.code ||= { folders: null, folderId: null, tree: null, treeError: '', expanded: new Set(), open: null,
+    files: [], pinned: [], removed: [], marks: {} };
+}
+function codeFolder() { const k = codeState(); return (k.folders || []).find(f => f.id === k.folderId) || null; }
+
+async function codeLoad() {
+  const k = codeState();
+  try { k.folders = await api('/api/code/folders'); }
+  catch (e) { k.folders = []; toast(e.message, 'error'); }
+  if (!codeFolder()) k.folderId = k.folders[0]?.id ?? null;
+  if (k.folderId) await codeLoadTree(); else if (route() === 'code') codeRender();
+}
+
+async function codeLoadTree() {
+  const k = codeState(), id = k.folderId;
+  k.tree = null; k.treeError = '';
+  if (route() === 'code') codeRender();
+  try { const tree = await api(`/api/code/folders/${id}/tree`); if (k.folderId === id) k.tree = tree; }
+  catch (e) { if (k.folderId === id) k.treeError = e.message; }
+  if (k.folderId === id && route() === 'code') codeRender();
+}
+
+function codeSelectFolder(id) {
+  const k = codeState();
+  Object.assign(k, { folderId: id, tree: null, treeError: '', expanded: new Set(), open: null, files: [], pinned: [], removed: [], marks: {} });
+  chatReset(null, id);
+  codeLoadTree();
+}
+
+function codeFiles(nodes = codeState().tree?.children || [], out = []) {
+  for (const n of nodes) { if (n.type === 'file' && !n.hidden) out.push(n.path); if (n.children) codeFiles(n.children, out); }
+  return out;
+}
+
+function codeTreeNodes(nodes, depth = 0) {
+  const k = codeState(), sending = new Set(k.files.map(f => f.path));
+  return nodes.map(n => {
+    const pad = `style="--depth:${depth}"`;
+    if (n.hidden) {
+      return `<div class="tree-row hidden-row" ${pad} title="Hidden (${esc(n.hidden)}): never read or sent">${icon(n.type === 'dir' ? 'folder' : 'file', 14)}<span class="tree-name">${esc(n.name)}</span><span class="small">(hidden)</span></div>`;
+    }
+    if (n.type === 'dir') {
+      const open = k.expanded.has(n.path);
+      return `<button class="tree-row" ${pad} data-action="code-dir" data-path="${esc(n.path)}" aria-expanded="${open}">${icon(open ? 'chevron' : 'right', 13)}${icon('folder', 14)}<span class="tree-name">${esc(n.name)}</span></button>` +
+        (open ? codeTreeNodes(n.children || [], depth + 1) : '');
+    }
+    return `<button class="tree-row ${k.open?.path === n.path ? 'on' : ''}" ${pad} data-action="code-open" data-path="${esc(n.path)}" title="${esc(n.language)}">${icon('file', 14)}<span class="tree-name">${esc(n.name)}</span>${sending.has(n.path) ? '<span class="tree-sending" title="Sent with your next message"></span>' : ''}</button>`;
+  }).join('');
+}
+
+function codeViewer() {
+  const k = codeState(), f = k.open;
+  if (!f) return emptyState('file', 'Choose a file', 'Pick a file on the left to read it here. Hidden files stay hidden and are never sent.');
+  const lines = f.text.split('\n');
+  let html = esc(f.text);
+  if (f.highlight && window.hljs?.getLanguage(f.highlight)) {
+    try { html = hljs.highlight(f.text, { language: f.highlight, ignoreIllegals: true }).value; } catch (_) { /* stays plain */ }
+  }
+  const marks = k.marks[f.path] || [];
+  const sending = k.files.some(x => x.path === f.path);
+  return `<div class="code-file-head">${icon('file', 15)}<b class="code-path">${esc(f.path)}</b><span class="pill">${esc(f.language)}</span>
+      ${f.tier === 3 ? '<span class="pill explain-only" title="EasyUniTrack can explain, debug and trace this by reading it, but can\'t run it">Explain only</span>' : ''}
+      <span class="spacer"></span>
+      <button class="btn btn-ghost btn-sm keep-label" data-action="${sending ? 'code-unsend' : 'code-send-open'}" data-path="${esc(f.path)}">${icon(sending ? 'check' : 'plus', 14)}${sending ? 'Sending' : 'Send with question'}</button></div>
+    <div class="code-view" id="codeView"><div class="code-lines">
+      ${marks.map(n => `<div class="code-mark" style="top:${(n - 1) * 20 + 10}px" title="Line ${n} is in the error"></div>`).join('')}
+      <div class="code-gutter" aria-hidden="true">${lines.map((_, i) => `<span class="${marks.includes(i + 1) ? 'marked' : ''}">${i + 1}</span>`).join('')}</div>
+      <pre class="code-text"><code class="hljs">${html}</code></pre></div></div>`;
+}
+
+function codeScrollToMark() {
+  const k = codeState(), first = k.open && (k.marks[k.open.path] || [])[0];
+  const view = $('#codeView');
+  if (view && first) view.scrollTop = Math.max(0, (first - 4) * 20);
+}
+
+async function codeOpen(path) {
+  const k = codeState(), id = k.folderId;
+  try {
+    const f = await api(`/api/code/folders/${id}/file?path=${encodeURIComponent(path)}`);
+    if (k.folderId !== id) return;
+    k.open = { ...f, name: path.split('/').pop() };
+    k.removed = [];
+    for (let p = path.split('/').slice(0, -1), i = 1; i <= p.length; i++) k.expanded.add(p.slice(0, i).join('/'));
+  } catch (e) { toast(e.message, 'error'); return; }
+  await codeChoose('');
+  if (route() === 'code') codeRender();
+}
+
+function codeSendList() {
+  const k = codeState(), files = k.files || [];
+  return `<div class="code-send" id="codeSend"><span class="muted small">${files.length ? 'Sent with your message:' : 'No files will be sent. Open one, or name it in your message.'}</span>
+    ${files.map(f => `<span class="chip file-chip" title="${esc(f.why)}">${icon('file', 12)}${esc(f.path)}<button type="button" class="chip-x" data-action="code-unsend" data-path="${esc(f.path)}" aria-label="Don't send ${esc(f.path)}">${icon('x', 11)}</button></span>`).join('')}</div>`;
+}
+
+/** Ask the server which files go with this question (the open file, files named in it, what the open file
+ *  imports, and the student's own picks), then show the list. */
+async function codeChoose(question) {
+  const k = codeState(), id = k.folderId;
+  if (!id) return;
+  try {
+    const r = await api(`/api/code/folders/${id}/choose`, { method: 'POST',
+      body: { question, open_file: k.open?.path || '', pinned: k.pinned, removed: k.removed } });
+    if (k.folderId !== id) return;
+    k.files = r.files;
+  } catch (_) { return; }
+  const box = $('#codeSend');
+  if (box) box.outerHTML = codeSendList();
+  const tree = $('#codeTree');
+  if (tree && k.tree) tree.innerHTML = codeTreeNodes(k.tree.children);
+}
+
+/** Line numbers an error points at, per file: Python, Java, gcc/clang, node, C# and the like. */
+function errorLines(text) {
+  const out = [];
+  const add = (name, line) => { if (name && line) out.push({ name: name.replace(/\\/g, '/'), line: Number(line) }); };
+  for (const m of text.matchAll(/File "([^"]+)", line (\d+)/g)) add(m[1], m[2]);
+  for (const m of text.matchAll(/\(([\w$.-]+\.(?:java|kt|scala)):(\d+)\)/g)) add(m[1], m[2]);
+  for (const m of text.matchAll(/([\w./\\:-]+\.[A-Za-z]{1,6})(?::(\d+)(?::\d+)?|\((\d+),\d+\))/g)) add(m[1], m[2] || m[3]);
+  return out;
+}
+
+function codeMarkErrors(text) {
+  const k = codeState(), files = codeFiles(), marks = {};
+  for (const { name, line } of errorLines(text)) {
+    const path = files.find(p => p === name || name.endsWith('/' + p))
+      || (files.filter(p => p.split('/').pop() === name.split('/').pop()).length === 1 && files.find(p => p.split('/').pop() === name.split('/').pop()));
+    if (path) (marks[path] ||= []).includes(line) || marks[path].push(line);
+  }
+  if (!Object.keys(marks).length) return;
+  k.marks = marks;
+  const open = k.open && marks[k.open.path] ? null : Object.keys(marks)[0];
+  if (open && k.open) toast(`The error points at ${open}. Open it from the list to see the line.`);
+  const main = $('#codeMain');
+  if (main && k.open) { main.innerHTML = codeViewer(); codeScrollToMark(); }
 }
 
 function openChatPanel(taskId) {
@@ -1681,6 +1915,17 @@ async function submitDrawer(form) {
       await api(id ? `/api/budgets/${id}` : '/api/budgets', { method: id ? 'PUT' : 'POST', body: { category: d.category, monthly_limit: Number(d.monthly_limit), color: b_color(id) } });
       await loadMoney();
       toast('Budget saved');
+    } else if (kind === 'code-folder') {
+      const saved = await api('/api/code/folders', { method: 'POST',
+        body: { path: d.path.trim(), mode: d.mode || 'assignment', subject_id: numOrNull(d.subject_id) } });
+      const k = codeState();
+      k.folders = [...(k.folders || []), saved].sort((a, b) => a.name.localeCompare(b.name));
+      codeSelectFolder(saved.id);
+      toast(`Linked ${saved.name}`);
+      closeDrawer();
+      location.hash = '#/code';
+      render();
+      return;
     } else if (kind === 'note') {
       const body = { title: d.title, body: d.body, subject_id: numOrNull(d.subject_id) };
       if (!id) Object.assign(body, { source: form.dataset.source || 'manual', task_id: numOrNull(form.dataset.task) });
@@ -1810,11 +2055,64 @@ const ACTIONS = {
     editNote(null, { title: t.topic.slice(0, 200), body: t.text, subject_id: t.subjectId, source: 'topic' });
   },
   'chat-new'() {
-    chatReset();
+    chatReset(null, route() === 'code' ? codeState().folderId : null);   // a new chat stays in the same folder
     chatRefresh();
   },
   'chat-mode'(el) { if (!chatState().streaming) { chatState().mode = el.dataset.mode; chatRefresh(); } },
   'chat-idea'(el) { chatSend(el.textContent); },
+  'code-link'() { codeLinkForm(); },
+  async 'code-browse'() {
+    try {
+      const r = await api('/api/code/pick-folder', { method: 'POST' });
+      if (r.path) $('#drawerForm [name=path]').value = r.path;
+    } catch (e) { toast(e.message, 'error'); $('#drawerForm [name=path]')?.focus(); }
+  },
+  'code-dir'(el) {
+    const k = codeState(), p = el.dataset.path;
+    if (k.expanded.has(p)) k.expanded.delete(p); else k.expanded.add(p);
+    $('#codeTree').innerHTML = codeTreeNodes(k.tree.children);
+  },
+  'code-open'(el) { codeOpen(el.dataset.path); },
+  'code-refresh'() { codeLoadTree(); },
+  async 'code-mode'(el) {
+    const f = codeFolder();
+    if (!f || f.mode === el.dataset.mode) return;
+    try { Object.assign(f, await api(`/api/code/folders/${f.id}`, { method: 'PUT', body: { mode: el.dataset.mode } })); }
+    catch (e) { toast(e.message, 'error'); return; }
+    toast(f.mode === 'personal' ? 'Personal project: fixes come straight away' : 'Assignment: hints first');
+    codeRender();
+  },
+  async 'code-unlink'() {
+    const f = codeFolder();
+    if (!f || !(await confirmDialog(`Unlink ${f.name}?`, "EasyUniTrack stops reading it. Your files aren't changed or deleted.", 'Unlink'))) return;
+    try { await api(`/api/code/folders/${f.id}`, { method: 'DELETE' }); } catch (e) { toast(e.message, 'error'); return; }
+    const k = codeState();
+    k.folders = k.folders.filter(x => x.id !== f.id);
+    codeSelectFolder(k.folders[0]?.id ?? null);
+    if (!k.folderId) codeRender();
+  },
+  'code-unsend'(el) {
+    const k = codeState(), p = el.dataset.path;
+    k.pinned = k.pinned.filter(x => x !== p);
+    if (!k.removed.includes(p)) k.removed.push(p);
+    codeChoose('').then(() => { const main = $('#codeMain'); if (k.open?.path === p && main) main.innerHTML = codeViewer(); });
+  },
+  'code-send-open'(el) {
+    const k = codeState(), p = el.dataset.path;
+    k.removed = k.removed.filter(x => x !== p);
+    if (!k.pinned.includes(p)) k.pinned.push(p);
+    codeChoose('').then(() => { const main = $('#codeMain'); if (k.open?.path === p && main) main.innerHTML = codeViewer(); });
+  },
+  'code-explain-error'() {
+    const box = $('#chatInput'), text = box?.value.trim();
+    if (!text) { toast('Paste the error message into the box first, then click Explain the error.'); box?.focus(); return; }
+    chatSend(`Explain this error:\n\n\`\`\`\n${text}\n\`\`\``);
+  },
+  'code-debug'() {
+    const k = codeState(), text = $('#chatInput')?.value.trim() || '';
+    if (!text && !k.open) { toast('Open the file with the problem, or describe it in the box first.'); return; }
+    chatSend(`Help me find the bug${k.open ? ` in ${k.open.path}` : ''}.${text ? `\n\n${text}` : ''}`);
+  },
   async 'code-copy'(el) {
     try { await navigator.clipboard.writeText($('code', el.closest('.code-wrap')).textContent); toast('Copied'); }
     catch (_) { toast("Couldn't copy. Select the code and press Ctrl+C.", 'error'); }
@@ -2148,8 +2446,17 @@ document.addEventListener('keydown', e => {
   }
 });
 
+// In the code workspace, files named in the message (an error you paste, say) join the list as you type
+let codeTyping = 0;
+document.addEventListener('input', e => {
+  if (e.target.id !== 'chatInput' || !chatState().code) return;
+  clearTimeout(codeTyping);
+  codeTyping = setTimeout(() => codeChoose(e.target.value), 500);
+});
+
 document.addEventListener('change', async e => {
   if (e.target.id === 'chatFormat') { chatState().format = e.target.value; return; }
+  if (e.target.id === 'codeFolder') { codeSelectFolder(Number(e.target.value)); return; }
   if (e.target.classList.contains('chat-reformat') && e.target.value) {
     const c = chatState(), f = e.target.value;
     c.format = f;
