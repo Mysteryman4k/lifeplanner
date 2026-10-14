@@ -28,6 +28,7 @@ class AISettings(BaseModel):
     base_url: str = Field(default="", max_length=500)     # custom provider only
     terms_version: str = ""                               # the version agreed to, "" if none
     terms_agreed_at: str = ""
+    run_notice: bool = False                              # the one-time "only run code you trust" notice was read
 
 
 class AISettingsUpdate(BaseModel):
@@ -112,6 +113,7 @@ def register(app, get_setting, put_setting, transport_hook=lambda: None, task_co
             # Nothing is on unless the current terms are agreed, even if an old setting says so
             "assistant_enabled": ok and s.assistant_enabled,
             "code_enabled": ok and s.code_enabled,
+            "run_notice": s.run_notice,
             "provider": provider, "model": s.model, "base_url": s.base_url,
             "key": keys.hint(provider) if provider and (PRESETS[provider]["needs_key"] or provider == "custom") else None,
             "providers": {k: {x: v[x] for x in ("name", "needs_key", "key_url", "limit_url", "about", "base_url")}
@@ -137,6 +139,14 @@ def register(app, get_setting, put_setting, transport_hook=lambda: None, task_co
         s.assistant_enabled = True                       # agreeing is choosing to turn it on
         save(s)
         return public_state(s)
+
+    @app.post("/api/ai/run-notice")
+    def run_notice():
+        """The student read the one-time Run notice ("only run code you trust")."""
+        s = require_agreement()
+        s.run_notice = True
+        save(s)
+        return {"run_notice": True}
 
     @app.post("/api/ai/terms/withdraw")
     def withdraw():

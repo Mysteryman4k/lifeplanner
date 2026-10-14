@@ -39,6 +39,16 @@ TOOL = {
         "required": ["path", "replace", "summary"]},
 }
 
+RUN_TOOL = {
+    "name": "suggest_run",
+    "description": "Suggest a command for the student to run in their folder (for example to reproduce an error or "
+                   "run the tests). It shows as a \"Run this?\" card; it runs only if the student clicks Run.",
+    "parameters": {"type": "object", "properties": {
+        "command": {"type": "string", "description": "The command, run in the folder's root"},
+        "why": {"type": "string", "description": "One short line saying what it shows"}},
+        "required": ["command"]},
+}
+
 PROMPT = {
     "assignment": "You can propose a change with the propose_change tool, but in this Assignment folder only when the "
                   "student asks for a fix, and only a few lines (the app refuses bigger ones). Never rewrite a file. "
@@ -46,6 +56,8 @@ PROMPT = {
     "personal": "When a fix or new code would help, propose it with the propose_change tool (one call per file, "
                 "several calls are fine). The student applies changes themselves, so never say a change is applied.",
 }
+RUN_PROMPT = ("You can't run anything yourself. To suggest a command, use suggest_run; the student decides whether to "
+              "run it, so never say you ran it or describe its output before they share it.")
 
 _NUMBERED = re.compile(r"^\s*\d+\| ?")
 
@@ -359,19 +371,29 @@ class ChangeStore:
 class CodeTools:
     """propose_change for one reply in one folder. Same interface as TaskTools (ai/tools.py)."""
 
-    schema = [TOOL]
+    schema = [TOOL, RUN_TOOL]
 
     def __init__(self, store: ChangeStore, folder_id: int, folder: Folder, mode: str):
         self.store, self.folder_id, self.folder, self.mode = store, folder_id, folder, mode
         self.pending = {}                                  # path -> (change_id, base text): one card per file per reply
 
     def addendum(self) -> str:
-        return PROMPT.get(self.mode, PROMPT["assignment"])
+        return PROMPT.get(self.mode, PROMPT["assignment"]) + " " + RUN_PROMPT
 
     def run_round(self, calls: list, state: dict) -> tuple:
         results, events = [], []
         for call in calls:
             try:
+                if call["name"] == "suggest_run":
+                    a = call.get("args") or {}
+                    command = " ".join(str(a.get("command") or "").split("\n")).strip()[:2000]
+                    if not command:
+                        raise CodeError("Give the command to run.")
+                    events.append({"type": "run_suggestion", "command": command,
+                                   "why": " ".join(str(a.get("why") or "").split())[:200]})
+                    results.append((call, "Shown to the student as a \"Run this?\" card. It runs only if they click "
+                                          "Run; don't describe its output until they share it."))
+                    continue
                 if call["name"] != "propose_change":
                     raise CodeError(f"There's no tool called {call['name']}.")
                 ev = self.propose(call.get("args") or {})

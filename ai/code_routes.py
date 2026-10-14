@@ -1,5 +1,6 @@
-"""Server routes for the code workspace (/api/code/...): linked folders, the tree, reading a file, and the
-files that go with a question. Nothing here writes to the student's folders or runs anything.
+"""Server routes for the code workspace (/api/code/...): linked folders, the tree, reading a file, the files
+that go with a question, proposed changes (ai/code_changes.py) and running code (ai/runner.py). Changes are
+written and code is run only on the student's click.
 
 Gate: the current terms must be agreed and the Code workspace switch on. Like every change, the routes that
 change something need the window's session token (app.py, protect_local_server).
@@ -13,6 +14,7 @@ from pydantic import BaseModel, Field
 from . import terms
 from .code_changes import ChangeStore, CodeTools
 from .codebase import CodeError, Folder, language, link_problem
+from .runner import DEFAULT_TIMEOUT, Runner, suggestions, toolchains
 
 FolderMode = Literal["assignment", "personal"]
 
@@ -27,6 +29,16 @@ class FolderUpdate(BaseModel):
     mode: FolderMode = None
     subject_id: Optional[int] = None
     name: str = Field(default=None, min_length=1, max_length=120)
+
+
+class RunIn(BaseModel):
+    command: str = Field(min_length=1, max_length=2000)
+    keep_running: bool = False
+    timeout: int = Field(default=DEFAULT_TIMEOUT, ge=5, le=600)
+
+
+class InputIn(BaseModel):
+    text: str = Field(max_length=10000)
 
 
 class ChooseIn(BaseModel):
@@ -152,6 +164,70 @@ def register(app, db, load_ai_settings, data_dir: Path, window: dict):
         return {"mode": r["mode"], "name": r["name"], "subject": r.get("subject_name") or "",
                 "text": text, "sent": sent, "left_out": left_out,
                 "tools": lambda: CodeTools(changes, folder_id, folder, r["mode"])}
+
+    runner = Runner()
+
+    def get_run(run_id: int):
+        try:
+            return runner.get(run_id)
+        except KeyError:
+            raise HTTPException(404, "That run has finished and isn't kept any more.") from None
+
+    @app.get("/api/code/toolchains")
+    def get_toolchains(refresh: bool = False):
+        """The compilers and tools found on this PC (nothing is downloaded)."""
+        gate()
+        return toolchains(refresh)
+
+    @app.get("/api/code/folders/{folder_id}/commands")
+    def commands(folder_id: int, open_file: str = ""):
+        """What can be run here: the project's commands and the open file's, or why it can only be explained."""
+        gate()
+        _, folder = open_folder(folder_id)
+        if open_file:
+            try:
+                folder.check_readable(open_file)
+            except CodeError:
+                open_file = ""
+        return suggestions(folder.root, open_file)
+
+    @app.post("/api/code/folders/{folder_id}/run")
+    def run(folder_id: int, r: RunIn):
+        """Run a command in the folder, on the student's click. Needs the one-time Run notice first."""
+        gate()
+        if not load_ai_settings().run_notice:
+            raise HTTPException(428, "Read the Run notice first.")
+        _, folder = open_folder(folder_id)
+        try:
+            started = runner.start(folder_id, str(folder.root), r.command.strip(), r.timeout, r.keep_running)
+        except RuntimeError as e:
+            raise HTTPException(409, str(e)) from None
+        except OSError as e:
+            raise HTTPException(400, f"The command couldn't start: {e.strerror or e}") from None
+        return started.view()
+
+    @app.get("/api/code/runs/{run_id}")
+    def run_status(run_id: int, since: int = 0):
+        """The run's status and its output from character `since` on (the page polls this)."""
+        gate()
+        return get_run(run_id).view(max(0, since))
+
+    @app.post("/api/code/runs/{run_id}/input")
+    def run_input(run_id: int, i: InputIn):
+        """Keyboard input for the running program (a line, with its Enter)."""
+        gate()
+        try:
+            get_run(run_id).send(i.text + "\n")
+        except RuntimeError as e:
+            raise HTTPException(409, str(e)) from None
+        return {"ok": True}
+
+    @app.post("/api/code/runs/{run_id}/stop")
+    def run_stop(run_id: int):
+        """End the program and everything it started."""
+        gate()
+        get_run(run_id).stop()
+        return {"ok": True}
 
     changes = ChangeStore(db, data_dir)
     changes.recover()                     # Apply or Undo cut off when the app last closed
