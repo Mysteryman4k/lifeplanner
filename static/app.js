@@ -1616,21 +1616,22 @@ async function codeLoadCommands() {
 
 async function codeStartRun(command) {
   const k = codeState(), f = codeFolder();
-  if (!f || !command.trim()) { toast('Type a command to run first.', 'error'); return; }
+  if (!f || !command.trim()) { toast('Type a command to run first.', 'error'); return false; }
   if (!state.ai?.run_notice) {
     const ok = await confirmDialog('Before you run code',
       'Code runs on this PC with your permissions, so it can read and change your files, and read the AI key saved in EasyUniTrack. Only run code you trust. ' +
       'Nothing runs unless you click Run, and EasyUniTrack stops a run at its time limit or when you click Stop.', 'I understand', 'primary');
-    if (!ok) return;
-    try { await api('/api/ai/run-notice', { method: 'POST' }); state.ai.run_notice = true; } catch (e) { toast(e.message, 'error'); return; }
+    if (!ok) return false;
+    try { await api('/api/ai/run-notice', { method: 'POST' }); state.ai.run_notice = true; } catch (e) { toast(e.message, 'error'); return false; }
   }
   try {
     const r = await api(`/api/code/folders/${f.id}/run`, { method: 'POST',
       body: { command: command.trim(), keep_running: !!k.keep, timeout: Number(k.limit) || 30 } });
     k.run = { ...r, text: r.output };
-  } catch (e) { toast(e.message, 'error'); return; }
+  } catch (e) { toast(e.message, 'error'); return false; }
   codeRunRefresh();
   codePoll();
+  return true;
 }
 
 function codePoll(run = codeState().run) {
@@ -2350,8 +2351,10 @@ const ACTIONS = {
     if (!card) return;
     const k = codeState();
     k.cmd = card.command; k.cmdEdited = true;
-    card.status = 'ran'; chatRefresh();
-    codeStartRun(card.command);
+    codeRunRefresh();
+    codeStartRun(card.command).then(started => {            // "Ran" only once it really started
+      if (started) { card.status = 'ran'; chatRefresh(); }
+    });
   },
   'run-suggest-cancel'(el) {
     const card = chatState().messages[Number(el.dataset.i)]?.cards?.[Number(el.dataset.c)];

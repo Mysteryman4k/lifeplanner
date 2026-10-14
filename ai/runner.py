@@ -335,6 +335,7 @@ class Run:
         self.status, self.exit_code, self.reason = "running", None, ""
         self.started, self.ended = time.time(), None
         self.lock = threading.Lock()
+        self.links, self._scanned = [], 0               # localhost addresses, found as output arrives
         self.proc = None
         self._job = None
 
@@ -348,6 +349,11 @@ class Run:
             if len(text) > room:
                 text, self.truncated = text[:room], True
             self.output += text
+            if len(self.links) < 5:                       # only the new part (and a little before, for a split URL)
+                for url in LOCALHOST.findall(self.output, max(0, self._scanned - 100)):
+                    if url not in self.links and len(self.links) < 5:
+                        self.links.append(url)
+            self._scanned = len(self.output)
 
     def start(self, env: dict):
         kwargs = dict(cwd=self.cwd, env=env, shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -362,7 +368,11 @@ class Run:
                     raise OSError(ctypes.get_last_error(), "AssignProcessToJobObject failed")
             except OSError:
                 self._job = None                          # still runs; Stop falls back to taskkill /T
-            _ntdll.NtResumeProcess(int(self.proc._handle))
+            status = _ntdll.NtResumeProcess(int(self.proc._handle))
+            if status != 0:                               # still suspended: it would never run or print anything
+                self._kill()
+                self.proc.kill()
+                raise OSError(status, "The program couldn't be started")
         else:
             self.proc = subprocess.Popen(self.command, start_new_session=True, **kwargs)
         self._reader = threading.Thread(target=self._read, daemon=True)
@@ -433,11 +443,12 @@ class Run:
         with self.lock:
             text = self.output[since:]
             size = len(self.output)
+            links = list(self.links)
         return {"id": self.id, "folder_id": self.folder_id, "command": self.command, "status": self.status,
                 "exit_code": self.exit_code, "reason": self.reason, "keep_running": self.keep_running,
                 "timeout": self.timeout, "elapsed": round((self.ended or time.time()) - self.started, 1),
                 "output": text, "next": size, "truncated": self.truncated,
-                "links": sorted(set(LOCALHOST.findall(self.output)))[:5]}
+                "links": links}
 
 
 class Runner:

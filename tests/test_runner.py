@@ -279,3 +279,26 @@ def test_versions_are_checked_all_at_once(monkeypatch):
     start = time.time()
     found = R.toolchains(refresh=True)
     assert len(found) == 8 and all(t["version"] == "v1" for t in found.values()) and time.time() - start < 2
+
+
+def test_links_are_found_as_output_arrives_even_when_split():
+    run = R.Run(1, "x", ".", 30, False)
+    run._add("Serving at http://local")
+    run._add("host:8000/ now\n")
+    for i in range(10):
+        run._add(f"http://127.0.0.1:{9000 + i}/\n")
+    v = run.view()
+    assert v["links"][0] == "http://localhost:8000/" and len(v["links"]) == 5
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows starts runs suspended")
+def test_a_run_that_cant_be_resumed_is_ended_not_left_hanging(folder, monkeypatch):
+    class NoResume:
+        @staticmethod
+        def NtResumeProcess(handle):
+            return 0xC0000001                                  # STATUS_UNSUCCESSFUL
+    monkeypatch.setattr(R, "_ntdll", NoResume)
+    run = R.Run(1, f"{PY} fail.py", str(folder), 30, False)
+    with pytest.raises(OSError, match="couldn't be started"):
+        run.start(R.clean_env())
+    assert run.proc.wait(timeout=10) is not None
