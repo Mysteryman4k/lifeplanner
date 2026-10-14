@@ -53,11 +53,17 @@ class ChatMessage(BaseModel):
     content: str = Field(min_length=1, max_length=20000)
 
 
+class CodeIn(BaseModel):
+    folder_id: int
+    files: list[str] = Field(default=[], max_length=20)       # chosen with /api/code/folders/{id}/choose
+
+
 class ChatIn(BaseModel):
-    mode: Literal["explain", "practise", "notes"] = "explain"
+    mode: Literal["explain", "practise", "notes", "code"] = "explain"
     format: Literal["auto", "notes", "diagram", "both", "maths", "code"] = "auto"
     messages: list[ChatMessage] = Field(min_length=1, max_length=200)
     task_id: Optional[int] = None
+    code: Optional[CodeIn] = None                             # the code workspace: its folder and files
 
 
 class ConfirmIn(BaseModel):
@@ -76,7 +82,7 @@ class TestIn(BaseModel):
 
 
 def register(app, get_setting, put_setting, transport_hook=lambda: None, task_context=lambda task_id: "",
-             task_store=None, action_log=None):
+             task_store=None, action_log=None, code_context=None):
     """Add the /api/ai routes to the app. get_setting/put_setting are app.py's settings helpers.
     transport_hook lets tests supply an httpx.MockTransport so nothing goes over the network."""
 
@@ -187,7 +193,12 @@ def register(app, get_setting, put_setting, transport_hook=lambda: None, task_co
 
         from fastapi.responses import StreamingResponse
         s = require_agreement()
-        if not s.assistant_enabled:
+        if c.mode == "code":
+            if not s.code_enabled:
+                raise HTTPException(403, "Turn on the Code workspace in Settings first.")
+            if not c.code or code_context is None:
+                raise HTTPException(400, "Open a linked folder first.")
+        elif not s.assistant_enabled:
             raise HTTPException(403, "Turn on the Study assistant in Settings first.")
         if not s.provider or not s.model:
             raise HTTPException(400, "Choose an AI provider and model in Settings first.")
@@ -196,7 +207,11 @@ def register(app, get_setting, put_setting, transport_hook=lambda: None, task_co
         history = [m.model_dump() for m in c.messages[-MAX_HISTORY:]]       # keeps cost and length down
         while history and history[0]["role"] != "user":
             history.pop(0)
-        system_text = prompts.system_prompt(c.mode, task_context(c.task_id) if c.task_id else "", c.format)
+        code = code_context(c.code.folder_id, c.code.files) if c.mode == "code" else None
+        if code:
+            system_text = prompts.code_prompt(code["mode"], code["name"], code["subject"], code["text"], c.format)
+        else:
+            system_text = prompts.system_prompt(c.mode, task_context(c.task_id) if c.task_id else "", c.format)
         base = (s.base_url or None) if s.provider == "custom" else None
         provider = get_provider(s.provider, key=keys.get(s.provider), base_url=base, transport=transport_hook())
         # Task tools when the app provides them, the mode is a conversation, and the model can use tools
@@ -207,6 +222,9 @@ def register(app, get_setting, put_setting, transport_hook=lambda: None, task_co
 
         def events():
             messages, state = list(history), {"changes": 0, "ask_first": False}
+            if code:                                     # what was sent, so the student can see it
+                sent = {"type": "files", "files": code["sent"], "left_out": code["left_out"]}
+                yield f"data: {json.dumps(sent)}\n\n"
             try:
                 for _ in range(MAX_TOOL_ROUNDS):
                     calls = None

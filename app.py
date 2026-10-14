@@ -25,6 +25,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
+import ai.code_routes as code_routes
 import ai.routes as ai_routes
 import reminders
 import system_integration
@@ -266,6 +267,16 @@ def init_db():
             CREATE INDEX IF NOT EXISTS ix_notes_subject ON notes(subject_id);
 
             -- What the study assistant changed (or wants to), so Undo and Keep/Delete work
+            -- Code folders the student linked (the files stay in their folder; only the link is stored)
+            CREATE TABLE IF NOT EXISTS code_folders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                subject_id INTEGER REFERENCES subjects(id) ON DELETE SET NULL,
+                path TEXT NOT NULL,
+                name TEXT NOT NULL,
+                mode TEXT NOT NULL DEFAULT 'assignment',   -- assignment (hints first) or personal (fix freely)
+                created_at TEXT DEFAULT (datetime('now','localtime'))
+            );
+
             CREATE TABLE IF NOT EXISTS ai_actions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 status TEXT NOT NULL,                -- pending, applying, done, undoing, undone, rejected
@@ -1359,8 +1370,13 @@ class ActionLog:
             conn.execute("UPDATE ai_actions SET status=? WHERE id=?", (status, action_id))
 
 
+# The desktop window (set by desktop.py): bring it forward, and the Windows folder picker for the code workspace
+WINDOW = {"show": None, "pick_folder": None}
+
+code_context = code_routes.register(app, db, lambda: _get_setting(ai_routes.SETTING_KEY, ai_routes.AISettings),
+                                    DB_PATH.parent, WINDOW)
 ai_routes.register(app, _get_setting, _put_setting, lambda: AI_TRANSPORT["value"], _task_context,
-                   TaskStore(), ActionLog())
+                   TaskStore(), ActionLog(), code_context)
 
 
 class MoneySettings(BaseModel):
@@ -1514,9 +1530,7 @@ def set_autostart(a: AutostartSettings):
     return get_autostart()
 
 
-# ── The desktop window (set by desktop.py) ──────────────────────────
-
-WINDOW = {"show": None}
+# ── The desktop window (WINDOW is set by desktop.py, see above) ──────
 
 
 @app.post("/api/window/show")
@@ -1564,8 +1578,8 @@ def update_install():
 # ═══════════════════════════════════════════════════════════════════════════
 
 # Parents before children, so a restore can insert in this order
-BACKUP_TABLES = ("categories", "subjects", "units", "tasks", "notes", "job_applications", "transactions", "budgets",
-                 "settings")
+BACKUP_TABLES = ("categories", "subjects", "units", "tasks", "notes", "code_folders", "job_applications",
+                 "transactions", "budgets", "settings")
 COUNTED_TABLES = ("tasks", "subjects", "job_applications", "transactions", "budgets")
 BACKUP_DIR = DB_PATH.parent / "backups"
 KEEP_AUTO_BACKUPS = 10

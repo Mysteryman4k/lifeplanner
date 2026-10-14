@@ -746,3 +746,95 @@ def test_maths_code_and_diagrams_in_replies(server, page):
 
     page.evaluate("chatReset()")
     page.request.post(f"{server}/api/ai/terms/withdraw", headers=tok)
+
+
+@pytest.mark.ui
+def test_code_workspace(server, page, tmp_path_factory):
+    """Link a folder, see hidden files greyed out, read a file with line numbers, see which files go with a
+    question, explain a pasted error (its line gets marked), Explain only for SQL, and unlink."""
+    import json
+    import os
+
+    import app as A
+    tok = {A.TOKEN_HEADER: A.SESSION_TOKEN}
+    root = tmp_path_factory.mktemp("lab3")
+    (root / "main.py").write_text("from helpers import add\n\nprint(add(1, '2'))\n", encoding="utf-8")
+    (root / "helpers.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    (root / ".env").write_text("API_KEY=secret\n", encoding="utf-8")
+    (root / "db").mkdir()
+    (root / "db" / "queries.sql").write_text("SELECT * FROM marks;\n", encoding="utf-8")
+    (root / "node_modules").mkdir()
+    terms = page.request.get(f"{server}/api/ai/terms").json()
+    page.request.post(f"{server}/api/ai/terms/agree", headers=tok,
+                      data={"version": terms["version"], "ticks": {k: True for k in terms["ticks"]}})
+    page.request.put(f"{server}/api/ai/settings", headers=tok,
+                     data={"provider": "ollama", "model": "qwen2.5:7b", "code_enabled": True})
+    nl = chr(10)
+    hint = "Line 2 adds a number and a string. What type is '2'?"
+    reply = "data: " + json.dumps({"choices": [{"delta": {"content": hint}}]}) + nl + nl
+    A.fake_net["POST localhost/v1/chat/completions"] = (200, reply)
+
+    page.goto(f"{server}/#/code")
+    page.reload()
+    page.wait_for_selector("text=Link a code folder")
+    assert page.locator("#nav a[href='#/code']").count() == 1
+    page.click("[data-action=code-link]")
+    page.click("[data-action=code-browse]")                       # no picker outside the desktop app
+    page.wait_for_selector("#toast.show >> text=desktop app")
+    page.fill("#drawerForm [name=path]", str(root))
+    page.click("#drawerFoot [type=submit]")
+    page.wait_for_selector(".code-tree .tree-row >> text=main.py")
+    assert page.locator(".hidden-row", has_text=".env").count() == 1
+    assert page.locator(".hidden-row", has_text="node_modules").count() == 1
+    assert page.locator(".code-modes button.on").inner_text().startswith("Assignment")
+
+    page.click(".tree-row >> text=main.py")
+    page.wait_for_selector(".code-file-head >> text=main.py")
+    assert page.locator(".code-gutter span").count() == 4 and page.locator(".code-text .hljs-keyword").count() >= 1
+    chips = "[...document.querySelectorAll('#codeSend .file-chip')].map(c => c.textContent.trim()).join()"
+    page.wait_for_function(f"{chips} === 'main.py,helpers.py'")          # the open file and what it imports
+
+    # A pasted traceback: Explain the error sends it, and the line it points at gets marked
+    tb = nl.join(["Traceback (most recent call last):", r'  File "C:\lab3\main.py", line 3, in <module>',
+                  r'  File "C:\lab3\helpers.py", line 2, in add', "TypeError: unsupported operand type(s) for +"])
+    page.fill("#chatInput", tb)
+    page.dispatch_event("#chatInput", "input")
+    page.click("[data-action=code-explain-error]")
+    page.wait_for_selector(".chat-msg.ai .chat-tools")
+    assert page.locator(".chat-sent").inner_text() == "Sent with this: main.py, helpers.py"
+    asked = json.loads([r for r in A.fake_net_seen if r.url.path.endswith("/chat/completions")][-1].content)
+    system = asked["messages"][0]["content"]
+    assert "give hints first" in system and "--- helpers.py (Python) ---" in system and "API_KEY" not in system
+    assert "Explain this error" in asked["messages"][-1]["content"]
+
+    # Taking a file off the list keeps it off, even when the next error names it
+    page.click("#codeSend [data-action=code-unsend][data-path='helpers.py']")
+    page.wait_for_function(f"{chips} === 'main.py'")
+    page.fill("#chatInput", tb)
+    page.dispatch_event("#chatInput", "input")
+    page.click("[data-action=code-explain-error]")
+    page.wait_for_function("document.querySelectorAll('.chat-msg.ai .chat-tools').length === 2")
+    assert page.locator(".chat-sent").last.inner_text() == "Sent with this: main.py"
+    assert page.locator(".code-mark").count() == 1 and page.locator(".code-gutter .marked").inner_text() == "3"
+
+    # Personal mode, Explain only for SQL, and the note about cloud providers
+    page.click("[data-action=code-mode][data-mode=personal]")
+    page.wait_for_selector(".code-modes button.on >> text=Personal")
+    page.click(".tree-row >> text=db")
+    page.click(".tree-row >> text=queries.sql")
+    page.wait_for_selector(".code-file-head .explain-only")
+    assert page.locator(".code-cloud-note").count() == 0
+    page.evaluate("state.ai.provider = 'openai'; chatRefresh()")
+    assert "Code you send goes to OpenAI" in page.locator(".code-cloud-note").inner_text()
+    page.evaluate("state.ai.provider = 'ollama'; chatRefresh()")
+    if os.environ.get("EUT_SHOTS"):
+        page.click(".tree-row >> text=main.py")
+        page.wait_for_selector(".code-file-head >> text=main.py")
+        page.screenshot(path=os.path.join(os.environ["EUT_SHOTS"], "stage6-workspace.png"))
+
+    page.click("[data-action=code-unlink]")
+    page.click("#confirmYes")
+    page.wait_for_selector("text=Link a code folder")
+    assert (root / "main.py").exists()
+    page.evaluate("chatReset()")
+    page.request.post(f"{server}/api/ai/terms/withdraw", headers=tok)

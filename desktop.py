@@ -224,6 +224,11 @@ def main():
     )
     backend.WINDOW["show"] = lambda: bring_window_forward(window)
 
+    def pick_folder():
+        chosen = window.create_file_dialog(webview.FOLDER_DIALOG)
+        return chosen[0] if chosen else ""
+    backend.WINDOW["pick_folder"] = pick_folder
+
     def hand_over(win):
         """Wait for the server and the intro, then switch the window to the app.
 
