@@ -433,3 +433,126 @@ def test_long_chats_and_switching_tasks_mid_reply(server, page):
     page.evaluate("chatReset()")
     page.request.post(f"{server}/api/ai/terms/withdraw", headers=tok)
     page.errors.clear()
+
+
+def test_notes_inside_subjects(server, page):
+    """Notes on subject cards: write one, save a reply as a note, write notes on a topic, edit and delete."""
+    import json
+
+    import app as A
+    tok = {A.TOKEN_HEADER: A.SESSION_TOKEN}
+    terms = page.request.get(f"{server}/api/ai/terms").json()
+    page.request.post(f"{server}/api/ai/terms/agree", headers=tok,
+                      data={"version": terms["version"], "ticks": {k: True for k in terms["ticks"]}})
+    page.request.put(f"{server}/api/ai/settings", headers=tok, data={"provider": "ollama", "model": "qwen2.5:7b"})
+    algo = page.request.post(f"{server}/api/subjects", headers=tok, data={"name": "Algorithms 101", "color": "#3B6EA8"}).json()
+    empty = page.request.post(f"{server}/api/subjects", headers=tok, data={"name": "Ethics 101", "color": "#7B4FA3"}).json()
+    nl = chr(10)
+
+    def reply(*parts):
+        return "".join("data: " + json.dumps({"choices": [{"delta": {"content": t}}]}) + nl + nl for t in parts)
+
+    page.goto(f"{server}/#/subjects")
+    page.reload()
+    card = page.locator("article.subject", has_text="Algorithms 101")
+    card.locator(".subject-notes").wait_for()
+    assert "Save replies from the study assistant here" in card.inner_text()
+
+    # Write a note by hand
+    card.locator("[data-action=new-note]").click()
+    page.fill("#drawerForm [name=title]", "Big-O basics")
+    page.fill("#drawerForm [name=body]", "## Growth" + nl + "- O(1) constant" + nl + "- O(n) linear")
+    page.click("#drawerFoot [type=submit]")
+    card.locator(".note-row >> text=Big-O basics").wait_for()
+    card.locator(".note-row >> text=Big-O basics").click()
+    page.wait_for_selector("#drawer .note-body h4 >> text=Growth")
+    assert page.locator("#drawer .note-body li").count() == 2
+    page.click("[data-action=edit-note]")
+    page.fill("#drawerForm [name=title]", "Big-O cheat sheet")
+    page.click("#drawerFoot [type=submit]")
+    card.locator(".note-row >> text=Big-O cheat sheet").wait_for()
+
+    # Save a study assistant reply as a note
+    A.fake_net["POST localhost/v1/chat/completions"] = (200, reply("## Merge sort" + nl, "Split, sort, **merge**."))
+    page.goto(f"{server}/#/study")
+    page.wait_for_selector("#chatInput")
+    page.evaluate("chatReset(); chatRefresh()")
+    page.fill("#chatInput", "Explain merge sort")
+    page.keyboard.press("Enter")
+    page.wait_for_selector(".chat-msg.ai .chat-tools")
+    page.click("[data-action=chat-save-note]")
+    assert page.input_value("#drawerForm [name=title]") == "Merge sort"          # from the reply's heading
+    page.select_option("#drawerForm [name=subject_id]", str(algo["id"]))
+    page.click("#drawerFoot [type=submit]")
+    page.wait_for_selector("#toast.show >> text=Algorithms 101")
+
+    # Write notes on a topic
+    A.fake_net["POST localhost/v1/chat/completions"] = (200, reply("## Hash tables" + nl, "- buckets" + nl, "- collisions"))
+    page.goto(f"{server}/#/subjects")
+    card.locator("[data-action=note-topic]").click()
+    page.fill("#noteTopicInput", "Hash tables")
+    page.keyboard.press("Enter")
+    page.wait_for_selector("#noteTopicSave:not([hidden])")
+    asked = json.loads([r for r in A.fake_net_seen if r.url.path.endswith("/chat/completions")][-1].content)
+    assert "Mode: Notes" in asked["messages"][0]["content"] and "Hash tables" in asked["messages"][1]["content"]
+    page.click("#noteTopicSave")
+    assert page.input_value("#drawerForm [name=title]") == "Hash tables"
+    page.click("#drawerFoot [type=submit]")
+    card.locator(".note-row >> text=Hash tables").wait_for()
+    notes = page.request.get(f"{server}/api/notes?subject_id={algo['id']}").json()
+    assert sorted(n["source"] for n in notes) == ["chat", "manual", "topic"]
+
+    # Delete one
+    card.locator(".note-row >> text=Big-O cheat sheet").click()
+    page.click("[data-action=delete-note]")
+    page.click("#confirmYes")
+    page.wait_for_selector("#toast.show >> text=Note deleted")
+    assert card.locator(".note-row").count() == 2
+
+    # With AI off: a subject that has notes still shows them; one without notes shows nothing new
+    page.request.post(f"{server}/api/ai/terms/withdraw", headers=tok)
+    page.reload()
+    card.locator(".note-row").first.wait_for()
+    assert card.locator("[data-action=note-topic]").count() == 0            # no AI buttons
+    assert page.locator("article.subject", has_text="Ethics 101").locator(".subject-notes").count() == 0
+    for n in page.request.get(f"{server}/api/notes").json():
+        page.request.delete(f"{server}/api/notes/{n['id']}", headers=tok)
+    for s in (algo, empty):
+        page.request.delete(f"{server}/api/subjects/{s['id']}", headers=tok)
+    page.errors.clear()
+
+
+def test_reply_formatting_rules(server, page):
+    """chatMarkdown: dividers, lists and escaping (used for chat replies and notes)."""
+    page.goto(f"{server}/#/today")
+    page.wait_for_selector("#content > *")
+    nl = chr(10)
+    md = lambda s: page.evaluate("s => chatMarkdown(s)", s)  # noqa: E731
+    assert md("a" + nl + "---" + nl + "b") == "<p>a</p><hr><p>b</p>"
+    assert md("* * *") == "<hr>" and md("-- not a rule") == "<p>-- not a rule</p>"
+    assert md("- a" + nl + "- b") == "<ul><li>a</li><li>b</li></ul>"
+    assert "&lt;img" in md("<img src=x onerror=alert(1)>")
+
+
+def test_closing_write_notes_stops_the_request(server, page):
+    """Closing the panel (or starting another topic) aborts the stream, so it stops using tokens."""
+    import app as A
+    tok = {A.TOKEN_HEADER: A.SESSION_TOKEN}
+    terms = page.request.get(f"{server}/api/ai/terms").json()
+    page.request.post(f"{server}/api/ai/terms/agree", headers=tok,
+                      data={"version": terms["version"], "ticks": {k: True for k in terms["ticks"]}})
+    s = page.request.post(f"{server}/api/subjects", headers=tok, data={"name": "Networks 101", "color": "#3B6EA8"}).json()
+    page.goto(f"{server}/#/subjects")
+    page.reload()
+    page.wait_for_selector("[data-action=note-topic]")
+    aborted = page.evaluate(f"""() => {{
+        openNoteTopic({s["id"]});
+        const first = new AbortController(); state.noteTopic.controller = first;
+        openNoteTopic({s["id"]});                                  // another topic replaces it
+        const second = new AbortController(); state.noteTopic.controller = second;
+        closeDrawer();                                             // closing the panel
+        return [first.signal.aborted, second.signal.aborted, state.noteTopic];
+    }}""")
+    assert aborted == [True, True, None]
+    page.request.delete(f"{server}/api/subjects/{s['id']}", headers=tok)
+    page.request.post(f"{server}/api/ai/terms/withdraw", headers=tok)

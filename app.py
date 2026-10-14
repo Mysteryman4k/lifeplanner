@@ -7,6 +7,7 @@ Run directly:  python app.py        (serves on http://127.0.0.1:8585)
 Desktop app:   python desktop.py
 """
 import hmac
+import json
 import os
 import re
 import secrets
@@ -251,9 +252,53 @@ def init_db():
             CREATE INDEX IF NOT EXISTS ix_jobs_status ON job_applications(status);
             CREATE INDEX IF NOT EXISTS ix_tx_date ON transactions(date);
             CREATE INDEX IF NOT EXISTS ix_tx_category ON transactions(category);
+
+            CREATE TABLE IF NOT EXISTS notes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                subject_id INTEGER REFERENCES subjects(id) ON DELETE SET NULL,
+                task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
+                title TEXT NOT NULL,
+                body TEXT NOT NULL DEFAULT '',
+                source TEXT NOT NULL DEFAULT 'manual',
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                updated_at TEXT DEFAULT (datetime('now','localtime'))
+            );
+            CREATE INDEX IF NOT EXISTS ix_notes_subject ON notes(subject_id);
         """)
+        conn.execute("INSERT INTO settings (key, value) VALUES ('last_run_version', ?) "
+                     "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (json.dumps(APP_VERSION),))
 
 
+def _pre_upgrade_backup():
+    """The first time a new version opens existing data, keep a copy of the database exactly as it was,
+    before any of the new version's changes (backups/before-upgrade-*.db, the last 10 are kept)."""
+    if not DB_PATH.exists() or DB_PATH.stat().st_size == 0:
+        return
+    conn = sqlite3.connect(str(DB_PATH))
+    try:
+        if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='settings'").fetchone():
+            return
+        row = conn.execute("SELECT value FROM settings WHERE key='last_run_version'").fetchone()
+        try:
+            last = json.loads(row[0]) if row else None
+        except (ValueError, TypeError):
+            last = None                         # unreadable (e.g. edited by hand): treat as unknown, still back up
+        if last == APP_VERSION:
+            return
+        folder = DB_PATH.parent / "backups"
+        folder.mkdir(parents=True, exist_ok=True)
+        target = sqlite3.connect(str(folder / f"before-upgrade-{datetime.now().strftime('%Y-%m-%d_%H%M%S')}.db"))
+        try:
+            conn.backup(target)
+        finally:
+            target.close()
+    except Exception as e:                      # a backup problem must never stop the app opening
+        print(f"Pre-upgrade backup failed: {e!r}", flush=True)
+    finally:
+        conn.close()
+
+
+_pre_upgrade_backup()
 init_db()
 
 # ── Validation models ──────────────────────────────────────────────────────
@@ -589,6 +634,92 @@ def update_subject(subj_id: int, subj: SubjectCreate):
 def delete_subject(subj_id: int):
     with db() as conn:
         conn.execute("DELETE FROM subjects WHERE id=?", (subj_id,))
+    return {"ok": True}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# NOTES (inside subjects; written by hand, saved from the study assistant, or "write notes on this topic")
+# ═══════════════════════════════════════════════════════════════════════════
+
+class NoteIn(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    body: str = Field(default="", max_length=200_000)
+    subject_id: Optional[int] = None
+    task_id: Optional[int] = None
+    source: Literal["manual", "chat", "topic"] = "manual"
+
+    @field_validator("title")
+    @classmethod
+    def _title(cls, v):
+        v = v.strip()
+        if not v:
+            raise ValueError("Give the note a title.")
+        return v
+
+
+class NoteUpdate(BaseModel):
+    title: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    body: Optional[str] = Field(default=None, max_length=200_000)
+    subject_id: Optional[int] = None
+
+
+def _check_note_links(conn, subject_id, task_id=None):
+    if subject_id is not None and not conn.execute("SELECT 1 FROM subjects WHERE id=?", (subject_id,)).fetchone():
+        raise HTTPException(400, "That subject doesn't exist any more.")
+    if task_id is not None and not conn.execute("SELECT 1 FROM tasks WHERE id=?", (task_id,)).fetchone():
+        raise HTTPException(400, "That task doesn't exist any more.")
+
+
+def _note(conn, note_id: int) -> dict:
+    row = conn.execute("SELECT * FROM notes WHERE id=?", (note_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Note not found")
+    return dict(row)
+
+
+@app.get("/api/notes")
+def list_notes(subject_id: Optional[int] = None):
+    with db() as conn:
+        if subject_id is None:
+            rows = conn.execute("SELECT * FROM notes ORDER BY updated_at DESC, id DESC")
+        else:
+            rows = conn.execute("SELECT * FROM notes WHERE subject_id=? ORDER BY updated_at DESC, id DESC", (subject_id,))
+        return [dict(r) for r in rows]
+
+
+@app.post("/api/notes")
+def create_note(n: NoteIn):
+    with db() as conn:
+        _check_note_links(conn, n.subject_id, n.task_id)
+        cur = conn.execute("INSERT INTO notes (subject_id, task_id, title, body, source, created_at, updated_at) "
+                           "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                           (n.subject_id, n.task_id, n.title, n.body, n.source, now_stamp(), now_stamp()))
+        return _note(conn, cur.lastrowid)
+
+
+@app.put("/api/notes/{note_id}")
+def update_note(note_id: int, n: NoteUpdate):
+    changes = n.model_dump(exclude_unset=True)
+    with db() as conn:
+        _note(conn, note_id)
+        if "subject_id" in changes:
+            _check_note_links(conn, changes["subject_id"])
+        if "title" in changes:
+            changes["title"] = (changes["title"] or "").strip()
+            if not changes["title"]:
+                raise HTTPException(400, "Give the note a title.")
+        if changes:
+            changes["updated_at"] = now_stamp()
+            conn.execute(f"UPDATE notes SET {', '.join(f'{k}=?' for k in changes)} WHERE id=?",
+                         [*changes.values(), note_id])
+        return _note(conn, note_id)
+
+
+@app.delete("/api/notes/{note_id}")
+def delete_note(note_id: int):
+    with db() as conn:
+        _note(conn, note_id)
+        conn.execute("DELETE FROM notes WHERE id=?", (note_id,))
     return {"ok": True}
 
 
@@ -1287,14 +1418,15 @@ def update_install():
 # ═══════════════════════════════════════════════════════════════════════════
 
 # Parents before children, so a restore can insert in this order
-BACKUP_TABLES = ("categories", "subjects", "units", "tasks", "job_applications", "transactions", "budgets", "settings")
+BACKUP_TABLES = ("categories", "subjects", "units", "tasks", "notes", "job_applications", "transactions", "budgets",
+                 "settings")
 COUNTED_TABLES = ("tasks", "subjects", "job_applications", "transactions", "budgets")
 BACKUP_DIR = DB_PATH.parent / "backups"
 KEEP_AUTO_BACKUPS = 10
 # Settings that belong to this computer rather than to your data, so a restore keeps the current ones
 # Settings that belong to this PC: never put in backups, and kept as they are when one is restored.
 # "ai" holds the AI terms agreement, which must be given again on another PC.
-LOCAL_SETTINGS = ("reminders_last_sent", "migrated_sample_budgets", "ai")
+LOCAL_SETTINGS = ("reminders_last_sent", "migrated_sample_budgets", "ai", "last_run_version")
 
 
 @app.get("/api/export")
@@ -1336,8 +1468,9 @@ def auto_backup():
             snapshot_database("auto")
         for old in list_backups("auto")[KEEP_AUTO_BACKUPS:]:
             old.unlink(missing_ok=True)
-        for old in list_backups("before-restore")[KEEP_AUTO_BACKUPS:]:
-            old.unlink(missing_ok=True)
+        for kind in ("before-restore", "before-upgrade"):
+            for old in list_backups(kind)[KEEP_AUTO_BACKUPS:]:
+                old.unlink(missing_ok=True)
     except Exception as e:                                  # a backup problem must never stop the app
         print(f"Automatic backup failed: {e!r}", flush=True)
 

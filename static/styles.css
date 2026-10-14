@@ -632,3 +632,21 @@ button.tile { text-align: left; cursor: pointer; width: 100%; }
 .ai-help:hover { border-color: var(--accent-text); }
 .ai-help > span { flex: 1; display: flex; flex-direction: column; }
 .ai-help b { color: var(--ink); font-size: 14px; }
+
+/* ── Notes inside subjects ───────────────────────────── */
+.subject-notes { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+.subject-notes-head { display: flex; align-items: center; gap: 6px; font-weight: 750; font-size: 13px; padding: 0 4px 4px; }
+.notes-empty { padding: 2px 8px 4px; }
+.note-list { display: flex; flex-direction: column; }
+.note-row { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; font: inherit; font-size: 13.5px; font-weight: 600;
+  color: var(--ink-2); background: none; border: 0; border-radius: var(--r-sm); padding: 7px 8px; cursor: pointer; }
+.note-row:hover { background: var(--surface-2); color: var(--ink); }
+.note-row .ic { color: var(--accent-text); flex: none; }
+.note-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.note-more { align-self: flex-start; margin: 2px 8px; }
+.other-notes .note-list { margin-top: 8px; }
+.note-view .note-body { margin-top: 10px; }
+.note-editor { font-family: ui-monospace, 'Cascadia Code', Consolas, monospace; font-size: 13px; line-height: 1.55; min-height: 280px; }
+.note-preview { min-height: 60px; padding: 12px 14px; border: 1px dashed var(--line-strong); border-radius: var(--r-sm); background: var(--bg); }
+.note-preview:empty { display: none; }
+.chat-text hr { border: 0; border-top: 1px solid var(--line); margin: 12px 0; }
