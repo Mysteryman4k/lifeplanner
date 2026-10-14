@@ -591,7 +591,7 @@ def test_task_actions_from_the_chat(server, page):
     page.fill("#chatInput", "Add a task to draft my intro")
     page.keyboard.press("Enter")
     page.locator(".chat-card.ok", has_text="Draft intro").wait_for()
-    assert page.evaluate("state.tasks.some(t => t.title === 'Draft intro')")       # the list refreshed
+    page.wait_for_function("state.tasks.some(t => t.title === 'Draft intro')")     # the list refreshes when the reply ends
     page.click("[data-action=chat-undo]")
     page.locator(".chat-card.muted-card", has_text="Undone").wait_for()
     assert not page.evaluate("state.tasks.some(t => t.title === 'Draft intro')")
