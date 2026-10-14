@@ -962,6 +962,7 @@ function chatMessage(m, i) {
   const live = c.streaming && i === c.messages.length - 1;
   return `<div class="chat-msg ai" data-i="${i}">
     <div class="chat-text">${m.content ? chatMarkdown(m.content) : (live ? '<span class="chat-typing" aria-label="Thinking"><i></i><i></i><i></i></span>' : '')}</div>
+    ${(m.cards || []).map((card, n) => chatCard(card, i, n)).join('')}
     ${m.error ? `<div class="chat-error">${icon('alert', 15)}${esc(m.error)}</div>` : ''}
     ${m.stopped ? '<div class="small muted">Stopped.</div>' : ''}
     ${!live && m.content ? `<div class="chat-tools">
@@ -1073,6 +1074,7 @@ async function chatSend(text) {
   const current = () => c.run === run;
   chatRefresh();
   const reply = c.messages[c.messages.length - 1];
+  let tasksChanged = false;
   let history = c.messages.slice(0, -1).filter(m => m.content && !m.error).map(m => ({ role: m.role, content: m.content })).slice(-20);
   while (history.length && history[0].role !== 'user') history = history.slice(1);   // same window as the server
   try {
@@ -1081,6 +1083,8 @@ async function chatSend(text) {
       if (ev.type === 'text') reply.content += ev.text;
       else if (ev.type === 'usage') c.tokens += (ev.input || 0) + (ev.output || 0);
       else if (ev.type === 'error') reply.error = ev.message;
+      else if (ev.type === 'action') { (reply.cards ||= []).push({ kind: 'action', id: ev.action_id, summary: ev.summary, status: 'done' }); tasksChanged = true; }
+      else if (ev.type === 'confirm') (reply.cards ||= []).push({ kind: 'confirm', id: ev.action_id, items: ev.items, danger: ev.danger, status: 'pending' });
       chatUpdateLast();
       return true;
     });
@@ -1093,7 +1097,35 @@ async function chatSend(text) {
   c.streaming = false;
   c.controller = null;
   c.run = null;
+  if (tasksChanged) await reloadTasks();
   chatRefresh();
+}
+
+async function reloadTasks() {
+  try { state.tasks = await api('/api/tasks'); renderNav(); } catch (_) { /* the list refreshes next time */ }
+}
+
+function chatCard(card, i, n) {
+  const ref = `data-i="${i}" data-c="${n}"`;
+  if (card.kind === 'action' || card.status === 'approved' || card.status === 'undone') {
+    const undone = card.status === 'undone';
+    const title = card.kind === 'action' ? esc(card.summary) : `Done: ${card.items.map(esc).join('; ')}`;
+    return `<div class="chat-card ${undone ? 'muted-card' : 'ok'}">${icon(undone ? 'x' : 'check', 15)}
+      <span class="chat-card-text">${undone ? `Undone · <s>${title}</s>` : title}</span>
+      ${undone ? '' : `<button class="btn btn-ghost btn-sm keep-label" data-action="chat-undo" ${ref}>${icon('repeat', 14)}Undo</button>`}</div>`;
+  }
+  if (card.status === 'rejected') {
+    return `<div class="chat-card muted-card">${icon('x', 15)}<span class="chat-card-text">Left as it was · <s>${card.items.map(esc).join('; ')}</s></span></div>`;
+  }
+  const busy = card.busy ? 'disabled' : '';
+  return `<div class="chat-card ${card.danger ? 'danger' : 'warn'}">
+      ${icon('alert', 15)}<div class="chat-card-text"><b>${card.danger ? 'Delete this?' : 'Make these changes?'}</b>
+      <ul>${card.items.map(x => `<li>${esc(x)}</li>`).join('')}</ul>
+      <span class="muted small">The assistant asked for ${card.items.length > 1 ? 'these changes' : 'this'}. Nothing happens unless you say so.</span></div>
+      <div class="chat-card-btns">
+        <button class="btn btn-ghost btn-sm" data-action="chat-confirm" data-approve="0" ${ref} ${busy}>${card.danger ? 'Keep' : 'Not now'}</button>
+        <button class="btn btn-sm ${card.danger ? 'btn-danger' : 'btn-primary'}" data-action="chat-confirm" data-approve="1" ${ref} ${busy}>${card.danger ? 'Delete' : 'Do it'}</button>
+      </div></div>`;
 }
 
 function chatReset(taskId = null) {
@@ -1230,7 +1262,8 @@ function openDrawer(title, bodyHtml, footHtml, kind) {
   $('[data-action="close-drawer"]').innerHTML = icon('x', 20);
   $('#scrim').hidden = false;
   $('#drawer').hidden = false;
-  setTimeout(() => $('#drawer [autofocus]')?.focus(), 30);
+  // Focus the first field, unless the user (or a test) is already in one
+  setTimeout(() => { if (!$('#drawer').contains(document.activeElement)) $('#drawer [autofocus]')?.focus(); }, 30);
 }
 function closeDrawer() {
   if ($('#drawer').hidden) return;
@@ -1527,6 +1560,33 @@ function celebrate(from) {
 
 // ── Actions (event delegation) ────────────────────────────────────
 const ACTIONS = {
+  async 'chat-undo'(el) {
+    const card = chatState().messages[Number(el.dataset.i)]?.cards?.[Number(el.dataset.c)];
+    if (!card) return;
+    try {
+      await api('/api/ai/undo', { method: 'POST', body: { action_id: card.id } });
+      card.status = 'undone';
+      await reloadTasks();
+      toast('Undone');
+    } catch (e) { toast(e.message, 'error'); }
+    chatRefresh();
+  },
+  async 'chat-confirm'(el) {
+    const card = chatState().messages[Number(el.dataset.i)]?.cards?.[Number(el.dataset.c)];
+    if (!card || card.busy) return;
+    const approve = el.dataset.approve === '1';
+    card.busy = true; chatRefresh();
+    try {
+      const r = await api('/api/ai/confirm', { method: 'POST', body: { action_id: card.id, approve } });
+      card.status = approve ? 'approved' : 'rejected';
+      if (approve) {
+        await reloadTasks();
+        toast(r.failed?.length ? `Done, but ${r.failed.length} couldn't be made: ${r.failed[0]}` : 'Done', r.failed?.length ? 'error' : '');
+      }
+    } catch (e) { toast(e.message, 'error'); }
+    card.busy = false;
+    chatRefresh();
+  },
   'open-note'(el) { openNote(Number(el.dataset.id)); },
   'edit-note'(el) { editNote(Number(el.dataset.id)); },
   'new-note'(el) { editNote(null, { subject_id: Number(el.dataset.subject) || null }); },

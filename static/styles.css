@@ -650,3 +650,18 @@ button.tile { text-align: left; cursor: pointer; width: 100%; }
 .note-preview { min-height: 60px; padding: 12px 14px; border: 1px dashed var(--line-strong); border-radius: var(--r-sm); background: var(--bg); }
 .note-preview:empty { display: none; }
 .chat-text hr { border: 0; border-top: 1px solid var(--line); margin: 12px 0; }
+
+/* ── Task action cards in the chat (stage 4) ──────────── */
+.chat-card { display: flex; align-items: flex-start; gap: 10px; margin-top: 8px; padding: 10px 12px; border-radius: var(--r-sm);
+  border: 1px solid var(--line); background: var(--surface); font-size: 13.5px; }
+.chat-card > .ic { flex: none; margin-top: 2px; }
+.chat-card-text { flex: 1; min-width: 0; line-height: 1.45; }
+.chat-card-text ul { margin: 4px 0 4px 18px; }
+.chat-card-btns { display: flex; gap: 6px; flex-wrap: wrap; align-self: center; }
+.chat-card.ok { border-color: color-mix(in srgb, var(--ok) 35%, var(--line)); }
+.chat-card.ok > .ic { color: var(--ok); }
+.chat-card.warn { border-color: color-mix(in srgb, var(--warn) 45%, var(--line)); background: color-mix(in srgb, var(--warn-soft) 55%, var(--surface)); }
+.chat-card.warn > .ic { color: var(--warn); }
+.chat-card.danger { border-color: color-mix(in srgb, var(--danger) 40%, var(--line)); background: color-mix(in srgb, var(--danger-soft) 55%, var(--surface)); }
+.chat-card.danger > .ic { color: var(--danger); }
+.chat-card.muted-card { color: var(--muted); }

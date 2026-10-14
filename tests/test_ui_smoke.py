@@ -48,6 +48,8 @@ def server(tmp_path_factory):
         key = f"{request.method} {request.url.host}{request.url.path}"
         for prefix, (status, body) in A.fake_net.items():
             if key.startswith(prefix):
+                if isinstance(body, list):                 # a sequence of replies, one per request
+                    body = body.pop(0) if len(body) > 1 else body[0]
                 return httpx.Response(status, text=body) if isinstance(body, str) else httpx.Response(status, json=body)
         raise httpx.ConnectError("offline in tests", request=request)
     A.AI_TRANSPORT["value"] = httpx.MockTransport(fake_net)
@@ -556,3 +558,65 @@ def test_closing_write_notes_stops_the_request(server, page):
     assert aborted == [True, True, None]
     page.request.delete(f"{server}/api/subjects/{s['id']}", headers=tok)
     page.request.post(f"{server}/api/ai/terms/withdraw", headers=tok)
+
+
+def test_task_actions_from_the_chat(server, page):
+    """The assistant adds a task (Undo works), and deleting needs Keep/Delete (and can be undone too)."""
+    import json
+
+    import app as A
+    tok = {A.TOKEN_HEADER: A.SESSION_TOKEN}
+    terms = page.request.get(f"{server}/api/ai/terms").json()
+    page.request.post(f"{server}/api/ai/terms/agree", headers=tok,
+                      data={"version": terms["version"], "ticks": {k: True for k in terms["ticks"]}})
+    page.request.put(f"{server}/api/ai/settings", headers=tok, data={"provider": "ollama", "model": "qwen2.5:7b"})
+    nl = chr(10)
+
+    def sse(*objs):
+        return "".join("data: " + json.dumps(o) + nl + nl for o in objs)
+
+    def tool(name, args):
+        call = {"index": 0, "id": "c1", "function": {"name": name, "arguments": json.dumps(args)}}
+        return sse({"choices": [{"delta": {"tool_calls": [call]}}]})
+
+    say = lambda text: sse({"choices": [{"delta": {"content": text}}]})  # noqa: E731
+    A.fake_net["POST localhost/api/show"] = (200, {"capabilities": ["completion", "tools"]})
+    added = tool("add_task", {"title": "Draft intro", "due_date": "2026-11-03"})
+    A.fake_net["POST localhost/v1/chat/completions"] = (200, [added, say("Added it.")])
+
+    page.goto(f"{server}/#/study")
+    page.reload()
+    page.wait_for_selector("#chatInput")
+    page.evaluate("chatReset(); chatRefresh()")
+    page.fill("#chatInput", "Add a task to draft my intro")
+    page.keyboard.press("Enter")
+    page.locator(".chat-card.ok", has_text="Draft intro").wait_for()
+    assert page.evaluate("state.tasks.some(t => t.title === 'Draft intro')")       # the list refreshed
+    page.click("[data-action=chat-undo]")
+    page.locator(".chat-card.muted-card", has_text="Undone").wait_for()
+    assert not page.evaluate("state.tasks.some(t => t.title === 'Draft intro')")
+
+    # Delete asks first: Keep leaves it, Delete removes it, and Undo brings it back
+    old = page.request.post(f"{server}/api/tasks", headers=tok, data={"title": "Old draft"}).json()
+    for choice in ("Keep", "Delete"):
+        replies = [tool("delete_task", {"id": old["id"]}), say("Confirm it in the card.")]
+        A.fake_net["POST localhost/v1/chat/completions"] = (200, replies)
+        page.evaluate("chatReset(); chatRefresh()")
+        page.fill("#chatInput", "Delete my old draft")
+        page.keyboard.press("Enter")
+        page.locator(".chat-card.danger", has_text="Old draft").wait_for()
+        assert page.request.get(f"{server}/api/tasks/{old['id']}").ok                 # still there until you choose
+        page.click(f".chat-card.danger button:has-text('{choice}')")
+        if choice == "Keep":
+            page.locator(".chat-card.muted-card", has_text="Left as it was").wait_for()
+            assert page.request.get(f"{server}/api/tasks/{old['id']}").ok
+    page.locator(".chat-card.ok", has_text="Done: Delete").wait_for()
+    assert page.request.get(f"{server}/api/tasks/{old['id']}").status == 404
+    page.click("[data-action=chat-undo]")
+    page.locator(".chat-card.muted-card", has_text="Undone").wait_for()
+    assert page.locator(".chat-card.danger").count() == 0                         # doesn't ask again after Undo
+    assert page.request.get(f"{server}/api/tasks/{old['id']}").json()["title"] == "Old draft"
+    page.request.delete(f"{server}/api/tasks/{old['id']}", headers=tok)
+    page.evaluate("chatReset()")
+    page.request.post(f"{server}/api/ai/terms/withdraw", headers=tok)
+    page.errors.clear()
