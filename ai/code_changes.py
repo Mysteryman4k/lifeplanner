@@ -289,6 +289,23 @@ class ChangeStore:
             raise HTTPException(409, "That change was already applied or dismissed.")
         return {"status": "dismissed"}
 
+    def _tidy_hold(self, c: dict, target: Path, hold: Path):
+        """Both the file and the moved-aside copy exist after a crash. If the file is a cut-off start of what was
+        being written (only possible where there are no hard links), it's ours: remove it, so the copy goes back.
+        If the write finished, the copy is the one we checked: remove it once its hash confirms that."""
+        if c["status"] == "applying":
+            intended = c["new_content"].replace("\n", "\r\n" if c["eol"] == "CRLF" else "\n").encode("utf-8")
+            held = c["base_hash"]
+        elif c["backup"]:
+            intended, held = Path(c["backup"]).read_bytes(), c["applied_hash"]
+        else:
+            return
+        now = target.read_bytes()
+        if len(now) < len(intended) and intended.startswith(now):
+            target.unlink()                                # half-written by us: the original goes back next
+        elif now == intended and held and sha(hold.read_bytes()) == held:
+            hold.unlink()                                  # finished; the copy is the file as it was checked
+
     def recover(self):
         """At start-up, sort out changes cut off part-way (the app closed during Apply or Undo) from what the
         file actually holds now."""
@@ -303,6 +320,8 @@ class ChangeStore:
             try:
                 target = Folder(c["folder_path"]).resolve(c["path"])
                 hold = self.hold_path(target, str(c["id"]))
+                if hold.is_file() and target.exists():
+                    self._tidy_hold(c, target, hold)
                 if hold.is_file() and not target.exists():   # the crash came while the file was moved aside
                     if c["status"] == "undoing" and not c["backup"]:
                         hold.unlink()                        # Undo of a file the change made: it should be gone

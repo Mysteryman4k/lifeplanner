@@ -339,3 +339,23 @@ def test_recover_finishes_undoing_a_new_file(c, A, fake, proj):
     store.recover()
     assert not (proj / "notes.txt").exists() and store.get(card["change_id"])["status"] == "undone"
     assert [p.name for p in proj.iterdir() if p.name.startswith(".eut-")] == []
+
+
+@pytest.mark.parametrize("written", ["half", "all"])
+def test_recover_after_a_crash_while_writing_without_hard_links(c, A, fake, proj, written):
+    """The crash came during the exclusive-create fallback: the file is cut off part-way, or complete."""
+    from ai.code_changes import ChangeStore, sha
+    f = setup(c, proj)
+    card = cards(propose(c, fake, f, {"path": "calc.py", "find": "a - b", "replace": "a + b", "summary": "fix"}))[0]
+    store = ChangeStore(A.db, A.DB_PATH.parent)
+    new = ORIGINAL.replace(b"a - b", b"a + b")
+    backup = A.DB_PATH.parent / "code-backups" / f"{card['change_id']}-calc.py"
+    backup.parent.mkdir(exist_ok=True)
+    backup.write_bytes(ORIGINAL)
+    store.set(card["change_id"], status="applying", backup=str(backup), applied_hash=sha(new))
+    (proj / "calc.py").rename(ChangeStore.hold_path(proj / "calc.py", str(card["change_id"])))
+    (proj / "calc.py").write_bytes(new[:10] if written == "half" else new)
+    store.recover()
+    expected = (ORIGINAL, "proposed") if written == "half" else (new, "applied")
+    assert ((proj / "calc.py").read_bytes(), store.get(card["change_id"])["status"]) == expected
+    assert [p.name for p in proj.iterdir() if p.name.startswith(".eut-")] == []
