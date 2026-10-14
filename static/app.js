@@ -1488,7 +1488,8 @@ function chatSave() {
       if (!chat.id && chat.session === session) chat.id = saved.id;
       loadChats();
     } catch (e) {
-      if (/deleted/.test(e.message)) chat.id = null;     // deleted elsewhere: the next save makes a new one
+      // Deleted elsewhere: the next save makes a new one (only for this session: another chat may be open now)
+      if (/deleted/.test(e.message) && chat.session === session) chat.id = null;
     }
   });
   return chatSave.queue;

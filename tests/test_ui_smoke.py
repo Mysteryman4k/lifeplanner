@@ -1144,6 +1144,19 @@ def test_saved_chats_quiz_and_videos(server, page):
         page.unroute("**/api/ai/chats/*")
         kept = page.request.get(f"{server}/api/ai/chats/{other['id']}").json()
         assert [m["content"] for m in kept["messages"]] == ["Other question", "Other answer"]
+        # A save for a chat deleted elsewhere doesn't clear the id of the chat opened meanwhile
+        gone = page.request.post(f"{server}/api/ai/chats", headers=tok, data={"messages": [
+            {"role": "user", "content": "Gone"}, {"role": "assistant", "content": "soon"}]}).json()
+        page.evaluate(f"chatOpen({gone['id']})")
+        page.wait_for_selector(".chat-msg.ai >> text=soon")
+        page.request.delete(f"{server}/api/ai/chats/{gone['id']}", headers=tok)
+        page.route("**/api/ai/chats/*", lambda route: (page.wait_for_timeout(1500), route.continue_())
+                   if route.request.method == "PUT" else route.continue_())
+        page.evaluate(f"async () => {{ chatSave(); await chatOpen({other['id']}); }}")
+        page.wait_for_selector(".chat-msg.ai >> text=Other answer")
+        page.wait_for_timeout(2500)
+        page.unroute("**/api/ai/chats/*")
+        assert page.evaluate("chatState().id") == other["id"]
         page.request.delete(f"{server}/api/ai/chats/{other['id']}", headers=tok)
         page.evaluate("loadChats()")
 
