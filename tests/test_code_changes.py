@@ -190,3 +190,29 @@ def test_a_forgotten_find_doesnt_replace_the_whole_file(c, fake, proj):
                               "whole_file": True})
     c.post(f"/api/code/changes/{cards(ev)[0]['change_id']}/apply")
     assert (proj / "calc.py").read_bytes() == b"def add(a, b):\r\n    return a + b\r\n"
+
+
+@pytest.mark.skipif(__import__("os").name == "nt", reason="execute permissions are a POSIX thing")
+def test_apply_and_undo_keep_file_permissions(c, fake, proj):
+    import os
+    os.chmod(proj / "calc.py", 0o755)
+    f = setup(c, proj)
+    card = cards(propose(c, fake, f, {"path": "calc.py", "find": "a - b", "replace": "a + b", "summary": "fix"}))[0]
+    c.post(f"/api/code/changes/{card['change_id']}/apply")
+    assert os.stat(proj / "calc.py").st_mode & 0o777 == 0o755
+    c.post(f"/api/code/changes/{card['change_id']}/undo")
+    assert os.stat(proj / "calc.py").st_mode & 0o777 == 0o755
+
+
+def test_write_keeps_the_original_mode(tmp_path):
+    import os
+    import stat as st
+    from ai.code_changes import ChangeStore
+    target = tmp_path / "s.sh"
+    target.write_text("echo 1\n")
+    os.chmod(target, st.S_IREAD | st.S_IWRITE)
+    before = st.S_IMODE(os.stat(target).st_mode)
+    ChangeStore.write(target, b"echo 2\n")
+    assert target.read_bytes() == b"echo 2\n" and st.S_IMODE(os.stat(target).st_mode) == before
+    ChangeStore.write(tmp_path / "new.txt", b"x")
+    assert os.stat(tmp_path / "new.txt").st_mode & st.S_IREAD

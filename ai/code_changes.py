@@ -13,6 +13,7 @@ import difflib
 import hashlib
 import os
 import re
+import stat
 import tempfile
 from pathlib import Path
 
@@ -129,10 +130,14 @@ class ChangeStore:
     def write(target: Path, data: bytes):
         """Write through a temporary file in the same folder, so a crash can't leave half a file."""
         target.parent.mkdir(parents=True, exist_ok=True)
+        # mkstemp makes the file owner-only: keep the original's permissions (a script stays executable),
+        # and give a new file the usual ones
+        mode = stat.S_IMODE(target.stat().st_mode) if target.exists() else 0o644
         fd, tmp = tempfile.mkstemp(prefix=".eut-", dir=target.parent)
         try:
             with os.fdopen(fd, "wb") as f:
                 f.write(data)
+            os.chmod(tmp, mode)
             os.replace(tmp, target)
         except BaseException:
             Path(tmp).unlink(missing_ok=True)
