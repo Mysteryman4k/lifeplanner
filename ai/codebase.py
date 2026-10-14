@@ -292,7 +292,8 @@ class Folder:
         except CodeError:
             pass
         for rel in self._names().get(PurePosixPath(name).name, ()):
-            if rel.endswith(name) or "/" not in name:
+            # whole path segments only: "b/x.py" mustn't match "ab/x.py"; a longer path in an error matches its end
+            if "/" not in name or rel == name or rel.endswith("/" + name) or name.endswith("/" + rel):
                 return rel
         return None
 

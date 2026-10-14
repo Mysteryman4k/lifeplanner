@@ -158,6 +158,14 @@ def test_names_in_a_long_error_walk_the_folder_once(project, monkeypatch):
     assert project.referenced(log) == ["helpers.py"] and len(calls) == 1
 
 
+def test_names_in_errors_match_whole_path_segments(tmp_path):
+    make(tmp_path, {"ab/x.py": "a = 1\n", "src/b/x.py": "b = 1\n", "app/main.py": "m = 1\n"})
+    f = Folder(str(tmp_path))
+    assert f._find("b/x.py") == "src/b/x.py"                  # not ab/x.py, which only ends with the same text
+    assert f._find("other/x.py") is None
+    assert f._find("lab3/app/main.py") == "app/main.py"       # a longer path from somewhere else still matches
+
+
 def test_gitignore_rules():
     g = GitIgnore()
     g.add_file("", "build\n*.o\n/top.txt\ndocs/**/draft*\n!docs/keep/draft1.md\n# comment\n")
