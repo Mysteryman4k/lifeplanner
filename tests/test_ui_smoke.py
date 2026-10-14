@@ -110,7 +110,9 @@ def test_add_and_complete_task(server, page):
 
 def test_change_theme_is_saved(server, page):
     page.goto(f"{server}/#/settings")
-    page.click("[data-action=set-appearance][data-key=theme][data-value=ocean]")
+    # The theme shows at once and is saved just after: wait for the save, or a fast reload can beat it
+    with page.expect_response(lambda r: r.url.endswith("/api/settings/appearance") and r.request.method == "PUT"):
+        page.click("[data-action=set-appearance][data-key=theme][data-value=ocean]")
     page.wait_for_function("document.documentElement.dataset.theme === 'ocean'")
     page.reload()
     page.wait_for_function("document.documentElement.dataset.theme === 'ocean'")
