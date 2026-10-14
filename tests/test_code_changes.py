@@ -198,9 +198,11 @@ def test_apply_and_undo_keep_file_permissions(c, fake, proj):
     os.chmod(proj / "calc.py", 0o755)
     f = setup(c, proj)
     card = cards(propose(c, fake, f, {"path": "calc.py", "find": "a - b", "replace": "a + b", "summary": "fix"}))[0]
-    c.post(f"/api/code/changes/{card['change_id']}/apply")
+    assert c.post(f"/api/code/changes/{card['change_id']}/apply").status_code == 200
+    assert (proj / "calc.py").read_bytes() == ORIGINAL.replace(b"a - b", b"a + b")
     assert os.stat(proj / "calc.py").st_mode & 0o777 == 0o755
-    c.post(f"/api/code/changes/{card['change_id']}/undo")
+    assert c.post(f"/api/code/changes/{card['change_id']}/undo").status_code == 200
+    assert (proj / "calc.py").read_bytes() == ORIGINAL
     assert os.stat(proj / "calc.py").st_mode & 0o777 == 0o755
 
 
@@ -216,3 +218,80 @@ def test_write_keeps_the_original_mode(tmp_path):
     assert target.read_bytes() == b"echo 2\n" and st.S_IMODE(os.stat(target).st_mode) == before
     ChangeStore.write(tmp_path / "new.txt", b"x")
     assert os.stat(tmp_path / "new.txt").st_mode & st.S_IREAD
+
+
+# ── an edit saved at the worst moment is never overwritten ──
+def editor_saves_during(monkeypatch, target, content):
+    """Make the student's editor save the file just after the app's check, while the new file is being made."""
+    from ai.code_changes import ChangeStore
+    real = ChangeStore._temp
+
+    def temp(t, data, mode):
+        target.write_bytes(content)
+        return real(t, data, mode)
+    monkeypatch.setattr(ChangeStore, "_temp", staticmethod(temp))
+
+
+def test_apply_never_overwrites_an_edit_saved_after_the_check(c, fake, proj, monkeypatch):
+    f = setup(c, proj)
+    card = cards(propose(c, fake, f, {"path": "calc.py", "find": "a - b", "replace": "a + b", "summary": "fix"}))[0]
+    editor_saves_during(monkeypatch, proj / "calc.py", b"saved just now\n")
+    r = c.post(f"/api/code/changes/{card['change_id']}/apply")
+    assert r.status_code == 409 and "has changed since" in r.json()["detail"]
+    assert (proj / "calc.py").read_bytes() == b"saved just now\n"
+    assert [p.name for p in proj.iterdir() if p.name.startswith(".eut-")] == []          # nothing left behind
+
+
+def test_undo_never_overwrites_an_edit_saved_after_the_check(c, fake, proj, monkeypatch):
+    f = setup(c, proj)
+    card = cards(propose(c, fake, f, {"path": "calc.py", "find": "a - b", "replace": "a + b", "summary": "fix"}))[0]
+    c.post(f"/api/code/changes/{card['change_id']}/apply")
+    editor_saves_during(monkeypatch, proj / "calc.py", b"saved just now\n")
+    r = c.post(f"/api/code/changes/{card['change_id']}/undo")
+    assert r.status_code == 409 and (proj / "calc.py").read_bytes() == b"saved just now\n"
+    monkeypatch.undo()
+    (proj / "calc.py").write_bytes(ORIGINAL.replace(b"a - b", b"a + b"))
+    assert c.post(f"/api/code/changes/{card['change_id']}/undo").status_code == 200       # still undoable after
+
+
+def test_swap_puts_nothing_where_a_file_appeared(tmp_path):
+    from ai.code_changes import ChangeStore, Conflict
+    target = tmp_path / "new.py"
+    target.write_bytes(b"someone else's\n")
+    with pytest.raises(Conflict):
+        ChangeStore.swap(target, b"mine\n", None)
+    assert target.read_bytes() == b"someone else's\n" and len(list(tmp_path.iterdir())) == 1
+
+
+# ── a change cut off part-way (the app closed during Apply or Undo) ──
+def cut_off(c, A, fake, proj, file_bytes, status="applying"):
+    f = setup(c, proj)
+    card = cards(propose(c, fake, f, {"path": "calc.py", "find": "a - b", "replace": "a + b", "summary": "fix"}))[0]
+    from ai.code_changes import ChangeStore, sha
+    store = ChangeStore(A.db, A.DB_PATH.parent)
+    new = ORIGINAL.replace(b"a - b", b"a + b")
+    backup = A.DB_PATH.parent / "code-backups" / f"{card['change_id']}-calc.py"
+    backup.parent.mkdir(exist_ok=True)
+    backup.write_bytes(ORIGINAL)
+    store.set(card["change_id"], status=status, backup=str(backup), applied_hash=sha(new))
+    (proj / "calc.py").write_bytes(file_bytes)
+    store.recover()
+    return store.get(card["change_id"])["status"], card["change_id"]
+
+
+def test_recover_an_apply_that_finished_writing(c, A, fake, proj):
+    status, cid = cut_off(c, A, fake, proj, ORIGINAL.replace(b"a - b", b"a + b"))
+    assert status == "applied"
+    assert c.post(f"/api/code/changes/{cid}/undo").status_code == 200 and (proj / "calc.py").read_bytes() == ORIGINAL
+
+
+def test_recover_an_apply_that_never_wrote(c, A, fake, proj):
+    assert cut_off(c, A, fake, proj, ORIGINAL)[0] == "proposed"
+
+
+def test_recover_an_apply_when_the_file_is_something_else(c, A, fake, proj):
+    assert cut_off(c, A, fake, proj, b"edited meanwhile\n")[0] == "stale"
+
+
+def test_recover_an_undo(c, A, fake, proj):
+    assert cut_off(c, A, fake, proj, ORIGINAL, status="undoing")[0] == "undone"

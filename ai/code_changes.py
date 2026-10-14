@@ -91,6 +91,10 @@ def changed_count(old: str, new: str) -> int:
     return sum(1 for d in diff_lines(old, new) if d["t"] in "+-")
 
 
+class Conflict(Exception):
+    """The file changed between the check and the write; nothing was overwritten."""
+
+
 class ChangeStore:
     """The file_changes table, and writing and restoring files."""
 
@@ -130,18 +134,79 @@ class ChangeStore:
     def write(target: Path, data: bytes):
         """Write through a temporary file in the same folder, so a crash can't leave half a file."""
         target.parent.mkdir(parents=True, exist_ok=True)
-        # mkstemp makes the file owner-only: keep the original's permissions (a script stays executable),
-        # and give a new file the usual ones
-        mode = stat.S_IMODE(target.stat().st_mode) if target.exists() else 0o644
+        tmp = ChangeStore._temp(target, data, stat.S_IMODE(target.stat().st_mode) if target.exists() else 0o644)
+        try:
+            os.replace(tmp, target)
+        except BaseException:
+            Path(tmp).unlink(missing_ok=True)
+            raise
+
+    @staticmethod
+    def _temp(target: Path, data: bytes, mode: int) -> str:
+        """The new bytes in a temporary file next to the target. mkstemp makes it owner-only, so it gets the
+        original's permissions (a script stays executable), or the usual ones for a new file."""
         fd, tmp = tempfile.mkstemp(prefix=".eut-", dir=target.parent)
         try:
             with os.fdopen(fd, "wb") as f:
                 f.write(data)
             os.chmod(tmp, mode)
-            os.replace(tmp, target)
         except BaseException:
             Path(tmp).unlink(missing_ok=True)
             raise
+        return tmp
+
+    @staticmethod
+    def _put(src: Path, target: Path):
+        """Move src to target only if nothing is at target: a hard link fails if the name is taken, so nothing
+        that appears there can be overwritten. Raises Conflict if the name is taken."""
+        try:
+            os.link(src, target)
+        except FileExistsError:
+            raise Conflict() from None
+        except OSError:                                    # no hard links here (FAT drives, some network shares)
+            if target.exists():
+                raise Conflict() from None
+            os.replace(src, target)
+            return
+        os.unlink(src)
+
+    @classmethod
+    def swap(cls, target: Path, data, expected):
+        """Replace target with data (or remove it, if data is None), but only if it still is the file with hash
+        `expected` (None: there must be no file). An edit saved at any moment is never overwritten: the file is
+        moved aside in one step, the moved copy is checked, and the new one is put in place only if nothing has
+        appeared there. Otherwise everything is put back and Conflict is raised."""
+        target.parent.mkdir(parents=True, exist_ok=True)
+        mode = stat.S_IMODE(target.stat().st_mode) if target.exists() else 0o644
+        tmp = cls._temp(target, data, mode) if data is not None else None
+        hold = None
+        try:
+            if expected is None:
+                if target.exists():
+                    raise Conflict()
+            else:
+                hold = target.with_name(f".eut-hold-{os.getpid()}-{target.name}")
+                try:
+                    os.replace(target, hold)               # one step: from here, edits to target can't touch it
+                except FileNotFoundError:
+                    hold = None
+                    raise Conflict() from None
+                if sha(hold.read_bytes()) != expected:     # edited after the check, before the move
+                    raise Conflict()
+            if tmp is not None:
+                cls._put(Path(tmp), target)
+                tmp = None
+            if hold is not None:
+                hold.unlink()
+                hold = None
+        finally:
+            if tmp is not None:
+                Path(tmp).unlink(missing_ok=True)
+            if hold is not None and hold.exists():         # something went wrong: put the student's file back
+                try:
+                    cls._put(hold, target)
+                except Conflict:
+                    pass                                   # a new file took the name: keep both (hold stays)
 
     # ── the student's buttons ──
     def apply(self, change_id: int) -> dict:
@@ -153,25 +218,31 @@ class ChangeStore:
             target = folder.check_writable(c["path"])
         except CodeError as e:
             raise HTTPException(400, str(e)) from None
+        stale = HTTPException(409, f"{c['path']} has changed since this was proposed, so it wasn't applied. "
+                                   "Ask the assistant for a fresh change.")
         current = target.read_bytes() if target.exists() else None
         if (sha(current) if current is not None else None) != c["base_hash"]:
             self.claim(change_id, "proposed", "stale")
-            raise HTTPException(409, f"{c['path']} has changed since this was proposed, so it wasn't applied. "
-                                     "Ask the assistant for a fresh change.")
+            raise stale
         if not self.claim(change_id, "proposed", "applying"):
             raise HTTPException(409, "That change was already applied or dismissed.")
+        new = c["new_content"].replace("\n", "\r\n" if c["eol"] == "CRLF" else "\n").encode("utf-8")
         try:
             backup = ""
             if current is not None:
                 self.backups.mkdir(parents=True, exist_ok=True)
                 backup = str(self.backups / f"{change_id}-{target.name}")
                 self.write(Path(backup), current)
-            new = c["new_content"].replace("\n", "\r\n" if c["eol"] == "CRLF" else "\n").encode("utf-8")
-            self.write(target, new)
+            # Recorded before the file is touched, so a change cut off part-way can be sorted out (recover)
+            self.set(change_id, backup=backup, applied_hash=sha(new))
+            self.swap(target, new, c["base_hash"])
+        except Conflict:
+            self.set(change_id, status="stale")
+            raise stale from None
         except OSError as e:
             self.set(change_id, status="proposed")
             raise HTTPException(500, f"The change couldn't be written: {e.strerror or e}") from None
-        self.set(change_id, status="applied", backup=backup, applied_hash=sha(new))
+        self.set(change_id, status="applied")
         return {"status": "applied", "path": c["path"], "created": current is None}
 
     def undo(self, change_id: int) -> dict:
@@ -182,17 +253,19 @@ class ChangeStore:
             target = Folder(c["folder_path"]).resolve(c["path"])
         except CodeError as e:
             raise HTTPException(400, str(e)) from None
+        changed = HTTPException(409, f"{c['path']} has changed since this was applied, so Undo would lose those "
+                                     "edits. Undo later changes first, or change it back yourself.")
         current = target.read_bytes() if target.exists() else None
         if current is None or sha(current) != c["applied_hash"]:
-            raise HTTPException(409, f"{c['path']} has changed since this was applied, so Undo would lose those "
-                                     "edits. Undo later changes first, or change it back yourself.")
+            raise changed
         if not self.claim(change_id, "applied", "undoing"):
             raise HTTPException(409, "That change was already undone.")
         try:
-            if c["backup"]:
-                self.write(target, Path(c["backup"]).read_bytes())
-            else:
-                target.unlink()                                # the change created this file
+            original = Path(c["backup"]).read_bytes() if c["backup"] else None   # None: the change made the file
+            self.swap(target, original, c["applied_hash"])
+        except Conflict:
+            self.set(change_id, status="applied")
+            raise changed from None
         except OSError as e:
             self.set(change_id, status="applied")
             raise HTTPException(500, f"Undo couldn't restore the file: {e.strerror or e}") from None
@@ -203,6 +276,32 @@ class ChangeStore:
         if not self.claim(change_id, "proposed", "dismissed"):
             raise HTTPException(409, "That change was already applied or dismissed.")
         return {"status": "dismissed"}
+
+    def recover(self):
+        """At start-up, sort out changes cut off part-way (the app closed during Apply or Undo) from what the
+        file actually holds now."""
+        try:
+            with self.db() as conn:
+                rows = [dict(r) for r in conn.execute(
+                    "SELECT c.*, f.path AS folder_path FROM file_changes c JOIN code_folders f ON f.id = c.folder_id "
+                    "WHERE c.status IN ('applying', 'undoing')")]
+        except Exception:                                  # an older database without the table: nothing to do
+            return
+        for c in rows:
+            try:
+                target = Folder(c["folder_path"]).resolve(c["path"])
+                now = sha(target.read_bytes()) if target.exists() else None
+            except (CodeError, OSError):
+                now = "unknown"
+            backup_ok = not c["base_hash"] or bool(c["backup"] and Path(c["backup"]).is_file()
+                                                   and sha(Path(c["backup"]).read_bytes()) == c["base_hash"])
+            if c["applied_hash"] and now == c["applied_hash"] and backup_ok:
+                status = "applied"                         # the change is in the file, and Undo has its backup
+            elif now == c["base_hash"]:
+                status = "proposed" if c["status"] == "applying" else "undone"
+            else:
+                status = "stale" if c["status"] == "applying" else "applied"
+            self.set(c["id"], status=status)
 
 
 class CodeTools:

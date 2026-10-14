@@ -302,10 +302,6 @@ def init_db():
         """)
         # A change cut off part-way (the app was closed mid-change) keeps the undo steps saved so far: offer Undo
         conn.execute("UPDATE ai_actions SET status='done' WHERE status IN ('applying', 'undoing')")
-        # A file change cut off part-way: writes go through a temporary file, so the file is whole either way.
-        # Leave it as it was before the click; Apply or Undo then checks the file's contents again.
-        conn.execute("UPDATE file_changes SET status='proposed' WHERE status='applying'")
-        conn.execute("UPDATE file_changes SET status='applied' WHERE status='undoing'")
         conn.execute("INSERT INTO settings (key, value) VALUES ('last_run_version', ?) "
                      "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (json.dumps(APP_VERSION),))
 

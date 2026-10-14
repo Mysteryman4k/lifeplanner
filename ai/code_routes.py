@@ -154,6 +154,7 @@ def register(app, db, load_ai_settings, data_dir: Path, window: dict):
                 "tools": lambda: CodeTools(changes, folder_id, folder, r["mode"])}
 
     changes = ChangeStore(db, data_dir)
+    changes.recover()                     # Apply or Undo cut off when the app last closed
 
     @app.post("/api/code/changes/{change_id}/apply")
     def apply_change(change_id: int):
