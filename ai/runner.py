@@ -133,21 +133,41 @@ def _probe(path: str, args: list) -> str:
     return out.splitlines()[0][:120] if out else "installed"
 
 
-def toolchains(refresh: bool = False) -> dict:
-    """{name: {"path", "version"}} for the tools found on this PC (checked again every 10 minutes)."""
-    if not refresh and _tool_cache["tools"] is not None and time.time() - _tool_cache["at"] < 600:
-        return _tool_cache["tools"]
+_found_cache = {"at": 0.0, "tools": None}
+
+
+def _stand_in(path: str) -> bool:
+    """Windows' app-execution aliases (python.exe in WindowsApps) may just open the Microsoft Store."""
+    return os.name == "nt" and "windowsapps" in path.lower()
+
+
+def available(refresh: bool = False) -> dict:
+    """{name: {"path", "command"}} for the tools on the PATH. Quick: only a Store stand-in is actually run, to
+    check it's real (used for suggesting commands, so the workspace opens without waiting)."""
+    if not refresh and _found_cache["tools"] is not None and time.time() - _found_cache["at"] < 600:
+        return _found_cache["tools"]
     env_path = clean_env().get("PATH", "")
     found = {}
     for name, (names, args) in TOOLS.items():
         for exe in names:
             path = shutil.which(exe, path=env_path)
-            if not path:
-                continue
-            version = _probe(path, args)
-            if version:
-                found[name] = {"path": path, "version": version, "command": exe}
+            if path and (not _stand_in(path) or _probe(path, args)):
+                found[name] = {"path": path, "command": exe}
                 break
+    _found_cache.update(at=time.time(), tools=found)
+    return found
+
+
+def toolchains(refresh: bool = False) -> dict:
+    """{name: {"path", "command", "version"}} for the tools found on this PC, with their versions (checked
+    all at once, and again every 10 minutes)."""
+    if not refresh and _tool_cache["tools"] is not None and time.time() - _tool_cache["at"] < 600:
+        return _tool_cache["tools"]
+    from concurrent.futures import ThreadPoolExecutor
+    tools = available(refresh)
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        versions = dict(zip(tools, pool.map(lambda n: _probe(tools[n]["path"], TOOLS[n][1]), tools), strict=True))
+    found = {n: {**t, "version": versions[n]} for n, t in tools.items() if versions[n]}
     _tool_cache.update(at=time.time(), tools=found)
     return found
 
@@ -176,7 +196,7 @@ def _has(root: Path, pattern: str) -> bool:
 def suggestions(root: Path, open_file: str = "", tools: dict = None) -> dict:
     """Commands that make sense for this folder and the open file: [{label, command, keep_running, needs,
     missing}], or why it can only be explained."""
-    tools = toolchains() if tools is None else tools
+    tools = available() if tools is None else tools
     py = (tools.get("python") or {}).get("command", "python")
     out = []
 

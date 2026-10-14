@@ -1483,8 +1483,11 @@ async function codeLoadTree() {
   if (route() === 'code') codeRender();
   try { const tree = await api(`/api/code/folders/${id}/tree`); if (k.folderId === id) k.tree = tree; }
   catch (e) { if (k.folderId === id) k.treeError = e.message; }
-  if (k.folderId === id && !k.open) await codeLoadCommands();             // the project's own commands
   if (k.folderId === id && route() === 'code') codeRender();
+  if (k.folderId === id && !k.open) {                                     // the project's own commands, after
+    await codeLoadCommands();
+    if (k.folderId === id && route() === 'code') codeRunRefresh();
+  }
 }
 
 function codeSelectFolder(id) {
@@ -1543,7 +1546,7 @@ function codeRunPanel() {
   const k = codeState(), run = k.run, cmds = k.commands?.commands || [];
   const running = run?.status === 'running';
   if (!cmds.length && !run && !k.customRun) {
-    if (!k.commands) return '';
+    if (!k.commands) return '<div class="code-run"></div>';             // filled in when the commands arrive
     return `<div class="code-run"><div class="run-bar explain-bar">${icon('alert', 15)}
       <span><b>Explain only.</b> ${esc(k.commands.explain_only || '')}</span>
       <button class="btn btn-ghost btn-sm" data-action="code-run-custom">Run a command anyway</button></div></div>`;

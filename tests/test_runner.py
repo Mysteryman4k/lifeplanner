@@ -111,11 +111,12 @@ def test_the_environment_is_cleaned_and_runs_happen_in_the_folder(folder, monkey
 
 
 def test_a_bundle_path_is_taken_out_of_the_environment(monkeypatch):
-    monkeypatch.setattr(R.sys, "_MEIPASS", "C:/App/_internal", raising=False)
-    monkeypatch.setenv("PATH", os.pathsep.join(["C:/App/_internal", "C:/Python"]))
-    monkeypatch.setenv("TCL_LIBRARY", "C:/App/_internal/tcl")
+    bundle, mine = os.path.join(os.sep, "apps", "EasyUniTrack", "_internal"), os.path.join(os.sep, "tools", "python")
+    monkeypatch.setattr(R.sys, "_MEIPASS", bundle, raising=False)
+    monkeypatch.setenv("PATH", os.pathsep.join([bundle, mine]))
+    monkeypatch.setenv("TCL_LIBRARY", os.path.join(bundle, "tcl"))
     env = R.clean_env()
-    assert env["PATH"] == "C:/Python" and "TCL_LIBRARY" not in env
+    assert env["PATH"] == mine and "TCL_LIBRARY" not in env
 
 
 def test_localhost_addresses_become_links(folder):
@@ -260,3 +261,21 @@ def test_colour_is_off_in_the_output_panel(monkeypatch):
     monkeypatch.setenv("FORCE_COLOR", "1")
     env = R.clean_env()
     assert "FORCE_COLOR" not in env and env["NO_COLOR"] == "1"
+
+
+def test_suggesting_commands_doesnt_run_any_tools(tmp_path, monkeypatch):
+    """Opening the workspace mustn't wait for dozens of `--version` checks (CI machines have many tools)."""
+    monkeypatch.setattr(R, "_found_cache", {"at": 0.0, "tools": None})
+    monkeypatch.setattr(R, "_stand_in", lambda path: False)
+    monkeypatch.setattr(R, "_probe", lambda *a: pytest.fail("ran a tool"))
+    (tmp_path / "a.py").write_text("print(1)\n")
+    assert R.suggestions(tmp_path, "a.py")["commands"]
+
+
+def test_versions_are_checked_all_at_once(monkeypatch):
+    monkeypatch.setattr(R, "_tool_cache", {"at": 0.0, "tools": None})
+    monkeypatch.setattr(R, "available", lambda refresh=False: {n: {"path": n, "command": n} for n in list(R.TOOLS)[:8]})
+    monkeypatch.setattr(R, "_probe", lambda path, args: time.sleep(0.5) or "v1")
+    start = time.time()
+    found = R.toolchains(refresh=True)
+    assert len(found) == 8 and all(t["version"] == "v1" for t in found.values()) and time.time() - start < 2
