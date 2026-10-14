@@ -119,13 +119,16 @@ def check_second_copy(cmd, env, first, port) -> bool:
         print("✗ Opening a second copy started another app instead of using the open one")
         return False
     # The open app is busy bringing its window forward just then: give its server a moment to answer
-    deadline = time.time() + 10
-    while first.poll() is None and not status(port) and time.time() < deadline:
+    deadline, answered = time.time() + 10, None
+    while first.poll() is None and time.time() < deadline:
+        answered = status(port)
+        if answered:
+            break
         time.sleep(0.5)
     if first.poll() is not None:
         print("✗ The open app closed when a second copy was opened")
         return False
-    if not status(port):
+    if not answered:
         print("✗ The open app stopped answering after a second copy was opened")
         return False
     print(f"✓ Opening it again used the open window ({time.time() - started:.1f}s)")
