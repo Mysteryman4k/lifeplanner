@@ -306,6 +306,10 @@ class ChangeStore:
         elif c["backup"]:
             intended, held = Path(c["backup"]).read_bytes(), c["applied_hash"]
         else:
+            # Undo of a file the change made, and a new file has the name now: the copy goes if it's exactly what
+            # the change wrote; an edited copy stays (it shows in the file list as .eut-hold-…)
+            if c["applied_hash"] and sha(hold.read_bytes()) == c["applied_hash"]:
+                hold.unlink()
             return
         now = target.read_bytes()
         if len(now) < len(intended) and intended.startswith(now):

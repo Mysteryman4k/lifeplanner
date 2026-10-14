@@ -399,3 +399,21 @@ def test_a_small_edit_still_applies_after_switching_to_assignment(c, fake, proj)
     card = cards(propose(c, fake, f, {"path": "calc.py", "find": "a - b", "replace": "a + b", "summary": "fix"}))[0]
     c.put(f"/api/code/folders/{f['id']}", json={"mode": "assignment"})
     assert c.post(f"/api/code/changes/{card['change_id']}/apply").status_code == 200
+
+
+@pytest.mark.parametrize("edited", [False, True])
+def test_recover_an_undo_of_a_new_file_when_the_name_is_taken_again(c, A, fake, proj, edited):
+    from ai.code_changes import ChangeStore
+    f = setup(c, proj)
+    card = cards(propose(c, fake, f, {"path": "notes.txt", "replace": "hello\n", "summary": "new"}))[0]
+    c.post(f"/api/code/changes/{card['change_id']}/apply")
+    store = ChangeStore(A.db, A.DB_PATH.parent)
+    store.set(card["change_id"], status="undoing")
+    hold = ChangeStore.hold_path(proj / "notes.txt", str(card["change_id"]))
+    (proj / "notes.txt").rename(hold)                                 # crash after the move...
+    if edited:
+        hold.write_bytes(b"hello, edited\n")
+    (proj / "notes.txt").write_bytes(b"a brand new file\n")           # ...then a new file took the name
+    store.recover()
+    assert (proj / "notes.txt").read_bytes() == b"a brand new file\n"
+    assert hold.exists() == edited                                    # an edited copy is kept, never deleted
