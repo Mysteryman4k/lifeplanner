@@ -106,15 +106,15 @@ async function api(path, { method = 'GET', body } = {}) {
 }
 
 async function loadAll() {
-  const [tasks, categories, subjects, jobs, info, appearance] = await Promise.all([
+  const [tasks, categories, subjects, jobs, info, appearance, ai] = await Promise.all([
     api('/api/tasks'), api('/api/categories'), api('/api/subjects'), api('/api/jobs'), api('/api/info'),
-    api('/api/settings/appearance').catch(() => null),
+    api('/api/settings/appearance').catch(() => null), api('/api/ai/state').catch(() => null),
   ]);
+  if (ai) state.ai = ai;
   api('/api/settings/startup').then(st => { state.startup = st; }).catch(() => {});
   api('/api/settings/reminders').then(r => { state.reminders = r; }).catch(() => {});
   api('/api/settings/autostart').then(a => { state.autostart = a; }).catch(() => {});
   api('/api/backups').then(b => { state.backups = b; }).catch(() => {});
-  api('/api/ai/state').then(a => { state.ai = a; }).catch(() => {});
   // The database copy is the source of truth (localStorage only avoids a flash on start-up)
   if (appearance && JSON.stringify(appearance) !== JSON.stringify(window.__appearance)) {
     saveAppearanceLocal(applyAppearance(appearance));
@@ -219,9 +219,15 @@ const ROUTES = {
   subjects: { label: 'Subjects', icon: 'subjects' },
   jobs: { label: 'Jobs', icon: 'jobs' },
   money: { label: 'Money', icon: 'money' },
+  study: { label: 'Study assistant', icon: 'spark' },
   settings: { label: 'Settings', icon: 'settings' },
 };
-const route = () => { const r = location.hash.replace(/^#\/?/, '').split('?')[0]; return ROUTES[r] ? r : 'today'; };
+const aiOn = () => !!state.ai?.assistant_enabled;
+const route = () => {
+  const r = location.hash.replace(/^#\/?/, '').split('?')[0];
+  if (r === 'study' && !aiOn()) return 'today';           // AI features are invisible while off
+  return ROUTES[r] ? r : 'today';
+};
 
 function renderNav() {
   const r = route();
@@ -236,6 +242,7 @@ function renderNav() {
   };
   $('#nav').innerHTML = `
     <div class="nav-label">Plan</div>${['today', 'tasks', 'calendar', 'subjects'].map(item).join('')}
+    ${aiOn() ? `<div class="nav-label">Study <span class="preview-badge sm">Preview</span></div>${item('study')}` : ''}
     <div class="nav-label">Track</div>${['jobs', 'money'].map(item).join('')}`;
   $('#navFoot').innerHTML = item('settings');
   $('#tabbar').innerHTML = ['today', 'tasks', 'calendar', 'jobs', 'money'].map(k =>
@@ -585,6 +592,13 @@ const VIEWS = {
       </div>`;
   },
 
+
+  study() {
+    setHeader('Study assistant', 'Preview · your AI tutor', btn('chat-new', 'New chat', 'plus', 'btn-ghost'));
+    $('#content').innerHTML = `<div class="study">${chatShell(false)}</div>`;
+    chatAfterRender();
+  },
+
   settings() {
     setHeader('Settings', 'Make it yours');
     const ap = window.__appearance || DEFAULT_APPEARANCE;
@@ -890,6 +904,186 @@ async function aiLoadSystem() {
   if (route() === 'settings') stillRender();
 }
 
+// ── Study assistant chat (preview) ────────────────────────────────
+// Replies stream from /api/ai/chat. They're rendered by chatMarkdown(), which escapes everything first,
+// so model output can never add HTML or scripts to the page. Only YouTube search links become links.
+const CHAT_MODES = { explain: 'Explain', practise: 'Practise' };
+const CHAT_IDEAS = ['Explain recursion with a simple example', 'Give me a practice question on Big-O',
+  'What is the difference between a stack and a queue?', 'Help me plan revision for a mid-semester exam'];
+
+function chatState() {
+  if (!state.chat) state.chat = { mode: 'explain', messages: [], tokens: 0, streaming: false, taskId: null, controller: null };
+  return state.chat;
+}
+
+function chatMarkdown(src) {
+  const blocks = [];
+  let text = esc(src).replace(/```[^\n]*\n([\s\S]*?)(```|$)/g, (_, code) => {
+    blocks.push(`<pre class="chat-code"><code>${code.replace(/\n$/, '')}</code></pre>`);
+    return `\u0000${blocks.length - 1}\u0000`;
+  });
+  const inline = s => s
+    .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
+    .replace(/\[([^\]\n]+)\]\((https:\/\/www\.youtube\.com\/results\?search_query=[^\s)"<>]+)\)/g,
+      `<a class="link" href="$2" target="_blank" rel="noopener noreferrer">${icon('external', 13)}$1</a>`)
+    .replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, '$1 ($2)');                 // any other link stays plain text
+  const out = [];
+  let list = null;
+  const closeList = () => { if (list) { out.push(`</${list}>`); list = null; } };
+  for (const line of text.split('\n')) {
+    let m;
+    if ((m = line.match(/^\u0000(\d+)\u0000$/))) { closeList(); out.push(blocks[+m[1]]); }
+    else if ((m = line.match(/^(#{1,3})\s+(.*)$/))) { closeList(); out.push(`<h${m[1].length + 2}>${inline(m[2])}</h${m[1].length + 2}>`); }
+    else if ((m = line.match(/^\s*[-*]\s+(.*)$/))) { if (list !== 'ul') { closeList(); out.push('<ul>'); list = 'ul'; } out.push(`<li>${inline(m[1])}</li>`); }
+    else if ((m = line.match(/^\s*\d+[.)]\s+(.*)$/))) { if (list !== 'ol') { closeList(); out.push('<ol>'); list = 'ol'; } out.push(`<li>${inline(m[1])}</li>`); }
+    else if (!line.trim()) { closeList(); }
+    else { closeList(); out.push(`<p>${inline(line)}</p>`); }
+  }
+  closeList();
+  return out.join('').replace(/\u0000(\d+)\u0000/g, (_, i) => blocks[+i]);
+}
+
+function chatReportUrl(i) {
+  const c = chatState(), m = c.messages[i];
+  const body = `**What was wrong with this response?**\n\n(describe it here)\n\n---\nModel: ${state.ai?.model || '?'} (${state.ai?.provider || '?'}), mode: ${c.mode}, EasyUniTrack ${state.info.version || ''}\n\n` +
+    `Response (remove anything private before sending):\n\n> ${m.content.slice(0, 1500).replace(/\n/g, '\n> ')}`;
+  return `https://github.com/Mysteryman4k/lifeplanner/issues/new?labels=ai-response&title=${encodeURIComponent('Report an AI response')}&body=${encodeURIComponent(body)}`;
+}
+
+function chatMessage(m, i) {
+  if (m.role === 'user') return `<div class="chat-msg me">${esc(m.content).replace(/\n/g, '<br>')}</div>`;
+  const c = chatState();
+  const live = c.streaming && i === c.messages.length - 1;
+  return `<div class="chat-msg ai" data-i="${i}">
+    <div class="chat-text">${m.content ? chatMarkdown(m.content) : (live ? '<span class="chat-typing" aria-label="Thinking"><i></i><i></i><i></i></span>' : '')}</div>
+    ${m.error ? `<div class="chat-error">${icon('alert', 15)}${esc(m.error)}</div>` : ''}
+    ${m.stopped ? '<div class="small muted">Stopped.</div>' : ''}
+    ${!live && m.content ? `<div class="chat-tools">
+      <button class="btn btn-ghost btn-sm keep-label" data-action="chat-copy" data-i="${i}">${icon('copy', 14)}Copy</button>
+      <a class="btn btn-ghost btn-sm keep-label" href="${esc(chatReportUrl(i))}" target="_blank" rel="noopener">${icon('flag', 14)}Report</a></div>` : ''}
+  </div>`;
+}
+
+function chatShell(inPanel) {
+  const c = chatState(), a = state.ai || {};
+  const ready = a.provider && a.model;
+  const task = c.taskId && state.tasks.find(t => t.id === c.taskId);
+  const modes = Object.entries(CHAT_MODES).map(([k, v]) =>
+    `<button class="${c.mode === k ? 'on' : ''}" data-action="chat-mode" data-mode="${k}" ${c.streaming ? 'disabled' : ''}>${v}</button>`).join('');
+  const intro = !c.messages.length ? `<div class="chat-empty">
+      ${icon('spark', 26)}<h3>${task ? 'What would you like help with?' : 'Ask about anything in your units'}</h3>
+      <p class="muted small">${c.mode === 'explain' ? 'Explain gives clear explanations and checks you understood.' : 'Practise gives you questions like the ones you\'ll face, one at a time.'}</p>
+      ${task ? '' : `<div class="chat-ideas">${CHAT_IDEAS.map(x => `<button class="chip" data-action="chat-idea">${esc(x)}</button>`).join('')}</div>`}
+    </div>` : '';
+  if (!ready) return `<div class="card chat-setup">${emptyState('spark', 'Choose an AI provider first',
+    'Pick a provider and model in Settings, then come back here.', '<a class="btn btn-primary" href="#/settings">Open Settings</a>')}</div>`;
+  return `
+    <div class="chat ${inPanel ? 'in-panel' : ''}">
+      <div class="chat-bar">
+        <div class="segmented" role="group" aria-label="Study mode">${modes}</div>
+        <span class="spacer"></span>
+        <span class="chat-meta" title="Tokens used in this chat (billed by cloud providers)">${icon('spark', 13)}${esc(a.model)} · <span id="chatTokens">${c.tokens.toLocaleString()}</span> tokens</span>
+      </div>
+      ${task ? `<div class="chat-attached">${icon('tasks', 15)}<div><b>${esc(task.title)}</b><span class="muted small">${[task.subject_name, task.due_date ? 'due ' + fmt(task.due_date, { weekday: 'short', day: 'numeric', month: 'short' }) : ''].filter(Boolean).map(esc).join(' · ')}</span></div></div>` : ''}
+      <div class="chat-log" id="chatLog" aria-live="polite">${intro}${c.messages.map(chatMessage).join('')}</div>
+      <form class="chat-composer" id="chatForm">
+        <textarea class="textarea" id="chatInput" rows="2" maxlength="20000" placeholder="${task ? 'Ask about this task' : 'Ask a question, or paste something to work through'}" aria-label="Message" ${c.streaming ? 'disabled' : ''}></textarea>
+        ${c.streaming
+          ? `<button class="btn btn-ghost" type="button" data-action="chat-stop">${icon('x', 16)}Stop</button>`
+          : `<button class="btn btn-primary" type="submit" aria-label="Send">${icon('up', 17)}Send</button>`}
+      </form>
+      <div class="chat-foot">Preview. The assistant can be wrong. Check important answers against your unit material.</div>
+    </div>`;
+}
+
+function chatRoot() { return $('#drawer:not([hidden]) .chat') || $('#content .chat'); }
+
+function chatAfterRender() {
+  const log = $('#chatLog', chatRoot() || document);
+  if (log) log.scrollTop = log.scrollHeight;
+  if (!chatState().streaming) setTimeout(() => $('#chatInput', chatRoot() || document)?.focus(), 30);
+}
+
+function chatRefresh() {
+  const root = chatRoot();
+  if (!root) return;
+  root.outerHTML = chatShell(root.classList.contains('in-panel'));
+  chatAfterRender();
+}
+
+function chatUpdateLast() {
+  const c = chatState(), i = c.messages.length - 1, root = chatRoot();
+  const el = root && $(`.chat-msg.ai[data-i="${i}"]`, root);
+  if (!el) return;
+  el.outerHTML = chatMessage(c.messages[i], i);
+  const log = $('#chatLog', root);
+  if (log && log.scrollHeight - log.scrollTop - log.clientHeight < 160) log.scrollTop = log.scrollHeight;
+  const tok = $('#chatTokens', root);
+  if (tok) tok.textContent = c.tokens.toLocaleString();
+}
+
+async function chatSend(text) {
+  const c = chatState();
+  text = text.trim();
+  if (!text || c.streaming) return;
+  c.messages.push({ role: 'user', content: text }, { role: 'assistant', content: '' });
+  c.streaming = true;
+  c.controller = new AbortController();
+  chatRefresh();
+  const reply = c.messages[c.messages.length - 1];
+  const history = c.messages.slice(0, -1).filter(m => m.content && !m.error).map(m => ({ role: m.role, content: m.content }));
+  try {
+    const res = await fetch('/api/ai/chat', {
+      method: 'POST', signal: c.controller.signal,
+      headers: { 'Content-Type': 'application/json', 'X-EasyUniTrack-Token': APP_TOKEN },
+      body: JSON.stringify({ mode: c.mode, messages: history, ...(c.taskId ? { task_id: c.taskId } : {}) }),
+    });
+    if (!res.ok) {
+      let msg = `Something went wrong (${res.status})`;
+      try {
+        const e = await res.json();
+        if (typeof e.detail === 'string') msg = e.detail;
+        else if (Array.isArray(e.detail) && e.detail[0]) msg = `${(e.detail[0].loc || []).slice(-1)[0] || 'request'}: ${e.detail[0].msg}`;
+      } catch (_) { /* keep default */ }
+      throw new Error(msg);
+    }
+    const reader = res.body.getReader(), dec = new TextDecoder();
+    let buf = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let cut;
+      while ((cut = buf.indexOf('\n\n')) >= 0) {
+        const line = buf.slice(0, cut).trim();
+        buf = buf.slice(cut + 2);
+        if (!line.startsWith('data:')) continue;
+        const ev = JSON.parse(line.slice(5));
+        if (ev.type === 'text') reply.content += ev.text;
+        else if (ev.type === 'usage') c.tokens += (ev.input || 0) + (ev.output || 0);
+        else if (ev.type === 'error') reply.error = ev.message;
+        chatUpdateLast();
+      }
+    }
+  } catch (e) {
+    if (e.name === 'AbortError') reply.stopped = true;
+    else reply.error = e.message;
+  }
+  c.streaming = false;
+  c.controller = null;
+  chatRefresh();
+}
+
+function openChatPanel(taskId) {
+  const c = chatState();
+  if (c.taskId !== taskId) { c.taskId = taskId; c.messages = []; c.tokens = 0; }
+  const foot = `<span class="spacer"></span><a class="btn btn-ghost" href="#/study" data-action="chat-full">${icon('external', 15)}Open full page</a>`;
+  openDrawer('Help with this task', chatShell(true), foot, 'chat');
+  chatAfterRender();
+}
+
 // ── Drawer (forms) ────────────────────────────────────────────────
 let lastFocus = null;
 function openDrawer(title, bodyHtml, footHtml, kind) {
@@ -948,7 +1142,8 @@ function openTask(id, defaults = {}) {
       </div>
     </form>`;
   const planBtn = id ? `<button class="btn btn-ghost btn-sm" type="button" data-action="auto-plan" title="Split the estimated hours into study sessions before the due date">${icon('wand', 16)}<span class="btn-label">Plan sessions</span></button>` : '';
-  openDrawer(id ? 'Edit task' : 'New task', body, footer(id ? 'delete-task' : '', planBtn), 'task');
+  const helpBtn = id && aiOn() ? `<button class="btn btn-ghost btn-sm" type="button" data-action="chat-help" data-id="${id}">${icon('spark', 16)}Help me with this</button>` : '';
+  openDrawer(id ? 'Edit task' : 'New task', body, footer(id ? 'delete-task' : '', helpBtn + planBtn), 'task');
   $('#fSubject').addEventListener('change', e => { $('#fUnit').innerHTML = unitOptions(e.target.value); });
   $('#fProgress').addEventListener('input', e => { $('#fProgressOut').textContent = e.target.value + '%'; });
 }
@@ -1189,6 +1384,21 @@ function celebrate(from) {
 
 // ── Actions (event delegation) ────────────────────────────────────
 const ACTIONS = {
+  'chat-new'() {
+    const c = chatState();
+    if (c.streaming) return;
+    Object.assign(c, { messages: [], tokens: 0, taskId: null });
+    chatRefresh();
+  },
+  'chat-mode'(el) { if (!chatState().streaming) { chatState().mode = el.dataset.mode; chatRefresh(); } },
+  'chat-idea'(el) { chatSend(el.textContent); },
+  'chat-stop'() { chatState().controller?.abort(); },
+  async 'chat-copy'(el) {
+    try { await navigator.clipboard.writeText(chatState().messages[Number(el.dataset.i)].content); toast('Copied'); }
+    catch (_) { toast("Couldn't copy. Select the text and copy it instead.", 'error'); }
+  },
+  'chat-help'(el) { openChatPanel(Number(el.dataset.id)); },
+  'chat-full'() { closeDrawer(); location.hash = '#/study'; },
   async 'ai-start'() {
     try { await openAiAbout(); } catch (e) { toast(e.message, 'error'); }
   },
@@ -1498,6 +1708,12 @@ document.addEventListener('click', e => {
   ACTIONS[el.dataset.action](el, e);
 });
 
+document.addEventListener('keydown', e => {
+  if (e.target.id === 'chatInput' && e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+    e.preventDefault(); chatSend(e.target.value);
+  }
+});
+
 document.addEventListener('change', async e => {
   if (e.target.id === 'importFile' && e.target.files[0]) { restoreFromFile(e.target.files[0]); return; }
   if (e.target.classList.contains('ai-tick')) { $('#aiAgree').disabled = $$('.ai-tick').some(c => !c.checked); return; }
@@ -1525,6 +1741,7 @@ document.addEventListener('change', async e => {
 
 document.addEventListener('submit', e => {
   const form = e.target;
+  if (form.id === 'chatForm') { e.preventDefault(); const t = $('#chatInput', form); chatSend(t.value); return; }
   e.preventDefault();
   if (form.id === 'drawerForm') return submitDrawer(form);
   if (form.classList.contains('unit-add')) {

@@ -120,3 +120,10 @@ def test_streaming_keeps_the_https_rule(c, A):
     A.AI_TRANSPORT["value"] = httpx.MockTransport(lambda req: sent.append(req) or httpx.Response(200, text=""))
     ev = events(c.post("/api/ai/chat", json={"messages": [{"role": "user", "content": "hi"}]}))
     assert any(e["type"] == "error" and "without encryption" in e["message"] for e in ev) and sent == []
+
+
+def test_a_chat_without_a_task_accepts_null(c, fake):
+    """The page may send task_id: null; that must work like no task."""
+    ready(c)
+    r = c.post("/api/ai/chat", json={"task_id": None, "messages": [{"role": "user", "content": "hi"}]})
+    assert r.status_code == 200 and "Task:" not in fake.last["system"]

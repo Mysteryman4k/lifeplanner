@@ -5,7 +5,7 @@ has agreed to the current terms version. Like every change, the routes that chan
 window's session token (app.py, protect_local_server).
 """
 from datetime import datetime
-from typing import Literal
+from typing import Literal, Optional
 
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
@@ -54,7 +54,7 @@ class ChatMessage(BaseModel):
 class ChatIn(BaseModel):
     mode: Literal["explain", "practise"] = "explain"
     messages: list[ChatMessage] = Field(min_length=1, max_length=200)
-    task_id: int = None
+    task_id: Optional[int] = None
 
 
 class TestIn(BaseModel):
