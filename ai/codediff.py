@@ -21,7 +21,10 @@ def _git(root, *args, binary: bool = False):
     git = shutil.which("git")
     if not git:
         return None
-    env = {**clean_env(), "GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0"}
+    # None of git's own variables: GIT_DIR, GIT_WORK_TREE, GIT_CONFIG_* and the like (set when EasyUniTrack is
+    # started from a git hook or a developer's shell) would point it at another repository or other settings
+    env = {k: v for k, v in clean_env().items() if not k.upper().startswith("GIT_")}
+    env.update(GIT_TERMINAL_PROMPT="0", GIT_OPTIONAL_LOCKS="0")
     try:
         r = subprocess.run([git, "-C", str(root), "-c", "core.fsmonitor=false", "-c", "core.hooksPath=",
                             "--no-pager", *args], capture_output=True, timeout=10, env=env,

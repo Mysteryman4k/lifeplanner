@@ -1,6 +1,7 @@
 # ruff: noqa: F811  (shared pytest fixtures)
 """v4 stage 9: the computer science quick actions (Trace, Big-O, Visualise, tests, Explain my change, practice)
 and the diff behind Explain my change, which must never run programs from a downloaded repo's git config."""
+import os
 import shutil
 import subprocess
 import sys
@@ -16,9 +17,13 @@ GIT = shutil.which("git")
 needs_git = pytest.mark.skipif(not GIT, reason="git isn't installed")
 
 
+# None of git's own variables (set when the tests run from a git hook), so these commands only touch temp repos
+CLEAN_ENV = {k: v for k, v in os.environ.items() if not k.upper().startswith("GIT_")}
+
+
 def git(root, *args):
     subprocess.run([GIT, "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@example.com", *args],
-                   check=True, capture_output=True)
+                   check=True, capture_output=True, env=CLEAN_ENV)
 
 
 @pytest.fixture()
@@ -124,8 +129,27 @@ def test_a_downloaded_repo_cant_run_programs_through_its_git_config(proj, tmp_pa
     r = codediff.changes(Folder(str(proj)), "calc.py")
     assert r["source"] == "git" and "+    return a + b" in r["diff"]
     assert not marker.exists()
-    subprocess.run([GIT, "-C", str(proj), "diff"], capture_output=True)          # what a plain git diff would do
+    subprocess.run([GIT, "-C", str(proj), "diff"], capture_output=True, env=CLEAN_ENV)   # what a plain git diff would do
     assert marker.exists(), "the test's trap didn't fire, so it proves nothing"
+
+
+@needs_git
+def test_git_variables_from_where_the_app_started_are_ignored(proj, tmp_path, monkeypatch):
+    """Started from a git hook or a developer's shell, GIT_DIR would point git at another repository."""
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "calc.py").write_text("something else entirely\n")
+    git(other, "init", "-q")
+    git(other, "add", "calc.py")
+    git(other, "commit", "-q", "-m", "other")
+    git(proj, "init", "-q")
+    git(proj, "add", "calc.py")
+    git(proj, "commit", "-q", "-m", "first")
+    monkeypatch.setenv("GIT_DIR", str(other / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(other))
+    (proj / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    r = codediff.changes(Folder(str(proj)), "calc.py")
+    assert "-    return a - b" in r["diff"] and "something else" not in r["diff"]
 
 
 def test_the_diff_route(c, proj, monkeypatch):

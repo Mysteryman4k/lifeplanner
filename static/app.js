@@ -1703,23 +1703,28 @@ const CODE_ACTIONS = [
 
 async function codeAction(kind) {
   const k = codeState(), f = codeFolder(), open = k.open?.path;
+  if (!f) return;
   const box = $('#chatInput'), extra = box?.value.trim() || '';
   if (!open && kind !== 'practice') { toast('Open a file first.'); return; }
   if (kind === 'explain_change') {
+    // Another file or folder opened while waiting: this answer is for something that isn't shown any more
+    const moved = () => k.folderId !== f.id || k.open?.path !== open;
     let r;
     try {
-      r = await api(`/api/code/folders/${f.id}/diff`, { method: 'POST', body: { path: open, baseline: k.baselines[open] ?? null } });
-    } catch (e) { toast(e.message, 'error'); return; }
+      r = await api(`/api/code/folders/${f.id}/diff`, { method: 'POST', body: { path: open, baseline: k.baselines[`${f.id}:${open}`] ?? null } });
+    } catch (e) { if (!moved()) toast(e.message, 'error'); return; }
+    if (moved()) return;
     if (!r.diff) {
       toast(r.source === 'git' ? `${open} hasn't changed since the last commit.` : `${open} hasn't changed since you opened it.`);
       return;
     }
     try {                                           // show the file as it is now, since that's what's explained
       const now = await api(`/api/code/folders/${f.id}/file?path=${encodeURIComponent(open)}`);
-      if (k.open?.path === open) { k.open = { ...k.open, ...now }; const main = $('#codeMain'); if (main) main.innerHTML = codeViewer(); }
+      if (!moved()) { k.open = { ...k.open, ...now }; const main = $('#codeMain'); if (main) main.innerHTML = codeViewer(); }
     } catch (_) { /* the viewer keeps what it had */ }
+    if (moved()) return;
     const since = r.source === 'git' ? (r.new_file ? 'a new file since the last commit' : 'since the last commit') : 'since I opened it';
-    chatSend(`Explain my change to ${open} (${since}).${extra ? `\n\n${extra}` : ''}`, { action: 'explain_change', diff: r.diff });
+    await chatSend(`Explain my change to ${open} (${since}).${extra ? `\n\n${extra}` : ''}`, { action: 'explain_change', diff: r.diff });
     return;
   }
   const text = {
@@ -1729,7 +1734,7 @@ async function codeAction(kind) {
     tests: `${f?.mode === 'assignment' ? 'Help me plan tests for' : 'Write tests for'} ${open}.${extra ? ` ${extra}` : ''}`,
     practice: `Give me a practice problem like ${open || 'this'}${extra ? `, about ${extra}` : ''}.`,
   }[kind];
-  if (text) chatSend(text, { action: kind });
+  if (text) await chatSend(text, { action: kind });
 }
 
 /** The last run's output, when it failed, for Explain the error and Debug. */
@@ -1751,7 +1756,7 @@ async function codeOpen(path) {
     const f = await api(`/api/code/folders/${id}/file?path=${encodeURIComponent(path)}`);
     if (k.folderId !== id) return;
     k.open = { ...f, name: path.split('/').pop() };
-    k.baselines[path] ??= f.text;                  // as first opened, for Explain my change without git
+    k.baselines[`${id}:${path}`] ??= f.text;       // as first opened (per folder), for Explain my change without git
     k.removed = [];
     for (let p = path.split('/').slice(0, -1), i = 1; i <= p.length; i++) k.expanded.add(p.slice(0, i).join('/'));
   } catch (e) { toast(e.message, 'error'); return; }
