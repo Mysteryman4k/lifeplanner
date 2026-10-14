@@ -376,8 +376,17 @@ class Run:
         else:
             self.proc = subprocess.Popen(self.command, start_new_session=True, **kwargs)
         self._reader = threading.Thread(target=self._read, daemon=True)
-        self._reader.start()
-        threading.Thread(target=self._wait, daemon=True).start()
+        try:
+            self._reader.start()
+            threading.Thread(target=self._wait, daemon=True).start()
+        except RuntimeError as e:                         # no thread to watch it: don't leave it running untracked
+            self._kill()
+            self.proc.kill()
+            self.proc.wait()
+            if os.name == "nt" and self._job:
+                _k32.CloseHandle(self._job)
+                self._job = None
+            raise OSError(0, "The program couldn't be watched, so it was stopped") from e
 
     def _read(self):
         dec = codecs.getincrementaldecoder("utf-8")(errors="replace")

@@ -326,3 +326,16 @@ def test_the_running_limit_holds_when_starts_arrive_together(folder, monkeypatch
         assert len(results) == 6 and len(started) == 2
     finally:
         runner.stop_all()
+
+
+def test_a_run_that_cant_be_watched_is_stopped_not_left_running(folder, monkeypatch):
+    real = R.threading.Thread
+
+    class NoThreads(real):
+        def start(self):
+            raise RuntimeError("can't start new thread")
+    monkeypatch.setattr(R.threading, "Thread", NoThreads)
+    run = R.Run(1, f"{PY} spawn.py", str(folder), 30, False)
+    with pytest.raises(OSError, match="couldn't be watched"):
+        run.start(R.clean_env())
+    assert run.proc.poll() is not None
