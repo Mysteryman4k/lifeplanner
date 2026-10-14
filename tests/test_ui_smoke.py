@@ -41,11 +41,14 @@ def server(tmp_path_factory):
     keyring.set_keyring(A.vault)
     A.fake_net = {}
 
+    A.fake_net_seen = []
+
     def fake_net(request):
+        A.fake_net_seen.append(request)
         key = f"{request.method} {request.url.host}{request.url.path}"
         for prefix, (status, body) in A.fake_net.items():
             if key.startswith(prefix):
-                return httpx.Response(status, json=body)
+                return httpx.Response(status, text=body) if isinstance(body, str) else httpx.Response(status, json=body)
         raise httpx.ConnectError("offline in tests", request=request)
     A.AI_TRANSPORT["value"] = httpx.MockTransport(fake_net)
     with socket.socket() as s:
@@ -321,3 +324,112 @@ def test_ai_is_hidden_until_turned_on_then_set_up(server, page):
     page.click("[data-action=ai-start]")                         # clean up for other tests
     page.keyboard.press("Escape")
     assert page.errors == [], page.errors
+
+
+def test_study_assistant_chat_streams_safely_and_helps_with_a_task(server, page):
+    """With AI on: the Study page streams a reply, renders it safely, counts tokens, and the task panel works."""
+    import json
+
+    import app as A
+    tok = {A.TOKEN_HEADER: A.SESSION_TOKEN}
+    terms = page.request.get(f"{server}/api/ai/terms").json()
+    page.request.post(f"{server}/api/ai/terms/agree", headers=tok,
+                      data={"version": terms["version"], "ticks": {k: True for k in terms["ticks"]}})
+    page.request.put(f"{server}/api/ai/settings", headers=tok, data={"provider": "ollama", "model": "qwen2.5:7b"})
+    reply = ["## Recursion\n", "A function that **calls itself**.\n\n", "- base case\n- recursive case\n\n",
+             "<script>window.hacked=1</script> ",
+             "[Search YouTube: recursion](https://www.youtube.com/results?search_query=recursion) ",
+             "[not this](https://evil.example/x)"]
+    sse = "".join(f"data: {json.dumps({'choices': [{'delta': {'content': t}}]})}\n\n" for t in reply)
+    sse += f"data: {json.dumps({'choices': [], 'usage': {'prompt_tokens': 40, 'completion_tokens': 20}})}\n\ndata: [DONE]\n\n"
+    A.fake_net["POST localhost/v1/chat/completions"] = (200, sse)
+
+    page.goto(f"{server}/#/today")
+    page.reload()                                                 # pick up the AI state set through the API
+    page.wait_for_selector("#nav a[href='#/study']")              # appears only once AI is on
+    page.click("#nav a[href='#/study']")
+    page.wait_for_selector("#chatInput")
+    page.fill("#chatInput", "What is recursion?")
+    page.keyboard.press("Enter")
+    page.wait_for_selector(".chat-msg.ai .chat-tools")            # finished streaming
+    text = page.locator(".chat-msg.ai .chat-text")
+    assert text.locator("h4").inner_text() == "Recursion"          # "##" is a sub-heading inside a reply
+    assert text.locator("strong").inner_text() == "calls itself"
+    assert text.locator("li").count() == 2
+    assert page.evaluate("window.hacked") is None                 # model output can't run code
+    assert "<script>" in text.inner_text()                        # shown as text instead
+    links = text.locator("a")
+    assert links.count() == 1 and "youtube.com/results" in links.get_attribute("href")
+    assert "evil.example" in text.inner_text() and text.locator("a[href*='evil']").count() == 0
+    assert page.inner_text("#chatTokens") == "60"
+    assert "issues/new" in page.get_attribute(".chat-tools a", "href")
+    assert "Preview" in page.inner_text(".chat-foot")
+
+    # Help me with this: open a task, ask from the slide-in panel, then move to the full page
+    t = page.request.post(f"{server}/api/tasks", headers=tok, data={"title": "Recursion worksheet"}).json()
+    page.goto(f"{server}/#/tasks")
+    page.reload()                                                 # pick up the task made through the API
+    page.wait_for_function(f"state.tasks.some(x => x.id === {t['id']})")
+    page.evaluate(f"openTask({t['id']})")
+    page.click("[data-action=chat-help]")
+    page.wait_for_selector("#drawer .chat-attached >> text=Recursion worksheet")
+    page.fill("#drawer #chatInput", "Where do I start?")
+    page.keyboard.press("Enter")
+    page.wait_for_selector("#drawer .chat-msg.ai .chat-tools")
+    sent = [r for r in A.fake_net_seen if r.url.path.endswith("/chat/completions")][-1]
+    assert "Recursion worksheet" in json.loads(sent.content)["messages"][0]["content"]
+    page.click("[data-action=chat-full]")
+    page.wait_for_selector("#content .chat-attached >> text=Recursion worksheet")
+    assert page.locator("#content .chat-msg.me").count() == 1
+
+    # Turning AI off hides the page and the sidebar item again
+    page.request.post(f"{server}/api/ai/terms/withdraw", headers=tok)
+    page.goto(f"{server}/#/study")
+    page.reload()
+    page.wait_for_selector("#content > *")
+    assert page.inner_text("#pageTitle") != "Study assistant"     # sent to Today instead
+    assert page.locator("#nav a[href='#/study']").count() == 0
+    page.errors.clear()                                            # the offline Ollama check logs a failed fetch
+
+
+def test_long_chats_and_switching_tasks_mid_reply(server, page):
+    """Only the last 20 messages are sent, and a reply still streaming for an old chat can't touch the new one."""
+    import json
+
+    import app as A
+    tok = {A.TOKEN_HEADER: A.SESSION_TOKEN}
+    terms = page.request.get(f"{server}/api/ai/terms").json()
+    page.request.post(f"{server}/api/ai/terms/agree", headers=tok,
+                      data={"version": terms["version"], "ticks": {k: True for k in terms["ticks"]}})
+    page.request.put(f"{server}/api/ai/settings", headers=tok, data={"provider": "ollama", "model": "qwen2.5:7b"})
+    nl = chr(10)
+    sse = ("data: " + json.dumps({"choices": [{"delta": {"content": "ok"}}]}) + nl + nl + "data: "
+           + json.dumps({"choices": [], "usage": {"prompt_tokens": 7, "completion_tokens": 3}}) + nl + nl)
+    A.fake_net["POST localhost/v1/chat/completions"] = (200, sse)
+    page.goto(f"{server}/#/today")
+    page.reload()
+    page.wait_for_selector("#nav a[href='#/study']")
+
+    # 150 earlier messages: the request carries only the last 20, starting with the student's
+    page.evaluate("""() => { chatReset(); const c = chatState();
+        for (let i = 0; i < 150; i++) c.messages.push({ role: i % 2 ? 'assistant' : 'user', content: 'm' + i }); }""")
+    page.evaluate("chatSend('latest question')")
+    page.wait_for_function("!chatState().streaming")
+    body = json.loads([r for r in A.fake_net_seen if r.url.path.endswith("/chat/completions")][-1].content)
+    sent = body["messages"][1:]                                    # after the system prompt
+    assert len(sent) <= 20 and sent[0]["role"] == "user" and sent[-1]["content"] == "latest question"
+    assert not any(e for e in page.errors if "422" in e)
+
+    # A reply for the old chat is still arriving when another chat starts: it must be ignored
+    state = page.evaluate("""async () => {
+        chatReset();
+        const pending = chatSend('old chat question');
+        chatReset(42);                                             // e.g. Help me with this on another task
+        await pending;
+        const c = chatState();
+        return { tokens: c.tokens, messages: c.messages.length, streaming: c.streaming, taskId: c.taskId };
+    }""")
+    assert state == {"tokens": 0, "messages": 0, "streaming": False, "taskId": 42}
+    page.evaluate("chatReset()")
+    page.request.post(f"{server}/api/ai/terms/withdraw", headers=tok)
+    page.errors.clear()
