@@ -911,22 +911,31 @@ async function aiLoadSystem() {
 // Replies stream from /api/ai/chat. They're rendered by chatMarkdown(), which escapes everything first,
 // so model output can never add HTML or scripts to the page. Only YouTube search links become links.
 const CHAT_MODES = { explain: 'Explain', practise: 'Practise' };
+const CHAT_FORMATS = { auto: 'Any format', notes: 'Notes', diagram: 'Diagram', both: 'Notes and diagram', maths: 'Maths', code: 'Code' };
+const FORMAT_ASK = { notes: 'as notes', diagram: 'as a diagram', both: 'as notes with a diagram', maths: 'with the maths written out', code: 'as code' };
 const CHAT_IDEAS = ['Explain recursion with a simple example', 'Give me a practice question on Big-O',
   'What is the difference between a stack and a queue?', 'Help me plan revision for a mid-semester exam'];
 
 function chatState() {
-  if (!state.chat) state.chat = { mode: 'explain', messages: [], tokens: 0, streaming: false, taskId: null, controller: null };
+  if (!state.chat) state.chat = { mode: 'explain', format: 'auto', messages: [], tokens: 0, streaming: false, taskId: null, controller: null };
   return state.chat;
 }
 
+// Safe rendering, in this order: code and maths are taken out of the raw text first (they need it unescaped),
+// everything else is escaped and then turned into Markdown, and the result goes through DOMPurify as a second
+// line of defence. Diagrams are drawn after the reply is on screen (enhanceRich).
+const PURIFY = { ALLOW_DATA_ATTR: false, ADD_ATTR: ['target'], FORBID_TAGS: ['style', 'form', 'input', 'button', 'textarea', 'select'] };
+
 function chatMarkdown(src) {
-  const blocks = [];
-  let text = esc(src).replace(/```[^\n]*\n([\s\S]*?)(```|$)/g, (_, code) => {
-    blocks.push(`<pre class="chat-code"><code>${code.replace(/\n$/, '')}</code></pre>`);
-    return `\u0000${blocks.length - 1}\u0000`;
-  });
+  const blocks = [], spans = [];
+  const keep = (list, html, mark) => { list.push(html); return `${mark}${list.length - 1}${mark}`; };
+  let text = String(src).replace(/[\u0000\u0001]/g, '')
+    .replace(/```([^\n`]*)\n([\s\S]*?)(```|$)/g, (_, lang, code) => keep(blocks, codeBlock(lang.trim(), code.replace(/\n$/, '')), '\u0000'))
+    .replace(/`([^`\n]+)`/g, (_, code) => keep(spans, `<code>${esc(code)}</code>`, '\u0001'))
+    .replace(/\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]/g, (_, a, b) => keep(spans, maths(a ?? b, true), '\u0001'))
+    .replace(/\\\((.+?)\\\)|\$(?=[^\s$])([^$\n]*?[^\s$\\])\$(?!\d)/g, (_, a, b) => keep(spans, maths(a ?? b, false), '\u0001'));
+  text = esc(text);
   const inline = s => s
-    .replace(/`([^`\n]+)`/g, '<code>$1</code>')
     .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
     .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
     .replace(/\[([^\]\n]+)\]\((https:\/\/www\.youtube\.com\/results\?search_query=[^\s)"<>]+)\)/g,
@@ -946,8 +955,178 @@ function chatMarkdown(src) {
     else { closeList(); out.push(`<p>${inline(line)}</p>`); }
   }
   closeList();
-  return out.join('').replace(/\u0000(\d+)\u0000/g, (_, i) => blocks[+i]);
+  const html = out.join('').replace(/\u0000(\d+)\u0000/g, (_, i) => blocks[+i]).replace(/\u0001(\d+)\u0001/g, (_, i) => spans[+i]);
+  return window.DOMPurify ? DOMPurify.sanitize(html, PURIFY) : html;
 }
+
+function maths(tex, display) {
+  if (!window.katex) return `<code>${esc(tex)}</code>`;
+  try {
+    return katex.renderToString(tex, { displayMode: display, throwOnError: false, trust: false, strict: 'ignore', maxSize: 20, maxExpand: 300 });
+  } catch (_) { return `<code>${esc(tex)}</code>`; }
+}
+
+function codeBlock(lang, code) {
+  const l = lang.toLowerCase().replace(/[^a-z0-9+#-]/g, '');
+  if (l === 'mermaid') return `<div class="chat-diagram"><pre class="chat-code"><code>${esc(code)}</code></pre></div>`;
+  let html = esc(code);
+  if (window.hljs && l && hljs.getLanguage(l)) {
+    try { html = hljs.highlight(code, { language: l, ignoreIllegals: true }).value; } catch (_) { /* stays plain */ }
+  }
+  return `<pre class="chat-code"><code class="hljs${l ? ` language-${l}` : ''}">${html}</code></pre>`;
+}
+
+// ── After a reply is on screen: Copy on code blocks, and diagrams drawn with mermaid ──
+const DIAGRAMS = new Map();          // theme + source -> { svg } or { error }, so redraws are instant
+let mermaidLoading = null, diagramCount = 0;
+
+function loadMermaid() {
+  return mermaidLoading ||= new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = `/static/vendor/mermaid.min.js?v=${encodeURIComponent(state.info?.version || '')}`;
+    s.onload = () => resolve(window.mermaid);
+    s.onerror = () => { mermaidLoading = null; s.remove(); reject(new Error("The diagram library couldn't load.")); };
+    document.head.append(s);
+  });
+}
+
+function cleanSvg(svg) {
+  // Mermaid's own sanitising (securityLevel strict) runs first; this is the second line of defence.
+  // Its <style> is kept for the colours, without anything that could fetch from elsewhere.
+  const frag = DOMPurify.sanitize(svg, { USE_PROFILES: { svg: true, svgFilters: true }, ADD_TAGS: ['style'],
+    FORBID_TAGS: ['foreignObject', 'a', 'image', 'use'], RETURN_DOM_FRAGMENT: true });
+  for (const style of frag.querySelectorAll('style')) style.textContent = safeCss(style.textContent);
+  for (const node of frag.querySelectorAll('*')) {
+    for (const { name, value } of [...node.attributes]) {
+      if (name === 'style') node.setAttribute('style', safeCss(value));
+      else if (/url\s*\(|\\/i.test(value) && !/^\s*url\(\s*['"]?#[\w-]+['"]?\s*\)\s*$/.test(value)) node.removeAttribute(name);
+    }
+  }
+  const box = document.createElement('div');
+  box.append(frag);
+  return box.innerHTML;
+}
+
+/** CSS with nothing that can load from elsewhere: escapes are decoded first (so u\72l( can't hide a url),
+ *  then @import, @font-face and every image function except a link to something inside the diagram go. */
+function safeCss(css) {
+  return css
+    .replace(/\\([0-9a-f]{1,6})[ \t\r\n\f]?/gi, (_, h) => { const cp = parseInt(h, 16); return cp && cp <= 0x10ffff ? String.fromCodePoint(cp) : '�'; })
+    .replace(/\\([\s\S])/g, '$1')
+    .replace(/@import[^;]*;?/gi, '')
+    .replace(/@font-face\s*\{[^}]*\}/gi, '')
+    .replace(/(?:-webkit-)?(?:url|image-set|image|cross-fade|element)\(\s*(?!['"]?#[\w-]+['"]?\s*\))[^)]*\)/gi, 'none');
+}
+
+/** Flowcharts only: put each node's label in double quotes, so brackets and colons inside it are read as text.
+ *  Used only after a diagram has failed to draw, so it can't break one that works. */
+function quoteLabels(src) {
+  const lines = src.split('\n');
+  if (!/^\s*(flowchart|graph)\b/.test(lines[0] || '')) return null;
+  const OPEN = '[({', CLOSE = '])}';
+  return lines.map((line, n) => {
+    if (!n || /^\s*(classDef|class|style|linkStyle|click|%%)/.test(line)) return line;
+    let out = '', i = 0;
+    while (i < line.length) {
+      const ch = line[i];
+      if (ch === '|') {                                    // text on an arrow: leave it alone
+        const j = line.indexOf('|', i + 1);
+        if (j < 0) return out + line.slice(i);
+        out += line.slice(i, j + 1); i = j + 1; continue;
+      }
+      if (!OPEN.includes(ch) || !/[\w-]$/.test(out)) { out += ch; i++; continue; }
+      let depth = 0, j = i;                                // the matching close, counting every kind of bracket
+      for (; j < line.length; j++) {
+        if (OPEN.includes(line[j])) depth++;
+        else if (CLOSE.includes(line[j]) && --depth === 0) break;
+      }
+      if (j >= line.length) return out + line.slice(i);
+      let k = 0;                                           // [[ (( ([ shapes open with more than one bracket
+      while (k < 3 && OPEN.includes(line[i + k]) && CLOSE.includes(line[j - k])) k++;
+      const inner = line.slice(i + k, j - k + 1).trim();
+      const label = /^".*"$/.test(inner) ? inner : `"${inner.replace(/"/g, '#quot;')}"`;
+      out += line.slice(i, i + k) + label + line.slice(j - k + 1, j + 1);
+      i = j + 1;
+    }
+    return out;
+  }).join('\n');
+}
+
+async function drawDiagram(el) {
+  const code = $('code', el);
+  if (!code) return;
+  const src = code.textContent, dark = document.documentElement.dataset.mode === 'dark';
+  const key = `${dark}\n${src}`;
+  el.dataset.drawn = '1';
+  let result = DIAGRAMS.get(key);
+  if (!result) {
+    el.classList.add('drawing');
+    const render = async text => {
+      const id = `diagram${++diagramCount}`;
+      let mermaid;
+      try { mermaid = await loadMermaid(); }
+      catch (e) { return { error: e.message, transient: true }; }   // not the diagram's fault: don't remember it
+      try {
+        mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: dark ? 'dark' : 'neutral',
+          htmlLabels: false, flowchart: { htmlLabels: false }, maxTextSize: 20000, maxEdges: 300,
+          fontFamily: getComputedStyle(document.body).fontFamily });
+        return { svg: cleanSvg((await mermaid.render(id, text)).svg) };
+      } catch (e) {
+        // Mermaid's message: "Parse error on line 2:", the line, a pointer, then "Expecting …": keep the first and last
+        const lines = String(e?.message || e || 'unknown problem').split('\n').map(x => x.trim()).filter(Boolean);
+        return { error: [...new Set([lines[0], lines[lines.length - 1]])].join(' ').slice(0, 240) };
+      } finally {
+        document.getElementById(id)?.remove();           // mermaid can leave its working copy behind
+        document.getElementById('d' + id)?.remove();
+      }
+    };
+    result = await render(src);
+    // Small models often leave brackets unquoted inside labels (A[Stack: [5]]): try again with every label quoted
+    const fixed = result.error && quoteLabels(src);
+    if (fixed && fixed !== src) {
+      const second = await render(fixed);
+      if (second.svg) result = { ...second, source: fixed };
+    }
+    if (!result.transient) DIAGRAMS.set(key, result);
+  }
+  if (!el.isConnected) return;
+  el.classList.remove('drawing');
+  const source = `<details class="diagram-src"><summary>Diagram source${result.source ? ' (labels put in quotes so it could be drawn)' : ''}</summary>
+    <pre class="chat-code"><code>${esc(result.source || src)}</code></pre></details>`;
+  if (result.svg) {
+    el.innerHTML = `<div class="diagram-svg">${result.svg}</div>${source}`;
+    $('svg', el)?.setAttribute('role', 'img');
+  } else {
+    const inChat = el.closest('.chat-msg.ai');
+    el.innerHTML = `<div class="chat-error">${icon('alert', 15)}<span>This diagram couldn't be drawn: ${esc(result.error)}</span>
+      ${result.transient ? `<button class="btn btn-ghost btn-sm" data-action="diagram-redraw">${icon('repeat', 14)}Try again</button>`
+        : inChat ? `<button class="btn btn-ghost btn-sm" data-action="diagram-retry">${icon('repeat', 14)}Try again</button>` : ''}</div>
+      <pre class="chat-code"><code>${esc(src)}</code></pre>`;
+    el.dataset.error = result.error;
+  }
+}
+
+function enhanceRich(root = document) {
+  for (const pre of $$('.chat-text pre.chat-code', root)) {
+    if (pre.parentElement.classList.contains('code-wrap') || pre.closest('.chat-diagram')) continue;
+    const lang = ($('code', pre)?.className.match(/language-([\w+#-]+)/) || [])[1] || '';
+    const wrap = document.createElement('div');
+    wrap.className = 'code-wrap';
+    wrap.innerHTML = `<div class="code-head"><span>${esc(lang)}</span><button class="btn btn-ghost btn-sm keep-label" type="button" data-action="code-copy">${icon('copy', 13)}Copy</button></div>`;
+    pre.replaceWith(wrap);
+    wrap.append(pre);
+  }
+  // Diagrams wait until the reply has finished arriving (half a diagram can't be drawn)
+  for (const el of $$('.chat-diagram:not([data-drawn])', root)) {
+    if (!el.closest('.live')) drawDiagram(el);
+  }
+}
+
+// Replies and notes appear through several paths (chat, panel, notes, the topic preview): catch them all here
+new MutationObserver(() => {
+  if (enhanceRich.queued) return;
+  enhanceRich.queued = requestAnimationFrame(() => { enhanceRich.queued = 0; enhanceRich(); });
+}).observe(document.body, { childList: true, subtree: true });
 
 function chatReportUrl(i) {
   const c = chatState(), m = c.messages[i];
@@ -960,7 +1139,8 @@ function chatMessage(m, i) {
   if (m.role === 'user') return `<div class="chat-msg me">${esc(m.content).replace(/\n/g, '<br>')}</div>`;
   const c = chatState();
   const live = c.streaming && i === c.messages.length - 1;
-  return `<div class="chat-msg ai" data-i="${i}">
+  const last = !live && i === c.messages.length - 1 && !c.streaming;
+  return `<div class="chat-msg ai ${live ? 'live' : ''}" data-i="${i}">
     <div class="chat-text">${m.content ? chatMarkdown(m.content) : (live ? '<span class="chat-typing" aria-label="Thinking"><i></i><i></i><i></i></span>' : '')}</div>
     ${(m.cards || []).map((card, n) => chatCard(card, i, n)).join('')}
     ${m.error ? `<div class="chat-error">${icon('alert', 15)}${esc(m.error)}</div>` : ''}
@@ -968,7 +1148,9 @@ function chatMessage(m, i) {
     ${!live && m.content ? `<div class="chat-tools">
       <button class="btn btn-ghost btn-sm keep-label" data-action="chat-save-note" data-i="${i}">${icon('subjects', 14)}Save as note</button>
       <button class="btn btn-ghost btn-sm keep-label" data-action="chat-copy" data-i="${i}">${icon('copy', 14)}Copy</button>
-      <a class="btn btn-ghost btn-sm keep-label" href="${esc(chatReportUrl(i))}" target="_blank" rel="noopener">${icon('flag', 14)}Report</a></div>` : ''}
+      <a class="btn btn-ghost btn-sm keep-label" href="${esc(chatReportUrl(i))}" target="_blank" rel="noopener">${icon('flag', 14)}Report</a>
+      ${last ? `<select class="select select-sm chat-reformat" aria-label="Show this again in another format"><option value="">Show as…</option>
+        ${Object.entries(FORMAT_ASK).map(([k]) => `<option value="${k}">${CHAT_FORMATS[k]}</option>`).join('')}</select>` : ''}</div>` : ''}
   </div>`;
 }
 
@@ -989,6 +1171,8 @@ function chatShell(inPanel) {
     <div class="chat ${inPanel ? 'in-panel' : ''}">
       <div class="chat-bar">
         <div class="segmented" role="group" aria-label="Study mode">${modes}</div>
+        <select class="select select-sm" id="chatFormat" aria-label="Format of replies" ${c.streaming ? 'disabled' : ''}>
+          ${Object.entries(CHAT_FORMATS).map(([k, v]) => opt(k, v, c.format)).join('')}</select>
         <span class="spacer"></span>
         <span class="chat-meta" title="Tokens used in this chat (billed by cloud providers)">${icon('spark', 13)}${esc(a.model)} · <span id="chatTokens">${c.tokens.toLocaleString()}</span> tokens</span>
       </div>
@@ -1078,7 +1262,7 @@ async function chatSend(text) {
   let history = c.messages.slice(0, -1).filter(m => m.content && !m.error).map(m => ({ role: m.role, content: m.content })).slice(-20);
   while (history.length && history[0].role !== 'user') history = history.slice(1);   // same window as the server
   try {
-    await streamChat({ mode: c.mode, messages: history, ...(c.taskId ? { task_id: c.taskId } : {}) }, c.controller.signal, ev => {
+    await streamChat({ mode: c.mode, format: c.format || 'auto', messages: history, ...(c.taskId ? { task_id: c.taskId } : {}) }, c.controller.signal, ev => {
       if (!current()) return false;
       if (ev.type === 'text') reply.content += ev.text;
       else if (ev.type === 'usage') c.tokens += (ev.input || 0) + (ev.output || 0);
@@ -1236,6 +1420,7 @@ async function noteTopicWrite() {
   const show = () => {
     const box = $('#noteTopicPreview');
     if (!box || state.noteTopic !== t) return;
+    box.classList.toggle('live', t.streaming);
     box.innerHTML = (t.text ? chatMarkdown(t.text) : '<span class="chat-typing" aria-label="Writing"><i></i><i></i><i></i></span>') +
       (t.error ? `<div class="chat-error">${icon('alert', 15)}${esc(t.error)}</div>` : '');
     $('#noteTopicStop').hidden = !t.streaming;
@@ -1630,6 +1815,16 @@ const ACTIONS = {
   },
   'chat-mode'(el) { if (!chatState().streaming) { chatState().mode = el.dataset.mode; chatRefresh(); } },
   'chat-idea'(el) { chatSend(el.textContent); },
+  async 'code-copy'(el) {
+    try { await navigator.clipboard.writeText($('code', el.closest('.code-wrap')).textContent); toast('Copied'); }
+    catch (_) { toast("Couldn't copy. Select the code and press Ctrl+C.", 'error'); }
+  },
+  'diagram-redraw'(el) { drawDiagram(el.closest('.chat-diagram')); },     // the library didn't load: draw it again here
+  'diagram-retry'(el) {
+    const box = el.closest('.chat-diagram');
+    if (chatState().streaming) return;
+    chatSend(`The diagram didn't draw (${box?.dataset.error || 'it has a mistake'}). Please send the corrected diagram in a \`\`\`mermaid block, with every label in double quotes.`);
+  },
   'chat-stop'() { chatState().controller?.abort(); },
   async 'chat-copy'(el) {
     try { await navigator.clipboard.writeText(chatState().messages[Number(el.dataset.i)].content); toast('Copied'); }
@@ -1954,6 +2149,13 @@ document.addEventListener('keydown', e => {
 });
 
 document.addEventListener('change', async e => {
+  if (e.target.id === 'chatFormat') { chatState().format = e.target.value; return; }
+  if (e.target.classList.contains('chat-reformat') && e.target.value) {
+    const c = chatState(), f = e.target.value;
+    c.format = f;
+    chatSend(`Show that again ${FORMAT_ASK[f]}.`);
+    return;
+  }
   if (e.target.id === 'importFile' && e.target.files[0]) { restoreFromFile(e.target.files[0]); return; }
   if (e.target.classList.contains('ai-tick')) { $('#aiAgree').disabled = $$('.ai-tick').some(c => !c.checked); return; }
   if (e.target.id === 'aiModel' || e.target.id === 'aiBaseUrl') {

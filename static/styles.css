@@ -607,6 +607,7 @@ button.tile { text-align: left; cursor: pointer; width: 100%; }
 .chat-text code { font-family: ui-monospace, 'Cascadia Code', Consolas, monospace; font-size: 12.5px; background: var(--surface-2); padding: 1px 5px; border-radius: 5px; }
 .chat-code { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 10px 12px; overflow-x: auto; }
 .chat-code code { background: none; padding: 0; font-size: 12.5px; line-height: 1.6; white-space: pre; }
+.chat-text code { font-variant-ligatures: none; }          /* show -> and != as typed, not joined into arrows */
 .chat-text .link { display: inline-flex; align-items: center; gap: 4px; }
 .chat-tools { display: flex; gap: 4px; margin-top: 6px; }
 .chat-error { margin-top: 6px; display: flex; gap: 6px; align-items: flex-start; color: var(--danger); font-weight: 650; font-size: 13.5px; }
@@ -665,3 +666,29 @@ button.tile { text-align: left; cursor: pointer; width: 100%; }
 .chat-card.danger { border-color: color-mix(in srgb, var(--danger) 40%, var(--line)); background: color-mix(in srgb, var(--danger-soft) 55%, var(--surface)); }
 .chat-card.danger > .ic { color: var(--danger); }
 .chat-card.muted-card { color: var(--muted); }
+
+/* ── Maths, code and diagrams in replies and notes (stage 5) ──────────── */
+.select-sm { height: 32px; padding: 0 30px 0 10px; font-size: 13px; width: auto; background-position: right 8px center; }
+.chat-tools .chat-reformat { margin-left: auto; }
+.code-wrap { margin: 8px 0; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface-2); overflow: hidden; }
+.code-wrap .chat-code { margin: 0; border: 0; border-radius: 0; }
+.code-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 4px 2px 12px;
+  border-bottom: 1px solid var(--line); font-size: 11.5px; font-weight: 650; color: var(--muted); text-transform: lowercase; }
+.code-head .btn { height: 26px; }
+.hljs-keyword, .hljs-built_in, .hljs-type, .hljs-selector-tag, .hljs-meta .hljs-keyword, .hljs-number, .hljs-literal { color: var(--accent-text); }
+.hljs-keyword, .hljs-selector-tag { font-weight: 650; }
+.hljs-comment, .hljs-quote, .hljs-meta { color: var(--muted); font-style: italic; }
+.hljs-string, .hljs-regexp, .hljs-symbol, .hljs-attr, .hljs-attribute { color: var(--ink); }
+.hljs-string { opacity: .82; }
+.hljs-title, .hljs-section, .hljs-name { color: var(--ink); font-weight: 650; }
+.hljs-addition { color: var(--ok); }
+.hljs-deletion { color: var(--danger); }
+.chat-text .katex { font-size: 1.08em; }
+.chat-text .katex-display { margin: 10px 0; overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
+.chat-diagram { margin: 10px 0; }
+.chat-diagram.drawing::before { content: 'Drawing the diagram…'; display: block; font-size: 12.5px; color: var(--muted); margin-bottom: 6px; }
+.diagram-svg { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 12px; overflow-x: auto; text-align: center; }
+.diagram-svg svg { max-width: 100%; height: auto; }
+.diagram-src { margin-top: 4px; font-size: 12.5px; color: var(--muted); }
+.diagram-src summary { cursor: pointer; width: max-content; }
+.chat-diagram .chat-error { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }

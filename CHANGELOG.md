@@ -15,6 +15,7 @@ PATCH for fixes. Pushing a tag like `v3.2.0` publishes that version's section as
 - "Help me with this" on any task opens the assistant in a side panel with the task's details attached, and "Open full page" carries the conversation over
 - Notes inside subjects: each subject card has a Notes list (shown once the assistant is on, or when the subject has notes). Write your own, save any assistant reply with "Save as note", or have the assistant "Write notes on a topic" for you to check and save. Notes are included in Download backup, and kept (under "Other notes") if their subject is deleted
 - The study assistant can add, change and complete tasks when you ask it to. Each change shows a card with Undo, which puts the task back exactly as it was. Deleting a task, or more than 3 changes at once, waits for you to confirm in the chat
+- The study assistant shows maths properly (KaTeX), highlights code with a Copy button, and draws diagrams (flowcharts, sequence, state and class diagrams, mind maps). Pick a format for replies (notes, diagram, both, maths or code), or use "Show as…" to see the last answer another way. If a diagram can't be drawn you see its source and Try again. Notes show maths and diagrams too, and everything works offline
 - Before a new version changes your data for the first time, EasyUniTrack keeps a copy of it in the backups folder
 
 ### Security

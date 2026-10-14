@@ -55,6 +55,7 @@ class ChatMessage(BaseModel):
 
 class ChatIn(BaseModel):
     mode: Literal["explain", "practise", "notes"] = "explain"
+    format: Literal["auto", "notes", "diagram", "both", "maths", "code"] = "auto"
     messages: list[ChatMessage] = Field(min_length=1, max_length=200)
     task_id: Optional[int] = None
 
@@ -195,7 +196,7 @@ def register(app, get_setting, put_setting, transport_hook=lambda: None, task_co
         history = [m.model_dump() for m in c.messages[-MAX_HISTORY:]]       # keeps cost and length down
         while history and history[0]["role"] != "user":
             history.pop(0)
-        system_text = prompts.system_prompt(c.mode, task_context(c.task_id) if c.task_id else "")
+        system_text = prompts.system_prompt(c.mode, task_context(c.task_id) if c.task_id else "", c.format)
         base = (s.base_url or None) if s.provider == "custom" else None
         provider = get_provider(s.provider, key=keys.get(s.provider), base_url=base, transport=transport_hook())
         # Task tools when the app provides them, the mode is a conversation, and the model can use tools
