@@ -11,7 +11,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
 from . import keys, prompts, system, terms
-from .tools import TOOLS, TaskTools, system_addendum
+from .tools import TaskTools
 from .providers import PRESETS, get_provider, suggest_model
 
 ProviderId = Literal["", "anthropic", "openai", "deepseek", "ollama", "custom"]
@@ -215,10 +215,14 @@ def register(app, get_setting, put_setting, transport_hook=lambda: None, task_co
         base = (s.base_url or None) if s.provider == "custom" else None
         provider = get_provider(s.provider, key=keys.get(s.provider), base_url=base, transport=transport_hook())
         # Task tools when the app provides them, the mode is a conversation, and the model can use tools
-        use_tools = task_store is not None and c.mode in ("explain", "practise") and provider.supports_tools(s.model) is not False
-        tools = TaskTools(task_store, action_log) if use_tools else None
+        can_use_tools = provider.supports_tools(s.model) is not False
+        if code:                                         # the code workspace proposes file changes
+            tools = code["tools"]() if can_use_tools else None
+        else:                                            # study chats manage tasks
+            use_tools = task_store is not None and c.mode in ("explain", "practise") and can_use_tools
+            tools = TaskTools(task_store, action_log) if use_tools else None
         if tools:
-            system_text += "\n\n" + system_addendum()
+            system_text += "\n\n" + tools.addendum()
 
         def events():
             messages, state = list(history), {"changes": 0, "ask_first": False}
@@ -228,7 +232,7 @@ def register(app, get_setting, put_setting, transport_hook=lambda: None, task_co
             try:
                 for _ in range(MAX_TOOL_ROUNDS):
                     calls = None
-                    for ev in provider.stream_chat(s.model, system_text, messages, TOOLS if tools else None):
+                    for ev in provider.stream_chat(s.model, system_text, messages, tools.schema if tools else None):
                         if ev["type"] == "tool_calls":
                             calls = ev
                         else:

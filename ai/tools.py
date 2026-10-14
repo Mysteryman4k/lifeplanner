@@ -62,9 +62,15 @@ class ToolError(Exception):
 
 
 class TaskTools:
+    schema = TOOLS
+
     def __init__(self, store, log):
         """store: the app's TaskStore. log: ActionLog for recording and undoing changes."""
         self.store, self.log = store, log
+
+    @staticmethod
+    def addendum() -> str:
+        return system_addendum()
 
     # ── helpers ──
     def _fields(self, args: dict) -> dict:
