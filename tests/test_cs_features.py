@@ -161,3 +161,22 @@ def test_the_diff_route(c, proj, monkeypatch):
     c.post("/api/ai/terms/withdraw")
     assert c.post(f"/api/code/folders/{f['id']}/diff", json={"path": "calc.py"}).status_code == 403
     agree(c)
+
+
+@needs_git
+def test_a_huge_committed_file_is_never_read(proj, monkeypatch):
+    git(proj, "init", "-q")
+    git(proj, "add", "calc.py")
+    git(proj, "commit", "-q", "-m", "first")
+    monkeypatch.setattr(codediff, "MAX_FILE", 10)                        # smaller than the committed copy
+    monkeypatch.setattr(codediff, "_git_blob", lambda *a: pytest.fail("read a blob over the limit"))
+    assert codediff.committed(Folder(str(proj)), "calc.py") == (None, "")
+
+
+@needs_git
+def test_reading_a_blob_stops_at_the_limit(proj):
+    git(proj, "init", "-q")
+    git(proj, "add", "calc.py")
+    git(proj, "commit", "-q", "-m", "first")
+    assert codediff._git_blob(proj, "HEAD:./calc.py", 5) is None
+    assert codediff._git_blob(proj, "HEAD:./calc.py", 1000).startswith(b"def add")

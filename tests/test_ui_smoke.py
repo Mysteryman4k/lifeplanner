@@ -1042,6 +1042,19 @@ def test_cs_quick_actions(server, page, tmp_path_factory):
         system = last_request()["messages"][0]["content"]
         assert "Task: explain my change" in system and "-    return -1" in system and "+    return None" in system
         page.wait_for_selector(".code-text >> text=return None")                        # the viewer shows it as it is now
+        # A long change: only its first part goes, and both the student and the assistant are told
+        import ai.codediff
+        ai.codediff.MAX_DIFF, kept = 40, ai.codediff.MAX_DIFF
+        try:
+            (root / "search.py").write_text((root / "search.py").read_text().replace("return None", "return -3"),
+                                            encoding="utf-8")
+            n = page.locator(".chat-msg.ai .chat-tools").count()
+            page.click(".chat-quick [data-kind=explain_change]")
+            page.wait_for_selector("#toast.show >> text=only its first part")
+            page.wait_for_function(f"document.querySelectorAll('.chat-msg.ai .chat-tools').length > {n}")
+            assert "only its first part is included" in last_request()["messages"][-1]["content"]
+        finally:
+            ai.codediff.MAX_DIFF = kept
         # Leaving for the Study page while it's being worked out: nothing is sent there
         sent = len([r for r in A.fake_net_seen if r.url.path.endswith("/chat/completions")])
         (root / "search.py").write_text((root / "search.py").read_text().replace("return None", "return -2"), encoding="utf-8")

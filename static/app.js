@@ -1724,7 +1724,9 @@ async function codeAction(kind) {
     } catch (_) { /* the viewer keeps what it had */ }
     if (moved()) return;
     const since = r.source === 'git' ? (r.new_file ? 'a new file since the last commit' : 'since the last commit') : 'since I opened it';
-    await chatSend(`Explain my change to ${open} (${since}).${extra ? `\n\n${extra}` : ''}`, { action: 'explain_change', diff: r.diff });
+    const cut = r.truncated ? '\n\nThe change is long, so only its first part is included: say what you can\'t see.' : '';
+    if (r.truncated) toast('The change is long, so only its first part goes with your question.');
+    await chatSend(`Explain my change to ${open} (${since}).${cut}${extra ? `\n\n${extra}` : ''}`, { action: 'explain_change', diff: r.diff });
     return;
   }
   const text = {
