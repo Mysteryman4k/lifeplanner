@@ -129,3 +129,12 @@ def test_old_upgrade_backups_are_pruned(A, tmp_path):
         (folder / f"before-upgrade-2026-01-{i + 1:02d}_120000.db").write_bytes(b"x")
     A.auto_backup()
     assert len(list(folder.glob("before-upgrade-*.db"))) == A.KEEP_AUTO_BACKUPS
+
+
+def test_an_unreadable_last_version_still_gets_a_backup(tmp_path, monkeypatch):
+    A = load(tmp_path, monkeypatch)
+    TestClient(A.app).post("/api/tasks", json={"title": "Old"})
+    with sqlite3.connect(tmp_path / "planner.db") as conn:
+        conn.execute("UPDATE settings SET value='not json{' WHERE key='last_run_version'")
+    load(tmp_path, monkeypatch)
+    assert len(backups(tmp_path)) == 1

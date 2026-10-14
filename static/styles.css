@@ -650,4 +650,3 @@ button.tile { text-align: left; cursor: pointer; width: 100%; }
 .note-preview { min-height: 60px; padding: 12px 14px; border: 1px dashed var(--line-strong); border-radius: var(--r-sm); background: var(--bg); }
 .note-preview:empty { display: none; }
 .chat-text hr { border: 0; border-top: 1px solid var(--line); margin: 12px 0; }
-.chat-text hr { border: 0; border-top: 1px solid var(--line); margin: 12px 0; }

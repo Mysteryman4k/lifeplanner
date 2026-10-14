@@ -1174,6 +1174,7 @@ function editNote(id, defaults = {}) {
 
 function openNoteTopic(subjectId) {
   const s = subjectById(subjectId);
+  state.noteTopic?.controller?.abort();          // a previous topic still being written stops (and stops costing)
   state.noteTopic = { subjectId, text: '', streaming: false, controller: null, error: '' };
   const body = `<div class="form-stack note-topic">
       <p class="small muted">The study assistant writes structured notes (overview, key points, a worked example and a summary)${s ? ` for ${esc(s.name)}` : ''}. You can edit them before saving.</p>
@@ -1233,6 +1234,7 @@ function openDrawer(title, bodyHtml, footHtml, kind) {
 }
 function closeDrawer() {
   if ($('#drawer').hidden) return;
+  if (state.drawer === 'note-topic') { state.noteTopic?.controller?.abort(); state.noteTopic = null; }
   if (state.drawer === 'budget-plan' && state.savedCurrency) setCurrency(state.savedCurrency);
   $('#drawer').hidden = true;
   $('#scrim').hidden = true;

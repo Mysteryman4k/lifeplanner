@@ -279,7 +279,11 @@ def _pre_upgrade_backup():
         if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='settings'").fetchone():
             return
         row = conn.execute("SELECT value FROM settings WHERE key='last_run_version'").fetchone()
-        if row and json.loads(row[0]) == APP_VERSION:
+        try:
+            last = json.loads(row[0]) if row else None
+        except (ValueError, TypeError):
+            last = None                         # unreadable (e.g. edited by hand): treat as unknown, still back up
+        if last == APP_VERSION:
             return
         folder = DB_PATH.parent / "backups"
         folder.mkdir(parents=True, exist_ok=True)

@@ -532,3 +532,27 @@ def test_reply_formatting_rules(server, page):
     assert md("* * *") == "<hr>" and md("-- not a rule") == "<p>-- not a rule</p>"
     assert md("- a" + nl + "- b") == "<ul><li>a</li><li>b</li></ul>"
     assert "&lt;img" in md("<img src=x onerror=alert(1)>")
+
+
+def test_closing_write_notes_stops_the_request(server, page):
+    """Closing the panel (or starting another topic) aborts the stream, so it stops using tokens."""
+    import app as A
+    tok = {A.TOKEN_HEADER: A.SESSION_TOKEN}
+    terms = page.request.get(f"{server}/api/ai/terms").json()
+    page.request.post(f"{server}/api/ai/terms/agree", headers=tok,
+                      data={"version": terms["version"], "ticks": {k: True for k in terms["ticks"]}})
+    s = page.request.post(f"{server}/api/subjects", headers=tok, data={"name": "Networks 101", "color": "#3B6EA8"}).json()
+    page.goto(f"{server}/#/subjects")
+    page.reload()
+    page.wait_for_selector("[data-action=note-topic]")
+    aborted = page.evaluate(f"""() => {{
+        openNoteTopic({s["id"]});
+        const first = new AbortController(); state.noteTopic.controller = first;
+        openNoteTopic({s["id"]});                                  // another topic replaces it
+        const second = new AbortController(); state.noteTopic.controller = second;
+        closeDrawer();                                             // closing the panel
+        return [first.signal.aborted, second.signal.aborted, state.noteTopic];
+    }}""")
+    assert aborted == [True, True, None]
+    page.request.delete(f"{server}/api/subjects/{s['id']}", headers=tok)
+    page.request.post(f"{server}/api/ai/terms/withdraw", headers=tok)
