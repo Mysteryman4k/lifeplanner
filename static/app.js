@@ -1344,6 +1344,11 @@ async function chatSend(text) {
       else if (ev.type === 'usage') c.tokens += (ev.input || 0) + (ev.output || 0);
       else if (ev.type === 'error') reply.error = ev.message;
       else if (ev.type === 'action') { (reply.cards ||= []).push({ kind: 'action', id: ev.action_id, summary: ev.summary, status: 'done' }); tasksChanged = true; }
+      else if (ev.type === 'change') {           // a proposed file change (a second edit to the same file updates its card)
+        const cards = reply.cards ||= [], card = { kind: 'change', id: ev.change_id, path: ev.path, summary: ev.summary, newFile: ev.new_file, diff: ev.diff, status: 'proposed' };
+        const same = cards.find(x => x.kind === 'change' && x.id === ev.change_id);
+        if (same) Object.assign(same, card); else cards.push(card);
+      }
       else if (ev.type === 'confirm') (reply.cards ||= []).push({ kind: 'confirm', id: ev.action_id, items: ev.items, danger: ev.danger, status: 'pending' });
       chatUpdateLast();
       return true;
@@ -1373,8 +1378,31 @@ async function reloadTasks() {
   }
 }
 
+function changeCard(card, ref) {
+  const sign = { '+': 'add', '-': 'del', '@': 'hunk' };
+  const diff = `<div class="diff" role="group" aria-label="Changes to ${esc(card.path)}">${card.diff.map(d =>
+    `<div class="diff-line ${sign[d.t] || ''}"><span class="diff-sign" aria-hidden="true">${d.t === '@' ? '' : esc(d.t)}</span><span>${esc(d.s) || ' '}</span></div>`).join('')}</div>`;
+  const busy = card.busy ? 'disabled' : '';
+  const state = {
+    proposed: `<div class="chat-card-btns"><button class="btn btn-ghost btn-sm" data-action="code-change-dismiss" ${ref} ${busy}>Dismiss</button>
+        <button class="btn btn-primary btn-sm" data-action="code-change-apply" ${ref} ${busy}>${icon('check', 14)}Apply</button></div>`,
+    applied: `<div class="change-status ok">${icon('check', 14)}<span>Applied. The original is backed up.</span>
+        <button class="btn btn-ghost btn-sm keep-label" data-action="code-change-undo" ${ref} ${busy}>${icon('repeat', 14)}Undo</button></div>`,
+    undone: `<div class="change-status">${icon('repeat', 14)}<span>Undone. ${card.newFile ? 'The new file was removed.' : 'The file is back exactly as it was.'}</span></div>`,
+    dismissed: `<div class="change-status">${icon('x', 14)}<span>Dismissed. Nothing was changed.</span></div>`,
+    stale: `<div class="change-status warn">${icon('alert', 14)}<span>The file changed after this was proposed, so it wasn't applied. Ask for a fresh change.</span></div>`,
+  }[card.status] || '';
+  const open = card.status === 'proposed' || card.status === 'applied';
+  return `<div class="chat-card change-card ${card.status}">
+      <div class="change-head">${icon('file', 15)}<button class="link-btn" data-action="code-open" data-path="${esc(card.path)}">${esc(card.path)}</button>
+        ${card.newFile ? '<span class="pill">New file</span>' : ''}<span class="muted small change-summary">${esc(card.summary)}</span></div>
+      ${open ? diff : `<details class="change-more"><summary>Show the change</summary>${diff}</details>`}
+      ${state}</div>`;
+}
+
 function chatCard(card, i, n) {
   const ref = `data-i="${i}" data-c="${n}"`;
+  if (card.kind === 'change') return changeCard(card, ref);
   if (card.kind === 'action' || card.status === 'approved' || card.status === 'undone') {
     const undone = card.status === 'undone';
     const title = card.kind === 'action' ? esc(card.summary) : `Done: ${card.items.map(esc).join('; ')}`;
@@ -1533,6 +1561,28 @@ async function codeChoose(question) {
   if (box) box.outerHTML = codeSendList();
   const tree = $('#codeTree');
   if (tree && k.tree) tree.innerHTML = codeTreeNodes(k.tree.children);
+}
+
+/** Apply, Undo or Dismiss on a proposed change, then show the file as it is now. */
+async function codeChangeAction(el, what) {
+  const card = chatState().messages[Number(el.dataset.i)]?.cards?.[Number(el.dataset.c)];
+  if (!card || card.busy) return;
+  card.busy = true; chatRefresh();
+  try {
+    const r = what === 'apply' ? await api(`/api/code/changes/${card.id}/apply`, { method: 'POST' })
+      : what === 'undo' ? await api(`/api/code/changes/${card.id}/undo`, { method: 'POST' })
+      : await api(`/api/code/changes/${card.id}/dismiss`, { method: 'POST' });
+    card.status = r.status;
+    toast({ applied: `Applied to ${card.path}`, undone: `Undone: ${card.path} is back as it was`, dismissed: 'Dismissed' }[r.status] || 'Done');
+    const k = codeState();
+    if (r.created || r.removed) await codeLoadTree();                       // a file appeared or went away
+    else if (k.open?.path === card.path) await codeOpen(card.path);        // show the file as it is now
+  } catch (e) {
+    if (/changed since this was proposed/.test(e.message)) card.status = 'stale';
+    toast(e.message, 'error');
+  }
+  card.busy = false;
+  chatRefresh();
 }
 
 /** Line numbers an error points at, per file: Python, Java, gcc/clang, node, C# and the like. */
@@ -2061,6 +2111,9 @@ const ACTIONS = {
   'chat-mode'(el) { if (!chatState().streaming) { chatState().mode = el.dataset.mode; chatRefresh(); } },
   'chat-idea'(el) { chatSend(el.textContent); },
   'code-link'() { codeLinkForm(); },
+  async 'code-change-apply'(el) { await codeChangeAction(el, 'apply'); },
+  async 'code-change-undo'(el) { await codeChangeAction(el, 'undo'); },
+  async 'code-change-dismiss'(el) { await codeChangeAction(el, 'dismiss'); },
   async 'code-browse'() {
     try {
       const r = await api('/api/code/pick-folder', { method: 'POST' });

@@ -11,6 +11,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
 from . import terms
+from .code_changes import ChangeStore, CodeTools
 from .codebase import CodeError, Folder, language, link_problem
 
 FolderMode = Literal["assignment", "personal"]
@@ -149,6 +150,27 @@ def register(app, db, load_ai_settings, data_dir: Path, window: dict):
         r, folder = open_folder(folder_id)
         text, sent, left_out = folder.context(paths)
         return {"mode": r["mode"], "name": r["name"], "subject": r.get("subject_name") or "",
-                "text": text, "sent": sent, "left_out": left_out}
+                "text": text, "sent": sent, "left_out": left_out,
+                "tools": lambda: CodeTools(changes, folder_id, folder, r["mode"])}
+
+    changes = ChangeStore(db, data_dir)
+    changes.recover()                     # Apply or Undo cut off when the app last closed
+
+    @app.post("/api/code/changes/{change_id}/apply")
+    def apply_change(change_id: int):
+        """The student's Apply: back up the file, then write the change."""
+        gate()
+        return changes.apply(change_id)
+
+    @app.post("/api/code/changes/{change_id}/undo")
+    def undo_change(change_id: int):
+        """Put the file back exactly as it was before Apply."""
+        gate()
+        return changes.undo(change_id)
+
+    @app.post("/api/code/changes/{change_id}/dismiss")
+    def dismiss_change(change_id: int):
+        gate()
+        return changes.dismiss(change_id)
 
     return context

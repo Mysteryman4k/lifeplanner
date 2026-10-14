@@ -110,7 +110,9 @@ def test_add_and_complete_task(server, page):
 
 def test_change_theme_is_saved(server, page):
     page.goto(f"{server}/#/settings")
-    page.click("[data-action=set-appearance][data-key=theme][data-value=ocean]")
+    # The theme shows at once and is saved just after: wait for the save, or a fast reload can beat it
+    with page.expect_response(lambda r: r.url.endswith("/api/settings/appearance") and r.request.method == "PUT"):
+        page.click("[data-action=set-appearance][data-key=theme][data-value=ocean]")
     page.wait_for_function("document.documentElement.dataset.theme === 'ocean'")
     page.reload()
     page.wait_for_function("document.documentElement.dataset.theme === 'ocean'")
@@ -836,5 +838,69 @@ def test_code_workspace(server, page, tmp_path_factory):
     page.click("#confirmYes")
     page.wait_for_selector("text=Link a code folder")
     assert (root / "main.py").exists()
+    page.evaluate("chatReset()")
+    page.request.post(f"{server}/api/ai/terms/withdraw", headers=tok)
+
+
+@pytest.mark.ui
+def test_proposed_changes(server, page, tmp_path_factory):
+    """A proposed change shows as a diff; Apply writes it (the viewer updates), Undo puts the file back exactly,
+    and a change to a file edited since is refused."""
+    import json
+    import os
+
+    import app as A
+    tok = {A.TOKEN_HEADER: A.SESSION_TOKEN}
+    root = tmp_path_factory.mktemp("lab4")
+    original = b"def add(a, b):\r\n    return a - b\r\n"
+    (root / "calc.py").write_bytes(original)
+    terms = page.request.get(f"{server}/api/ai/terms").json()
+    page.request.post(f"{server}/api/ai/terms/agree", headers=tok,
+                      data={"version": terms["version"], "ticks": {k: True for k in terms["ticks"]}})
+    page.request.put(f"{server}/api/ai/settings", headers=tok,
+                     data={"provider": "ollama", "model": "qwen2.5:7b", "code_enabled": True})
+    page.request.post(f"{server}/api/code/folders", headers=tok, data={"path": str(root), "mode": "personal"})
+    nl = chr(10)
+
+    def sse(*objs):
+        return "".join("data: " + json.dumps(o) + nl + nl for o in objs)
+
+    args = {"path": "calc.py", "find": "    return a - b", "replace": "    return a + b", "summary": "Add, don't subtract"}
+    call = {"index": 0, "id": "c1", "function": {"name": "propose_change", "arguments": json.dumps(args)}}
+    proposal = sse({"choices": [{"delta": {"tool_calls": [call]}}]})
+    say = sse({"choices": [{"delta": {"content": "Here's the fix: review it and click Apply."}}]})
+    A.fake_net["POST localhost/api/show"] = (200, {"capabilities": ["completion", "tools"]})
+    A.fake_net["POST localhost/v1/chat/completions"] = (200, [proposal, say, proposal, say])
+
+    page.goto(f"{server}/#/code")
+    page.reload()
+    page.click(".tree-row >> text=calc.py")
+    page.wait_for_selector(".code-file-head >> text=calc.py")
+    page.fill("#chatInput", "Fix the add function")
+    page.keyboard.press("Enter")
+    card = page.locator(".change-card.proposed")
+    card.wait_for()
+    assert card.locator(".diff-line.del").inner_text().endswith("return a - b")
+    assert card.locator(".diff-line.add").inner_text().endswith("return a + b")
+    assert (root / "calc.py").read_bytes() == original                        # nothing until Apply
+    if os.environ.get("EUT_SHOTS"):
+        page.screenshot(path=os.path.join(os.environ["EUT_SHOTS"], "stage7-proposed.png"))
+
+    card.locator("[data-action=code-change-apply]").click()
+    page.locator(".change-card.applied").wait_for()
+    assert (root / "calc.py").read_bytes() == original.replace(b"a - b", b"a + b")
+    page.wait_for_selector(".code-text >> text=a + b")                       # the viewer shows the file as it is now
+    page.click("[data-action=code-change-undo]")
+    page.locator(".change-card.undone").wait_for()
+    assert (root / "calc.py").read_bytes() == original
+
+    # A file edited after the proposal: Apply refuses
+    page.fill("#chatInput", "Fix it again")
+    page.keyboard.press("Enter")
+    page.locator(".change-card.proposed").wait_for()
+    (root / "calc.py").write_bytes(original + b"# mine\r\n")
+    page.click(".change-card.proposed [data-action=code-change-apply]")
+    page.locator(".change-card.stale").wait_for()
+    assert (root / "calc.py").read_bytes() == original + b"# mine\r\n"
     page.evaluate("chatReset()")
     page.request.post(f"{server}/api/ai/terms/withdraw", headers=tok)

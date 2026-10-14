@@ -204,6 +204,44 @@ class Folder:
             raise CodeError(f"{rel} is hidden ({reason}), so it isn't read or sent.")
         return full
 
+    def check_writable(self, rel: str) -> Path:
+        """Where a proposed change may be written: inside the folder (no .., absolute paths or links out), not a
+        hidden file or inside a hidden folder, and an existing file must be one that can be read and edited."""
+        full = self.resolve(rel)
+        if full.exists():
+            if not full.is_file():
+                raise CodeError(f"{rel} is a folder, not a file.")
+            self.check_readable(rel)
+            return full
+        parts = PurePosixPath(rel.replace("\\", "/")).parts
+        for i in range(1, len(parts)):
+            self._load_dir("/".join(parts[:i - 1]))
+            reason = self.skip_reason("/".join(parts[:i]), True)
+            if reason:
+                raise CodeError(f"{rel} would be in a hidden folder ({reason}), so it can't be written.")
+        self._load_dir("/".join(parts[:-1]))
+        reason = self.skip_reason("/".join(parts), False)
+        if reason:
+            raise CodeError(f"{rel} would be hidden ({reason}), so it can't be written.")
+        parent = full.parent
+        while not parent.exists():                         # new folders are fine, as long as they stay inside
+            parent = parent.parent
+        if parent.resolve() != self.root and self.root not in parent.resolve().parents:
+            raise CodeError("That file is outside the linked folder.")
+        return full
+
+    def read_exact(self, rel: str) -> tuple:
+        """(text, raw bytes) for editing: the text must be valid UTF-8, so writing it back can't damage the file."""
+        full = self.check_readable(rel)
+        data = full.read_bytes()
+        if b"\x00" in data:
+            raise CodeError(f"{rel} is a binary file, so it can't be changed.")
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            raise CodeError(f"{rel} isn't UTF-8 text, so the assistant can't change it safely.") from None
+        return text.replace("\r\n", "\n"), data
+
     def read(self, rel: str) -> str:
         full = self.check_readable(rel)
         data = full.read_bytes()

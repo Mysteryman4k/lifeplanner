@@ -277,6 +277,22 @@ def init_db():
                 created_at TEXT DEFAULT (datetime('now','localtime'))
             );
 
+            -- Changes the assistant proposed to files in a linked folder (not in backups: they're about files on this PC)
+            CREATE TABLE IF NOT EXISTS file_changes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                folder_id INTEGER NOT NULL REFERENCES code_folders(id) ON DELETE CASCADE,
+                path TEXT NOT NULL,
+                summary TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL,                -- proposed, applying, applied, undoing, undone, dismissed, stale
+                base_hash TEXT,                      -- the file when proposed (NULL: a new file)
+                new_content TEXT NOT NULL,
+                kind TEXT NOT NULL DEFAULT 'edit',  -- edit, whole (a whole file replaced) or new (a new file)
+                eol TEXT NOT NULL DEFAULT 'LF',      -- line endings to write: LF or CRLF
+                backup TEXT NOT NULL DEFAULT '',     -- code-backups/ copy of the original, '' for a new file
+                applied_hash TEXT,
+                created_at TEXT DEFAULT (datetime('now','localtime'))
+            );
+
             CREATE TABLE IF NOT EXISTS ai_actions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 status TEXT NOT NULL,                -- pending, applying, done, undoing, undone, rejected
