@@ -1106,7 +1106,11 @@ async function reloadTasks() {
     state.tasks = await api('/api/tasks');
     // Redraw the page under the side panel; the Study page has no task list (and redrawing it would clear the input)
     if (route() === 'study') renderNav(); else stillRender();
-  } catch (_) { /* the list refreshes next time */ }
+    return true;
+  } catch (_) {
+    toast("The change was made, but the task list couldn't refresh. Reload the page to see it.", 'error');
+    return false;
+  }
 }
 
 function chatCard(card, i, n) {
@@ -1571,8 +1575,7 @@ const ACTIONS = {
     try {
       await api('/api/ai/undo', { method: 'POST', body: { action_id: card.id } });
       card.status = 'undone';
-      await reloadTasks();
-      toast('Undone');
+      if (await reloadTasks()) toast('Undone');
     } catch (e) { toast(e.message, 'error'); }
     card.busy = false;
     chatRefresh();
@@ -1586,8 +1589,7 @@ const ACTIONS = {
       const r = await api('/api/ai/confirm', { method: 'POST', body: { action_id: card.id, approve } });
       card.status = approve ? 'approved' : 'rejected';
       if (approve) {
-        await reloadTasks();
-        toast(r.failed?.length ? `Done, but ${r.failed.length} couldn't be made: ${r.failed[0]}` : 'Done', r.failed?.length ? 'error' : '');
+        if (await reloadTasks()) toast(r.failed?.length ? `Done, but ${r.failed.length} couldn't be made: ${r.failed[0]}` : 'Done', r.failed?.length ? 'error' : '');
       }
     } catch (e) { toast(e.message, 'error'); }
     card.busy = false;

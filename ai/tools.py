@@ -195,7 +195,6 @@ class TaskTools:
             self.log.set_status(action_id, "rejected")
             return {"status": "rejected"}
         ops, failed = [], []
-        self.log.progress(action_id, [])                     # from here the saved data is undo steps
         try:
             for call in calls:
                 try:

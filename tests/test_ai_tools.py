@@ -146,6 +146,8 @@ def test_a_change_is_only_claimed_once(c, fake):
     with pytest.raises(A.HTTPException) as e:
         log.take_pending(card["action_id"])                             # second click is refused
     assert e.value.status_code == 409
+    A.init_db()                                                         # the app stopped before any change
+    assert c.post("/api/ai/undo", json={"action_id": card["action_id"]}).json() == {"status": "undone"}
 
 
 def test_keep_leaves_the_task_alone(c, fake):

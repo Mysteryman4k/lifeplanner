@@ -1332,8 +1332,11 @@ class ActionLog:
         """Claim the action in one step, so a double-click can't apply (or undo) it twice."""
         with db() as conn:
             row = conn.execute("SELECT status, data FROM ai_actions WHERE id=?", (action_id,)).fetchone()
-            claimed = row and conn.execute("UPDATE ai_actions SET status=? WHERE id=? AND status=?",
-                                           ({"pending": "applying", "done": "undoing"}[status], action_id, status)).rowcount
+            # A claimed pending action's data starts again as undo steps (none yet), in the same step
+            claimed = row and conn.execute(
+                "UPDATE ai_actions SET status=?, data=CASE WHEN ?='pending' THEN '[]' ELSE data END "
+                "WHERE id=? AND status=?",
+                ({"pending": "applying", "done": "undoing"}[status], status, action_id, status)).rowcount
         if not row:
             raise HTTPException(404, "That change isn't known any more.")
         if not claimed:
