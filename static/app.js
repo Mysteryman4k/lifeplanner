@@ -1499,12 +1499,17 @@ function chatSave() {
   return chatSave.queue;
 }
 
+let chatOpening = 0;                             // the latest chat asked for: a slower, older one is ignored
+
 async function chatOpen(id) {
+  const asked = ++chatOpening, stale = () => asked !== chatOpening;
   let ch;
-  try { ch = await api(`/api/ai/chats/${id}`); } catch (e) { toast(e.message, 'error'); loadChats(); return; }
+  try { ch = await api(`/api/ai/chats/${id}`); } catch (e) { if (!stale()) { toast(e.message, 'error'); loadChats(); } return; }
+  if (stale()) return;
   if (ch.kind === 'code') {
     const k = codeState();
     if (!k.folders) await codeLoad();
+    if (stale()) return;
     if (!ch.folder_id || !k.folders.some(f => f.id === ch.folder_id)) { toast('That chat\'s folder isn\'t linked any more.', 'error'); return; }
     if (k.folderId !== ch.folder_id) codeSelectFolder(ch.folder_id);
     chatReset(null, ch.folder_id);

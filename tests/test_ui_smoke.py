@@ -1159,6 +1159,17 @@ def test_saved_chats_quiz_and_videos(server, page):
         page.wait_for_timeout(2500)
         page.unroute("**/api/ai/chats/*")
         assert page.evaluate("chatState().id") == other["id"]
+        # Two chats clicked quickly: the second one shows, even if the first answers later
+        slow = page.request.post(f"{server}/api/ai/chats", headers=tok, data={"messages": [
+            {"role": "user", "content": "Slow one"}, {"role": "assistant", "content": "slow answer"}]}).json()
+        page.route(f"**/api/ai/chats/{slow['id']}", lambda route: (page.wait_for_timeout(1500), route.continue_())
+                   if route.request.method == "GET" else route.continue_())
+        page.evaluate(f"chatOpen({slow['id']}); chatOpen({other['id']})")
+        page.wait_for_selector(".chat-msg.ai >> text=Other answer")
+        page.wait_for_timeout(2500)
+        page.unroute(f"**/api/ai/chats/{slow['id']}")
+        assert page.evaluate("chatState().id") == other["id"] and page.locator(".chat-msg.ai >> text=slow answer").count() == 0
+        page.request.delete(f"{server}/api/ai/chats/{slow['id']}", headers=tok)
         page.request.delete(f"{server}/api/ai/chats/{other['id']}", headers=tok)
         page.evaluate("loadChats()")
 
