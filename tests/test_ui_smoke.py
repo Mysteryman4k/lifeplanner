@@ -695,6 +695,25 @@ def test_maths_code_and_diagrams_in_replies(server, page):
         page.emulate_media(color_scheme="light")
         page.evaluate("chatRefresh()")
 
+    # The diagram's CSS and attributes can't load anything from elsewhere, even written with CSS escapes
+    cleaned = page.evaluate(r"""cleanSvg('<svg xmlns="http://www.w3.org/2000/svg"><style>.a{background:u\\72l(http://x.test/a)}'
+        + '.b{background-image:image-set(\"http://x.test/b\" 1x)}@import \"http://x.test/c\";</style>'
+        + '<rect style="fill:URL(http://x.test/d)" fill="url(http://x.test/e)" marker-end="url(#arrow)"/></svg>')""")
+    assert "x.test" not in cleaned and 'marker-end="url(#arrow)"' in cleaned
+    assert msg.locator(".diagram-svg [marker-end^='url(#']").count() > 0                # arrowheads kept
+
+    # If the diagram library fails to load, that isn't remembered: Try again draws it
+    page.evaluate("""() => { window.savedLoad = mermaidLoading;
+        mermaidLoading = Promise.reject(new Error("The diagram library couldn't load."));
+        const box = document.createElement('div'); box.className = 'chat-text'; box.id = 'loadTest';
+        box.innerHTML = chatMarkdown(['```mermaid', 'flowchart LR', '  X --> Y', '```'].join(String.fromCharCode(10)));
+        document.querySelector('#chatLog').append(box); }""")
+    page.wait_for_selector("#loadTest [data-action=diagram-redraw]")
+    page.evaluate("mermaidLoading = window.savedLoad")
+    page.click("#loadTest [data-action=diagram-redraw]")
+    page.wait_for_selector("#loadTest .diagram-svg svg")
+    page.evaluate("document.querySelector('#loadTest').remove()")
+
     # Saved as a note, the diagrams draw there too (Try again is only for the chat)
     page.click("[data-action=chat-save-note]")
     page.click("#drawerFoot [type=submit]")

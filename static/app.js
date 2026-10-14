@@ -993,8 +993,29 @@ function loadMermaid() {
 function cleanSvg(svg) {
   // Mermaid's own sanitising (securityLevel strict) runs first; this is the second line of defence.
   // Its <style> is kept for the colours, without anything that could fetch from elsewhere.
-  const clean = DOMPurify.sanitize(svg, { USE_PROFILES: { svg: true, svgFilters: true }, ADD_TAGS: ['style'], FORBID_TAGS: ['foreignObject', 'a', 'image', 'use'] });
-  return clean.replace(/@import[^;]*;?/gi, '').replace(/url\(\s*(['"]?)(?!#)[^)]*\)/gi, 'none');
+  const frag = DOMPurify.sanitize(svg, { USE_PROFILES: { svg: true, svgFilters: true }, ADD_TAGS: ['style'],
+    FORBID_TAGS: ['foreignObject', 'a', 'image', 'use'], RETURN_DOM_FRAGMENT: true });
+  for (const style of frag.querySelectorAll('style')) style.textContent = safeCss(style.textContent);
+  for (const node of frag.querySelectorAll('*')) {
+    for (const { name, value } of [...node.attributes]) {
+      if (name === 'style') node.setAttribute('style', safeCss(value));
+      else if (/url\s*\(|\\/i.test(value) && !/^\s*url\(\s*['"]?#[\w-]+['"]?\s*\)\s*$/.test(value)) node.removeAttribute(name);
+    }
+  }
+  const box = document.createElement('div');
+  box.append(frag);
+  return box.innerHTML;
+}
+
+/** CSS with nothing that can load from elsewhere: escapes are decoded first (so u\72l( can't hide a url),
+ *  then @import, @font-face and every image function except a link to something inside the diagram go. */
+function safeCss(css) {
+  return css
+    .replace(/\\([0-9a-f]{1,6})[ \t\r\n\f]?/gi, (_, h) => { const cp = parseInt(h, 16); return cp && cp <= 0x10ffff ? String.fromCodePoint(cp) : '�'; })
+    .replace(/\\([\s\S])/g, '$1')
+    .replace(/@import[^;]*;?/gi, '')
+    .replace(/@font-face\s*\{[^}]*\}/gi, '')
+    .replace(/(?:-webkit-)?(?:url|image-set|image|cross-fade|element)\(\s*(?!['"]?#[\w-]+['"]?\s*\))[^)]*\)/gi, 'none');
 }
 
 /** Flowcharts only: put each node's label in double quotes, so brackets and colons inside it are read as text.
@@ -1042,8 +1063,10 @@ async function drawDiagram(el) {
     el.classList.add('drawing');
     const render = async text => {
       const id = `diagram${++diagramCount}`;
+      let mermaid;
+      try { mermaid = await loadMermaid(); }
+      catch (e) { return { error: e.message, transient: true }; }   // not the diagram's fault: don't remember it
       try {
-        const mermaid = await loadMermaid();
         mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: dark ? 'dark' : 'neutral',
           htmlLabels: false, flowchart: { htmlLabels: false }, maxTextSize: 20000, maxEdges: 300,
           fontFamily: getComputedStyle(document.body).fontFamily });
@@ -1064,7 +1087,7 @@ async function drawDiagram(el) {
       const second = await render(fixed);
       if (second.svg) result = { ...second, source: fixed };
     }
-    DIAGRAMS.set(key, result);
+    if (!result.transient) DIAGRAMS.set(key, result);
   }
   if (!el.isConnected) return;
   el.classList.remove('drawing');
@@ -1076,7 +1099,8 @@ async function drawDiagram(el) {
   } else {
     const inChat = el.closest('.chat-msg.ai');
     el.innerHTML = `<div class="chat-error">${icon('alert', 15)}<span>This diagram couldn't be drawn: ${esc(result.error)}</span>
-      ${inChat ? `<button class="btn btn-ghost btn-sm" data-action="diagram-retry">${icon('repeat', 14)}Try again</button>` : ''}</div>
+      ${result.transient ? `<button class="btn btn-ghost btn-sm" data-action="diagram-redraw">${icon('repeat', 14)}Try again</button>`
+        : inChat ? `<button class="btn btn-ghost btn-sm" data-action="diagram-retry">${icon('repeat', 14)}Try again</button>` : ''}</div>
       <pre class="chat-code"><code>${esc(src)}</code></pre>`;
     el.dataset.error = result.error;
   }
@@ -1795,6 +1819,7 @@ const ACTIONS = {
     try { await navigator.clipboard.writeText($('code', el.closest('.code-wrap')).textContent); toast('Copied'); }
     catch (_) { toast("Couldn't copy. Select the code and press Ctrl+C.", 'error'); }
   },
+  'diagram-redraw'(el) { drawDiagram(el.closest('.chat-diagram')); },     // the library didn't load: draw it again here
   'diagram-retry'(el) {
     const box = el.closest('.chat-diagram');
     if (chatState().streaming) return;
