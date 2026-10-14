@@ -13,6 +13,8 @@ PATCH for fixes. Pushing a tag like `v3.2.0` publishes that version's section as
 - Ollama's cloud models are labelled, because they send your messages to ollama.com rather than staying on your PC
 - Study assistant (preview): a new Study page appears in the sidebar once the assistant is on. Ask about your units in Explain or Practise mode; replies appear as they're written, with Stop, a token count, Copy and Report this response
 - "Help me with this" on any task opens the assistant in a side panel with the task's details attached, and "Open full page" carries the conversation over
+- Notes inside subjects: each subject card has a Notes list (shown once the assistant is on, or when the subject has notes). Write your own, save any assistant reply with "Save as note", or have the assistant "Write notes on a topic" for you to check and save. Notes are included in Download backup, and kept (under "Other notes") if their subject is deleted
+- Before a new version changes your data for the first time, EasyUniTrack keeps a copy of it in the backups folder
 
 ### Security
 

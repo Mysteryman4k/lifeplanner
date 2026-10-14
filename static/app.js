@@ -106,10 +106,12 @@ async function api(path, { method = 'GET', body } = {}) {
 }
 
 async function loadAll() {
-  const [tasks, categories, subjects, jobs, info, appearance, ai] = await Promise.all([
+  const [tasks, categories, subjects, jobs, info, appearance, ai, notes] = await Promise.all([
     api('/api/tasks'), api('/api/categories'), api('/api/subjects'), api('/api/jobs'), api('/api/info'),
     api('/api/settings/appearance').catch(() => null), api('/api/ai/state').catch(() => null),
+    api('/api/notes').catch(() => []),
   ]);
+  state.notes = notes;
   if (ai) state.ai = ai;
   api('/api/settings/startup').then(st => { state.startup = st; }).catch(() => {});
   api('/api/settings/reminders').then(r => { state.reminders = r; }).catch(() => {});
@@ -485,8 +487,9 @@ const VIEWS = {
           <input class="input" name="name" placeholder="Add a unit or week" aria-label="New unit for ${esc(s.name)}" maxlength="120" required>
           <button class="btn btn-ghost btn-sm" type="submit">Add</button>
         </form>
+        ${notesBlock(s.id)}
       </article>`;
-    }).join('')}</div>`;
+    }).join('')}${notesBlock(null)}</div>`;
   },
 
   jobs() {
@@ -935,6 +938,7 @@ function chatMarkdown(src) {
   for (const line of text.split('\n')) {
     let m;
     if ((m = line.match(/^\u0000(\d+)\u0000$/))) { closeList(); out.push(blocks[+m[1]]); }
+    else if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) { closeList(); out.push('<hr>'); }
     else if ((m = line.match(/^(#{1,3})\s+(.*)$/))) { closeList(); out.push(`<h${m[1].length + 2}>${inline(m[2])}</h${m[1].length + 2}>`); }
     else if ((m = line.match(/^\s*[-*]\s+(.*)$/))) { if (list !== 'ul') { closeList(); out.push('<ul>'); list = 'ul'; } out.push(`<li>${inline(m[1])}</li>`); }
     else if ((m = line.match(/^\s*\d+[.)]\s+(.*)$/))) { if (list !== 'ol') { closeList(); out.push('<ol>'); list = 'ol'; } out.push(`<li>${inline(m[1])}</li>`); }
@@ -961,6 +965,7 @@ function chatMessage(m, i) {
     ${m.error ? `<div class="chat-error">${icon('alert', 15)}${esc(m.error)}</div>` : ''}
     ${m.stopped ? '<div class="small muted">Stopped.</div>' : ''}
     ${!live && m.content ? `<div class="chat-tools">
+      <button class="btn btn-ghost btn-sm keep-label" data-action="chat-save-note" data-i="${i}">${icon('subjects', 14)}Save as note</button>
       <button class="btn btn-ghost btn-sm keep-label" data-action="chat-copy" data-i="${i}">${icon('copy', 14)}Copy</button>
       <a class="btn btn-ghost btn-sm keep-label" href="${esc(chatReportUrl(i))}" target="_blank" rel="noopener">${icon('flag', 14)}Report</a></div>` : ''}
   </div>`;
@@ -1024,6 +1029,39 @@ function chatUpdateLast() {
   if (tok) tok.textContent = c.tokens.toLocaleString();
 }
 
+
+/** POST to /api/ai/chat and call onEvent for each event ({type: text|usage|error|done}).
+ *  onEvent returning false stops reading. Throws with a readable message if the request is refused. */
+async function streamChat(payload, signal, onEvent) {
+  const res = await fetch('/api/ai/chat', {
+    method: 'POST', signal,
+    headers: { 'Content-Type': 'application/json', 'X-EasyUniTrack-Token': APP_TOKEN },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    let msg = `Something went wrong (${res.status})`;
+    try {
+      const e = await res.json();
+      if (typeof e.detail === 'string') msg = e.detail;
+      else if (Array.isArray(e.detail) && e.detail[0]) msg = `${(e.detail[0].loc || []).slice(-1)[0] || 'request'}: ${e.detail[0].msg}`;
+    } catch (_) { /* keep default */ }
+    throw new Error(msg);
+  }
+  const reader = res.body.getReader(), dec = new TextDecoder();
+  let buf = '';
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) return;
+    buf += dec.decode(value, { stream: true });
+    let cut;
+    while ((cut = buf.indexOf('\n\n')) >= 0) {
+      const line = buf.slice(0, cut).trim();
+      buf = buf.slice(cut + 2);
+      if (line.startsWith('data:') && onEvent(JSON.parse(line.slice(5))) === false) { reader.cancel(); return; }
+    }
+  }
+}
+
 async function chatSend(text) {
   const c = chatState();
   text = text.trim();
@@ -1038,39 +1076,14 @@ async function chatSend(text) {
   let history = c.messages.slice(0, -1).filter(m => m.content && !m.error).map(m => ({ role: m.role, content: m.content })).slice(-20);
   while (history.length && history[0].role !== 'user') history = history.slice(1);   // same window as the server
   try {
-    const res = await fetch('/api/ai/chat', {
-      method: 'POST', signal: c.controller.signal,
-      headers: { 'Content-Type': 'application/json', 'X-EasyUniTrack-Token': APP_TOKEN },
-      body: JSON.stringify({ mode: c.mode, messages: history, ...(c.taskId ? { task_id: c.taskId } : {}) }),
+    await streamChat({ mode: c.mode, messages: history, ...(c.taskId ? { task_id: c.taskId } : {}) }, c.controller.signal, ev => {
+      if (!current()) return false;
+      if (ev.type === 'text') reply.content += ev.text;
+      else if (ev.type === 'usage') c.tokens += (ev.input || 0) + (ev.output || 0);
+      else if (ev.type === 'error') reply.error = ev.message;
+      chatUpdateLast();
+      return true;
     });
-    if (!res.ok) {
-      let msg = `Something went wrong (${res.status})`;
-      try {
-        const e = await res.json();
-        if (typeof e.detail === 'string') msg = e.detail;
-        else if (Array.isArray(e.detail) && e.detail[0]) msg = `${(e.detail[0].loc || []).slice(-1)[0] || 'request'}: ${e.detail[0].msg}`;
-      } catch (_) { /* keep default */ }
-      throw new Error(msg);
-    }
-    const reader = res.body.getReader(), dec = new TextDecoder();
-    let buf = '';
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done || !current()) break;
-      buf += dec.decode(value, { stream: true });
-      let cut;
-      while ((cut = buf.indexOf('\n\n')) >= 0) {
-        const line = buf.slice(0, cut).trim();
-        buf = buf.slice(cut + 2);
-        if (!line.startsWith('data:')) continue;
-        const ev = JSON.parse(line.slice(5));
-        if (!current()) break;
-        if (ev.type === 'text') reply.content += ev.text;
-        else if (ev.type === 'usage') c.tokens += (ev.input || 0) + (ev.output || 0);
-        else if (ev.type === 'error') reply.error = ev.message;
-        chatUpdateLast();
-      }
-    }
   } catch (e) {
     if (!current()) return;                    // replaced by a newer chat: leave its state alone
     if (e.name === 'AbortError') reply.stopped = true;
@@ -1095,6 +1108,114 @@ function openChatPanel(taskId) {
   const foot = `<span class="spacer"></span><a class="btn btn-ghost" href="#/study" data-action="chat-full">${icon('external', 15)}Open full page</a>`;
   openDrawer('Help with this task', chatShell(true), foot, 'chat');
   chatAfterRender();
+}
+
+// ── Notes (inside subjects) ───────────────────────────────────────
+// Shown on a subject when the study assistant is on or the subject already has notes, so the app looks
+// the same as before for anyone not using the new features.
+const notesFor = subjectId => (state.notes || []).filter(n => (n.subject_id ?? null) === subjectId);
+
+function notesBlock(subjectId) {
+  const list = notesFor(subjectId);
+  if (subjectId === null) {                    // notes whose subject was deleted, or saved without one
+    if (!list.length) return '';
+    return `<article class="card subject other-notes"><div class="subject-head"><h3 class="subject-name">Other notes</h3></div>
+      <p class="subject-stats">Notes without a subject</p>${notesList(list, null)}</article>`;
+  }
+  if (!list.length && !aiOn()) return '';
+  return `<div class="subject-notes">
+      <div class="subject-notes-head"><span>Notes</span>${list.length ? `<span class="muted small">${list.length}</span>` : ''}<span class="spacer"></span>
+        ${aiOn() ? `<button class="icon-btn sm" data-action="note-topic" data-subject="${subjectId}" title="Write notes on a topic" aria-label="Write notes on a topic">${icon('spark', 15)}</button>` : ''}
+        <button class="icon-btn sm" data-action="new-note" data-subject="${subjectId}" title="New note" aria-label="New note">${icon('plus', 15)}</button></div>
+      ${list.length ? notesList(list, subjectId) : `<p class="small muted notes-empty">Save replies from the study assistant here, or write your own.</p>`}
+    </div>`;
+}
+
+function notesList(list, subjectId) {
+  const key = String(subjectId);
+  const open = state.notesOpen?.[key];
+  const shown = open ? list : list.slice(0, 4);
+  return `<div class="note-list">${shown.map(n => `
+      <button class="note-row" data-action="open-note" data-id="${n.id}">
+        ${icon(n.source === 'manual' ? 'pencil' : 'spark', 14)}<span class="note-title">${esc(n.title)}</span>
+        <span class="muted small">${esc(fmt(n.updated_at.slice(0, 10), { day: 'numeric', month: 'short' }))}</span></button>`).join('')}
+    ${list.length > 4 ? `<button class="link small note-more" data-action="notes-more" data-subject="${key}">${open ? 'Show fewer' : `Show all ${list.length}`}</button>` : ''}</div>`;
+}
+
+function noteSubjectOptions(selected) {
+  return opt('', 'No subject', selected ?? '') + state.subjects.map(s => opt(s.id, s.name, selected)).join('');
+}
+
+function openNote(id) {
+  const n = state.notes.find(x => x.id === id);
+  if (!n) return;
+  const subj = n.subject_id && subjectById(n.subject_id);
+  const from = { chat: 'Saved from the study assistant', topic: 'Written by the study assistant', manual: 'Your note' }[n.source] || '';
+  const body = `<div class="note-view">
+      <p class="small muted">${esc([subj?.name, from, 'updated ' + fmt(n.updated_at.slice(0, 10), { day: 'numeric', month: 'short', year: 'numeric' })].filter(Boolean).join(' · '))}</p>
+      <div class="chat-text note-body">${n.body ? chatMarkdown(n.body) : '<p class="muted">This note is empty.</p>'}</div></div>`;
+  const foot = `<button class="btn btn-danger-ghost btn-sm" type="button" data-action="delete-note" data-id="${id}">${icon('trash', 16)}Delete</button>
+    <span class="spacer"></span><button class="btn btn-ghost" type="button" data-action="close-drawer">Close</button>
+    <button class="btn btn-primary" type="button" data-action="edit-note" data-id="${id}">${icon('pencil', 16)}Edit</button>`;
+  openDrawer(n.title, body, foot, 'note-view');
+}
+
+function editNote(id, defaults = {}) {
+  const n = id ? state.notes.find(x => x.id === id) : { title: '', body: '', subject_id: null, source: 'manual', ...defaults };
+  if (!n) return;
+  const body = `
+    <form id="drawerForm" class="form-stack" data-kind="note" data-id="${id || ''}" data-source="${esc(n.source || 'manual')}" data-task="${n.task_id || ''}" autocomplete="off">
+      <input class="title-input" name="title" placeholder="Note title" value="${esc(n.title)}" required maxlength="200" ${id ? '' : 'autofocus'} aria-label="Title">
+      ${field('Subject', `<select class="select" name="subject_id">${noteSubjectOptions(n.subject_id)}</select>`)}
+      ${field('Note', `<textarea class="textarea note-editor" name="body" rows="16" maxlength="200000" placeholder="Write with Markdown: # headings, - lists, **bold**, \`code\`">${esc(n.body)}</textarea>`)}
+    </form>`;
+  openDrawer(id ? 'Edit note' : 'New note', body, footer(''), 'note');
+}
+
+function openNoteTopic(subjectId) {
+  const s = subjectById(subjectId);
+  state.noteTopic = { subjectId, text: '', streaming: false, controller: null, error: '' };
+  const body = `<div class="form-stack note-topic">
+      <p class="small muted">The study assistant writes structured notes (overview, key points, a worked example and a summary)${s ? ` for ${esc(s.name)}` : ''}. You can edit them before saving.</p>
+      ${field('Topic', `<input class="input" id="noteTopicInput" maxlength="300" placeholder="e.g. Hash tables and collision handling" autofocus>`)}
+      <div class="chat-text note-preview" id="noteTopicPreview" aria-live="polite"></div>
+    </div>`;
+  const foot = `<span class="spacer"></span><button class="btn btn-ghost" type="button" data-action="close-drawer">Cancel</button>
+    <button class="btn btn-ghost" type="button" data-action="note-topic-stop" hidden id="noteTopicStop">${icon('x', 16)}Stop</button>
+    <button class="btn btn-primary" type="button" data-action="note-topic-go" id="noteTopicGo">${icon('spark', 16)}Write notes</button>
+    <button class="btn btn-primary" type="button" data-action="note-topic-save" hidden id="noteTopicSave">${icon('check', 16)}Save note</button>`;
+  openDrawer('Write notes on a topic', body, foot, 'note-topic');
+}
+
+async function noteTopicWrite() {
+  const t = state.noteTopic, topic = $('#noteTopicInput').value.trim();
+  if (!t || !topic || t.streaming) { if (!topic) toast('Enter a topic first.', 'error'); return; }
+  const s = subjectById(t.subjectId);
+  Object.assign(t, { topic, text: '', error: '', streaming: true, controller: new AbortController() });
+  const show = () => {
+    const box = $('#noteTopicPreview');
+    if (!box || state.noteTopic !== t) return;
+    box.innerHTML = (t.text ? chatMarkdown(t.text) : '<span class="chat-typing" aria-label="Writing"><i></i><i></i><i></i></span>') +
+      (t.error ? `<div class="chat-error">${icon('alert', 15)}${esc(t.error)}</div>` : '');
+    $('#noteTopicStop').hidden = !t.streaming;
+    $('#noteTopicGo').hidden = t.streaming || !!t.text;
+    $('#noteTopicSave').hidden = t.streaming || !t.text;
+  };
+  show();
+  try {
+    await streamChat({ mode: 'notes', messages: [{ role: 'user', content: `Write study notes on: ${topic}${s ? `\nUnit: ${s.name}` : ''}` }] },
+      t.controller.signal, ev => {
+        if (state.noteTopic !== t) return false;
+        if (ev.type === 'text') t.text += ev.text;
+        else if (ev.type === 'error') t.error = ev.message;
+        show();
+        return true;
+      });
+  } catch (e) {
+    if (e.name !== 'AbortError') t.error = e.message;
+  }
+  t.streaming = false;
+  show();
 }
 
 // ── Drawer (forms) ────────────────────────────────────────────────
@@ -1332,6 +1453,13 @@ async function submitDrawer(form) {
       await api(id ? `/api/budgets/${id}` : '/api/budgets', { method: id ? 'PUT' : 'POST', body: { category: d.category, monthly_limit: Number(d.monthly_limit), color: b_color(id) } });
       await loadMoney();
       toast('Budget saved');
+    } else if (kind === 'note') {
+      const body = { title: d.title, body: d.body, subject_id: numOrNull(d.subject_id) };
+      if (!id) Object.assign(body, { source: form.dataset.source || 'manual', task_id: numOrNull(form.dataset.task) });
+      const saved = await api(id ? `/api/notes/${id}` : '/api/notes', { method: id ? 'PUT' : 'POST', body });
+      upsert(state.notes, saved);
+      state.notes.sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || '') || b.id - a.id);
+      toast(id ? 'Note saved' : `Note saved${saved.subject_id ? ` in ${subjectById(saved.subject_id)?.name || 'its subject'}` : ''}`);
     } else if (kind === 'subject') {
       const saved = await api(id ? `/api/subjects/${id}` : '/api/subjects', { method: id ? 'PUT' : 'POST', body: d });
       if (id) Object.assign(subjectById(id), d); else state.subjects.push(saved);
@@ -1397,6 +1525,35 @@ function celebrate(from) {
 
 // ── Actions (event delegation) ────────────────────────────────────
 const ACTIONS = {
+  'open-note'(el) { openNote(Number(el.dataset.id)); },
+  'edit-note'(el) { editNote(Number(el.dataset.id)); },
+  'new-note'(el) { editNote(null, { subject_id: Number(el.dataset.subject) || null }); },
+  async 'delete-note'(el) {
+    const id = Number(el.dataset.id);
+    if (!(await confirmDialog('Delete this note?', "It's removed from EasyUniTrack. This can't be undone.", 'Delete'))) return;
+    try {
+      await api(`/api/notes/${id}`, { method: 'DELETE' });
+      state.notes = state.notes.filter(n => n.id !== id);
+      closeDrawer(); render(); toast('Note deleted');
+    } catch (e) { toast(e.message, 'error'); }
+  },
+  'notes-more'(el) { state.notesOpen = { ...(state.notesOpen || {}), [el.dataset.subject]: !state.notesOpen?.[el.dataset.subject] }; stillRender(); },
+  'chat-save-note'(el) {
+    const c = chatState(), m = c.messages[Number(el.dataset.i)];
+    const task = c.taskId && state.tasks.find(t => t.id === c.taskId);
+    const heading = (m.content.match(/^#{1,3}\s+(.+)$/m) || [])[1];
+    const question = [...c.messages.slice(0, Number(el.dataset.i))].reverse().find(x => x.role === 'user')?.content || '';
+    const title = (heading || question || 'Study assistant note').replace(/[*`#]/g, '').trim().slice(0, 120);
+    editNote(null, { title, body: m.content, subject_id: task?.subject_id ?? null, task_id: task?.id ?? null, source: 'chat' });
+  },
+  'note-topic'(el) { openNoteTopic(Number(el.dataset.subject)); },
+  'note-topic-go'() { noteTopicWrite(); },
+  'note-topic-stop'() { state.noteTopic?.controller?.abort(); },
+  'note-topic-save'() {
+    const t = state.noteTopic;
+    if (!t?.text) return;
+    editNote(null, { title: t.topic.slice(0, 200), body: t.text, subject_id: t.subjectId, source: 'topic' });
+  },
   'chat-new'() {
     chatReset();
     chatRefresh();
@@ -1720,6 +1877,7 @@ document.addEventListener('click', e => {
 });
 
 document.addEventListener('keydown', e => {
+  if (e.target.id === 'noteTopicInput' && e.key === 'Enter') { e.preventDefault(); noteTopicWrite(); return; }
   if (e.target.id === 'chatInput' && e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
     e.preventDefault(); chatSend(e.target.value);
   }
