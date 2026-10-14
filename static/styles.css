@@ -624,3 +624,11 @@ button.tile { text-align: left; cursor: pointer; width: 100%; }
 .chat-foot { font-size: 11.5px; color: var(--muted); text-align: center; }
 .chat-setup { max-width: 560px; margin: 40px auto; }
 @media (prefers-reduced-motion: reduce) { .chat-typing i { animation: none; opacity: .6; } }
+.chat-empty .ic { display: block; margin: 0 auto; }
+.chat-log { -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 18px); mask-image: linear-gradient(to bottom, transparent 0, #000 18px); padding-top: 14px; }
+
+.ai-help { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 10px 12px; border-radius: var(--r-sm);
+  border: 1px solid var(--accent-line); background: var(--accent-soft); color: var(--accent-text); font: inherit; cursor: pointer; }
+.ai-help:hover { border-color: var(--accent-text); }
+.ai-help > span { flex: 1; display: flex; flex-direction: column; }
+.ai-help b { color: var(--ink); font-size: 14px; }

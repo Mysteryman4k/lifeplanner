@@ -11,6 +11,8 @@ PATCH for fixes. Pushing a tag like `v3.2.0` publishes that version's section as
 - Settings has a new Study assistant section (preview). Turning it on shows what the AI features can and can't do, then the terms of use, which need three ticks to agree. Until then nothing about AI appears anywhere in the app
 - Choose an AI provider: Anthropic, OpenAI, DeepSeek, a custom OpenAI-compatible service, or Ollama for free local models. Test the connection, pick a model, and see what this PC can run. API keys are kept in Windows Credential Manager, never in your data or backups
 - Ollama's cloud models are labelled, because they send your messages to ollama.com rather than staying on your PC
+- Study assistant (preview): a new Study page appears in the sidebar once the assistant is on. Ask about your units in Explain or Practise mode; replies appear as they're written, with Stop, a token count, Copy and Report this response
+- "Help me with this" on any task opens the assistant in a side panel with the task's details attached, and "Open full page" carries the conversation over
 
 ### Security
 

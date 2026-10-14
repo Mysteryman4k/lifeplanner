@@ -1125,6 +1125,7 @@ function openTask(id, defaults = {}) {
   const body = `
     <form id="drawerForm" class="form-stack" data-kind="task" data-id="${id || ''}" autocomplete="off">
       <input class="title-input" name="title" placeholder="What needs doing?" value="${esc(t.title)}" required maxlength="120" ${id ? '' : 'autofocus'} aria-label="Title">
+      ${id && aiOn() ? `<button class="ai-help" type="button" data-action="chat-help" data-id="${id}">${icon('spark', 16)}<span><b>Help me with this</b><span class="muted small">Ask the study assistant about this task</span></span>${icon('external', 14)}</button>` : ''}
       <div id="planSlot"></div>
       <div class="form-grid">
         ${field('Due date', `<input class="input" type="date" name="due_date" value="${esc(t.due_date || '')}">`)}
@@ -1142,8 +1143,7 @@ function openTask(id, defaults = {}) {
       </div>
     </form>`;
   const planBtn = id ? `<button class="btn btn-ghost btn-sm" type="button" data-action="auto-plan" title="Split the estimated hours into study sessions before the due date">${icon('wand', 16)}<span class="btn-label">Plan sessions</span></button>` : '';
-  const helpBtn = id && aiOn() ? `<button class="btn btn-ghost btn-sm" type="button" data-action="chat-help" data-id="${id}">${icon('spark', 16)}Help me with this</button>` : '';
-  openDrawer(id ? 'Edit task' : 'New task', body, footer(id ? 'delete-task' : '', helpBtn + planBtn), 'task');
+  openDrawer(id ? 'Edit task' : 'New task', body, footer(id ? 'delete-task' : '', planBtn), 'task');
   $('#fSubject').addEventListener('change', e => { $('#fUnit').innerHTML = unitOptions(e.target.value); });
   $('#fProgress').addEventListener('input', e => { $('#fProgressOut').textContent = e.target.value + '%'; });
 }
