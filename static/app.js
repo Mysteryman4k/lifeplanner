@@ -1102,7 +1102,11 @@ async function chatSend(text) {
 }
 
 async function reloadTasks() {
-  try { state.tasks = await api('/api/tasks'); renderNav(); } catch (_) { /* the list refreshes next time */ }
+  try {
+    state.tasks = await api('/api/tasks');
+    // Redraw the page under the side panel; the Study page has no task list (and redrawing it would clear the input)
+    if (route() === 'study') renderNav(); else stillRender();
+  } catch (_) { /* the list refreshes next time */ }
 }
 
 function chatCard(card, i, n) {

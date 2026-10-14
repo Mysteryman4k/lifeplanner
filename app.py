@@ -268,12 +268,14 @@ def init_db():
             -- What the study assistant changed (or wants to), so Undo and Keep/Delete work
             CREATE TABLE IF NOT EXISTS ai_actions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                status TEXT NOT NULL,                -- pending, done, undone, rejected
+                status TEXT NOT NULL,                -- pending, applying, done, undoing, undone, rejected
                 summary TEXT NOT NULL DEFAULT '',
-                data TEXT NOT NULL DEFAULT '[]',     -- pending: the tool calls; done: what's needed to undo
+                data TEXT NOT NULL DEFAULT '[]',     -- pending: the tool calls; otherwise what's needed to undo
                 created_at TEXT DEFAULT (datetime('now','localtime'))
             );
         """)
+        # A change cut off part-way (the app was closed mid-change) keeps the undo steps saved so far: offer Undo
+        conn.execute("UPDATE ai_actions SET status='done' WHERE status IN ('applying', 'undoing')")
         conn.execute("INSERT INTO settings (key, value) VALUES ('last_run_version', ?) "
                      "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (json.dumps(APP_VERSION),))
 
@@ -1279,10 +1281,18 @@ class TaskStore:
         with db() as conn:
             conn.executemany("UPDATE notes SET task_id=? WHERE id=? AND task_id IS NULL", [(task_id, n) for n in note_ids])
 
+    LINKS = (("category_id", "categories"), ("subject_id", "subjects"), ("unit_id", "units"))
+
     def restore(self, row: dict):
-        """Put a task back exactly as it was (Undo): update it if it still exists, otherwise re-create it."""
+        """Put a task back exactly as it was (Undo): update it if it still exists, otherwise re-create it.
+        A category, subject or unit deleted since is left empty rather than stopping the Undo."""
+        row = dict(row)
         cols = [c for c in self.COLUMNS if c in row]
         with db() as conn:
+            for col, table in self.LINKS:
+                if row.get(col) is not None and not conn.execute(f"SELECT 1 FROM {table} WHERE id=?",
+                                                                 (row[col],)).fetchone():
+                    row[col] = None
             if conn.execute("SELECT 1 FROM tasks WHERE id=?", (row["id"],)).fetchone():
                 conn.execute(f"UPDATE tasks SET {', '.join(f'{c}=?' for c in cols)} WHERE id=?",
                              [row[c] for c in cols] + [row["id"]])
@@ -1303,11 +1313,15 @@ class TaskStore:
 class ActionLog:
     """ai_actions: changes made (for Undo) and changes waiting for the student's Keep / Delete."""
 
-    def record(self, ops: list, summary: str) -> tuple:
+    def start(self, summary: str) -> int:
+        """A change about to be made. Its undo steps are saved (progress) before each task is touched."""
         with db() as conn:
-            cur = conn.execute("INSERT INTO ai_actions (status, summary, data) VALUES ('done', ?, ?)",
-                               (summary, json.dumps(ops)))
-            return cur.lastrowid, summary
+            return conn.execute("INSERT INTO ai_actions (status, summary, data) VALUES ('applying', ?, '[]')",
+                                (summary,)).lastrowid
+
+    def progress(self, action_id: int, ops: list):
+        with db() as conn:
+            conn.execute("UPDATE ai_actions SET data=? WHERE id=?", (json.dumps(ops), action_id))
 
     def pending(self, calls: list, summaries: list) -> int:
         with db() as conn:

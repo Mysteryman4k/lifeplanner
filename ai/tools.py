@@ -119,7 +119,17 @@ class TaskTools:
                     results.append((call, "Waiting for the student to confirm this in the app. Tell them; don't "
                                           "say it's done."))
                     continue
-                action_id, summary = self.log.record([self._apply(call)], self.describe(call))
+                summary = self.describe(call)
+                action_id = self.log.start(summary)
+                try:
+                    ops = [self._apply(call, lambda op, aid=action_id: self.log.progress(aid, [op]))]
+                except ToolError:
+                    self.log.set_status(action_id, "rejected")             # nothing was changed
+                    raise
+                except BaseException:
+                    self.log.set_status(action_id, "done")                 # undo whatever was saved
+                    raise
+                self.log.complete_pending(action_id, ops)
                 state["changes"] += 1
                 events.append({"type": "action", "action_id": action_id, "summary": summary})
                 results.append((call, f"Done: {summary}."))
@@ -143,29 +153,39 @@ class TaskTools:
             if call["name"] == "update_task":
                 self._fields(a)
 
-    def _apply(self, call) -> dict:
-        """Make one change and return what's needed to undo it."""
+    def _apply(self, call, save=lambda op: None) -> dict:
+        """Make one change and return what's needed to undo it. save(op) stores the undo step before the task
+        is touched, so a change cut off part-way (the app closed) can still be undone."""
         name, a = call["name"], call.get("args") or {}
         if name == "add_task":
             if not str(a.get("title", "")).strip():
                 raise ToolError("A task needs a title.")
             row = self.store.create(self._fields(a))
-            return {"op": "add", "task_id": row["id"]}
+            op = {"op": "add", "task_id": row["id"]}
+            save(op)
+            return op
         before = self._task(a.get("id"))
         if name == "update_task":
             fields = self._fields(a)
             if not fields:
                 raise ToolError("Say what to change.")
+            op = {"op": "update", "task_id": before["id"], "before": before}
+            save(op)
             self.store.update(before["id"], fields)
-            return {"op": "update", "task_id": before["id"], "before": before}
+            return op
         if name == "complete_task":
+            op = {"op": "complete", "task_id": before["id"], "before": before, "spawned": None}
+            save(op)
             after = self.store.update(before["id"], {"status": "completed"})
-            spawned = (after.get("next_task") or {}).get("id")
-            return {"op": "complete", "task_id": before["id"], "before": before, "spawned": spawned}
+            op["spawned"] = (after.get("next_task") or {}).get("id")
+            if op["spawned"]:
+                save(op)
+            return op
         if name == "delete_task":
-            notes = self.store.note_ids(before["id"])
+            op = {"op": "delete", "task_id": before["id"], "before": before, "notes": self.store.note_ids(before["id"])}
+            save(op)
             self.store.delete(before["id"])
-            return {"op": "delete", "task_id": before["id"], "before": before, "notes": notes}
+            return op
         raise ToolError(f"There's no tool called {name}.")
 
     # ── after the reply: the student's buttons ──
@@ -175,14 +195,17 @@ class TaskTools:
             self.log.set_status(action_id, "rejected")
             return {"status": "rejected"}
         ops, failed = [], []
+        self.log.progress(action_id, [])                     # from here the saved data is undo steps
         try:
             for call in calls:
                 try:
-                    ops.append(self._apply(call))
+                    ops.append(self._apply(call, lambda op: self.log.progress(action_id, ops + [op])))
                 except ToolError as e:
                     failed.append(str(e))
-        finally:
-            self.log.complete_pending(action_id, ops)       # whatever was applied can still be undone
+        except BaseException:
+            self.log.set_status(action_id, "done")          # the undo steps saved so far can still be used
+            raise
+        self.log.complete_pending(action_id, ops)
         return {"status": "done", "done": len(ops), "failed": failed}
 
     def undo(self, action_id: int) -> dict:

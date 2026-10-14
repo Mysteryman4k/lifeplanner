@@ -102,6 +102,39 @@ def test_undoing_a_delete_relinks_its_notes(c, fake):
     assert next(n for n in c.get("/api/notes").json() if n["id"] == note["id"])["task_id"] == t["id"]
 
 
+def test_undo_steps_are_saved_before_the_task_changes(c, fake):
+    """If the app closes part-way through a delete, the next start offers Undo for what was done."""
+    import app as A
+    from ai.tools import TaskTools
+    ready(c)
+    t = c.post("/api/tasks", json={"title": "Lab 3", "priority": "high"}).json()
+    log, store = A.ActionLog(), A.TaskStore()
+    action_id = log.pending([{"id": "c0", "name": "delete_task", "args": {"id": t["id"]}}], ["Delete “Lab 3”"])
+
+    def crash(task_id):
+        A.delete_task(task_id)
+        raise SystemExit("closed")                                       # the app stops right after the delete
+    store.delete = crash
+    with pytest.raises(SystemExit):
+        TaskTools(store, log).confirm(action_id, True)
+    A.init_db()                                                         # next start
+    assert c.post("/api/ai/undo", json={"action_id": action_id}).json() == {"status": "undone"}
+    assert c.get(f"/api/tasks/{t['id']}").json()["title"] == "Lab 3"
+
+
+def test_undo_restores_a_task_whose_subject_was_deleted(c, fake):
+    ready(c)
+    s = c.post("/api/subjects", json={"name": "Physics", "color": "#3B6EA8"}).json()
+    t = c.post("/api/tasks", json={"title": "Prac report", "subject_id": s["id"]}).json()
+    fake.script = [[calls(("delete_task", {"id": t["id"]}))], [{"type": "text", "text": "ok"}]]
+    card = next(e for e in chat(c) if e["type"] == "confirm")
+    c.post("/api/ai/confirm", json={"action_id": card["action_id"], "approve": True})
+    c.delete(f"/api/subjects/{s['id']}")
+    assert c.post("/api/ai/undo", json={"action_id": card["action_id"]}).json() == {"status": "undone"}
+    back = c.get(f"/api/tasks/{t['id']}").json()
+    assert back["title"] == "Prac report" and back["subject_id"] is None
+
+
 def test_a_change_is_only_claimed_once(c, fake):
     """Two clicks at once: the second sees the change is already being applied."""
     import app as A
