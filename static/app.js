@@ -1208,9 +1208,10 @@ function chatShell(inPanel) {
   const task = c.taskId && state.tasks.find(t => t.id === c.taskId);
   const folder = c.code && codeFolder();
   const modes = folder
-    ? `<div class="chat-quick">
-        <button class="btn btn-ghost btn-sm keep-label" data-action="code-explain-error" ${c.streaming ? 'disabled' : ''}>${icon('alert', 14)}Explain the error</button>
-        <button class="btn btn-ghost btn-sm keep-label" data-action="code-debug" ${c.streaming ? 'disabled' : ''}>${icon('search', 14)}Debug</button></div>`
+    ? `<div class="chat-quick" role="group" aria-label="Quick actions">
+        <button class="chip" data-action="code-explain-error" ${c.streaming ? 'disabled' : ''}>${icon('alert', 13)}Explain the error</button>
+        <button class="chip" data-action="code-debug" ${c.streaming ? 'disabled' : ''}>${icon('search', 13)}Debug</button>
+        ${CODE_ACTIONS.map(([kind, label, ic, title]) => `<button class="chip" data-action="code-action" data-kind="${kind}" title="${esc(title)}" ${c.streaming ? 'disabled' : ''}>${icon(ic, 13)}${kind === 'tests' && folder.mode === 'assignment' ? 'Plan tests' : label}</button>`).join('')}</div>`
     : `<div class="segmented" role="group" aria-label="Study mode">${Object.entries(CHAT_MODES).map(([k, v]) =>
         `<button class="${c.mode === k ? 'on' : ''}" data-action="chat-mode" data-mode="${k}" ${c.streaming ? 'disabled' : ''}>${v}</button>`).join('')}</div>`;
   const intro = !c.messages.length ? (folder ? `<div class="chat-empty">
@@ -1308,7 +1309,7 @@ async function streamChat(payload, signal, onEvent) {
   }
 }
 
-async function chatSend(text) {
+async function chatSend(text, extra = {}) {
   const c = chatState();
   text = text.trim();
   if (!text || c.streaming) return;
@@ -1336,7 +1337,8 @@ async function chatSend(text) {
   while (history.length && history[0].role !== 'user') history = history.slice(1);   // same window as the server
   try {
     const payload = folderId
-      ? { mode: 'code', format: c.format || 'auto', messages: history, code: { folder_id: folderId, files: (codeState().files || []).map(f => f.path) } }
+      ? { mode: 'code', format: c.format || 'auto', messages: history,
+          code: { folder_id: folderId, files: (codeState().files || []).map(f => f.path), ...extra } }
       : { mode: c.mode, format: c.format || 'auto', messages: history, ...(c.taskId ? { task_id: c.taskId } : {}) };
     await streamChat(payload, c.controller.signal, ev => {
       if (!current()) return false;
@@ -1462,7 +1464,7 @@ function codeRender() { $('#content').classList.add('still'); VIEWS.code(); }   
 
 function codeState() {
   return state.code ||= { folders: null, folderId: null, tree: null, treeError: '', expanded: new Set(), open: null,
-    files: [], pinned: [], removed: [], marks: {}, commands: null, cmd: '', keep: false, limit: 30, runs: {},
+    files: [], pinned: [], removed: [], marks: {}, baselines: {}, commands: null, cmd: '', keep: false, limit: 30, runs: {},
     // Each folder keeps its own run, so switching folders doesn't lose one that's still going
     get run() { return this.runs[this.folderId] || null; },
     set run(v) { this.runs[this.folderId] = v; } };
@@ -1689,6 +1691,54 @@ function codeRunRefresh() {
   $('#runInput input')?.focus();
 }
 
+// ── The computer science quick actions (Trace, Big-O, Visualise, tests, Explain my change, practice) ──
+const CODE_ACTIONS = [
+  ['trace', 'Trace', 'layers', 'A table of each variable, line by line'],
+  ['big_o', 'Big-O', 'clock', 'Time and space complexity, with the reasoning'],
+  ['visualise', 'Visualise', 'spark', 'Diagrams of the data structures the code builds'],
+  ['tests', 'Write tests', 'check', 'Normal, edge and error cases'],
+  ['explain_change', 'Explain my change', 'repeat', 'What changed since the last commit, or since you opened the file'],
+  ['practice', 'Practice', 'flag', 'A new problem like this one, with hints'],
+];
+
+async function codeAction(kind) {
+  const k = codeState(), f = codeFolder(), open = k.open?.path;
+  if (!f) return;
+  const box = $('#chatInput'), extra = box?.value.trim() || '';
+  if (!open && kind !== 'practice') { toast('Open a file first.'); return; }
+  if (kind === 'explain_change') {
+    // Another file or folder opened while waiting: this answer is for something that isn't shown any more
+    const moved = () => route() !== 'code' || chatState().code !== f.id || k.folderId !== f.id || k.open?.path !== open;
+    let r;
+    try {
+      r = await api(`/api/code/folders/${f.id}/diff`, { method: 'POST', body: { path: open, baseline: k.baselines[`${f.id}:${open}`] ?? null } });
+    } catch (e) { if (!moved()) toast(e.message, 'error'); return; }
+    if (moved()) return;
+    if (!r.diff) {
+      toast(r.source === 'git' ? `${open} hasn't changed since the last commit.` : `${open} hasn't changed since you opened it.`);
+      return;
+    }
+    try {                                           // show the file as it is now, since that's what's explained
+      const now = await api(`/api/code/folders/${f.id}/file?path=${encodeURIComponent(open)}`);
+      if (!moved()) { k.open = { ...k.open, ...now }; const main = $('#codeMain'); if (main) main.innerHTML = codeViewer(); }
+    } catch (_) { /* the viewer keeps what it had */ }
+    if (moved()) return;
+    const since = r.source === 'git' ? (r.new_file ? 'a new file since the last commit' : 'since the last commit') : 'since I opened it';
+    const cut = r.truncated ? '\n\nThe change is long, so only its first part is included: say what you can\'t see.' : '';
+    if (r.truncated) toast('The change is long, so only its first part goes with your question.');
+    await chatSend(`Explain my change to ${open} (${since}).${cut}${extra ? `\n\n${extra}` : ''}`, { action: 'explain_change', diff: r.diff });
+    return;
+  }
+  const text = {
+    trace: `Trace ${open} step by step${extra ? `, with: ${extra}` : '.'}`,
+    big_o: `What's the Big-O of ${open}?${extra ? ` ${extra}` : ''}`,
+    visualise: `Visualise the data structures in ${open}.${extra ? ` ${extra}` : ''}`,
+    tests: `${f?.mode === 'assignment' ? 'Help me plan tests for' : 'Write tests for'} ${open}.${extra ? ` ${extra}` : ''}`,
+    practice: `Give me a practice problem like ${open || 'this'}${extra ? `, about ${extra}` : ''}.`,
+  }[kind];
+  if (text) await chatSend(text, { action: kind });
+}
+
 /** The last run's output, when it failed, for Explain the error and Debug. */
 function codeFailedOutput() {
   const run = codeState().run;
@@ -1708,6 +1758,7 @@ async function codeOpen(path) {
     const f = await api(`/api/code/folders/${id}/file?path=${encodeURIComponent(path)}`);
     if (k.folderId !== id) return;
     k.open = { ...f, name: path.split('/').pop() };
+    k.baselines[`${id}:${path}`] ??= f.text;       // as first opened (per folder), for Explain my change without git
     k.removed = [];
     for (let p = path.split('/').slice(0, -1), i = 1; i <= p.length; i++) k.expanded.add(p.slice(0, i).join('/'));
   } catch (e) { toast(e.message, 'error'); return; }
@@ -2336,14 +2387,15 @@ const ACTIONS = {
     const text = typed || ran;
     if (!text) { toast('Run the program, or paste the error message into the box, then click Explain the error.'); box?.focus(); return; }
     const from = !typed && ran ? ` from running \`${codeState().run.command}\`` : '';
-    chatSend(`Explain this error${from}:\n\n\`\`\`\n${text}\n\`\`\``);
+    chatSend(`Explain this error${from}:\n\n\`\`\`\n${text}\n\`\`\``, { action: 'explain_error' });
   },
   'code-debug'() {
     const k = codeState(), text = $('#chatInput')?.value.trim() || '', ran = codeFailedOutput();
     if (!text && !k.open && !ran) { toast('Open the file with the problem, or describe it in the box first.'); return; }
     chatSend(`Help me find the bug${k.open ? ` in ${k.open.path}` : ''}.${text ? `\n\n${text}` : ''}` +
-      (ran ? `\n\nWhen I ran \`${k.run.command}\` it printed:\n\`\`\`\n${ran}\n\`\`\`` : ''));
+      (ran ? `\n\nWhen I ran \`${k.run.command}\` it printed:\n\`\`\`\n${ran}\n\`\`\`` : ''), { action: 'debug' });
   },
+  async 'code-action'(el) { await codeAction(el.dataset.kind); },
   'code-run'() { const k = codeState(); k.cmd = $('#runCommand')?.value ?? k.cmd; codeStartRun(k.cmd); },
   async 'code-run-stop'() {
     const run = codeState().run;

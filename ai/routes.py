@@ -54,9 +54,14 @@ class ChatMessage(BaseModel):
     content: str = Field(min_length=1, max_length=20000)
 
 
+CodeAction = Literal["explain_error", "debug", "trace", "big_o", "visualise", "tests", "explain_change", "practice"]
+
+
 class CodeIn(BaseModel):
     folder_id: int
     files: list[str] = Field(default=[], max_length=20)       # chosen with /api/code/folders/{id}/choose
+    action: Optional[CodeAction] = None                        # a quick action (Trace, Big-O, ...)
+    diff: str = Field(default="", max_length=40000)            # for Explain my change (/api/code/folders/{id}/diff)
 
 
 class ChatIn(BaseModel):
@@ -219,7 +224,8 @@ def register(app, get_setting, put_setting, transport_hook=lambda: None, task_co
             history.pop(0)
         code = code_context(c.code.folder_id, c.code.files) if c.mode == "code" else None
         if code:
-            system_text = prompts.code_prompt(code["mode"], code["name"], code["subject"], code["text"], c.format)
+            system_text = prompts.code_prompt(code["mode"], code["name"], code["subject"], code["text"], c.format,
+                                              c.code.action or "", c.code.diff)
         else:
             system_text = prompts.system_prompt(c.mode, task_context(c.task_id) if c.task_id else "", c.format)
         base = (s.base_url or None) if s.provider == "custom" else None
