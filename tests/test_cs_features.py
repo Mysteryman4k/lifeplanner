@@ -180,3 +180,15 @@ def test_reading_a_blob_stops_at_the_limit(proj):
     git(proj, "commit", "-q", "-m", "first")
     assert codediff._git_blob(proj, "HEAD:./calc.py", 5) is None
     assert codediff._git_blob(proj, "HEAD:./calc.py", 1000).startswith(b"def add")
+
+
+def test_a_stuck_git_doesnt_hold_up_explain_my_change(monkeypatch, tmp_path):
+    """git that never finishes (a hung network drive, say) is stopped after the deadline."""
+    import time
+    stuck = tmp_path / "stuck.py"
+    stuck.write_text("import time\ntime.sleep(60)\n")
+    monkeypatch.setattr(codediff, "BLOB_TIMEOUT", 1)
+    monkeypatch.setattr(codediff, "_git_call", lambda root, args: ([sys.executable, str(stuck)], None))
+    start = time.time()
+    assert codediff._git_blob(tmp_path, "HEAD:./x.py", 1000) is None
+    assert time.time() - start < 10

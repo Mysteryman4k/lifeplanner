@@ -9,10 +9,12 @@ import difflib
 import os
 import shutil
 import subprocess
+import threading
 
 from .codebase import MAX_FILE, CodeError, Folder
 
 MAX_DIFF = 20_000                  # characters of diff sent with a question
+BLOB_TIMEOUT = 10                  # seconds to read the committed copy
 
 
 def _git_call(root, args: list):
@@ -51,12 +53,16 @@ def _git_blob(root, spec: str, limit: int):
                              creationflags=0x08000000 if os.name == "nt" else 0)
     except OSError:
         return None
-    try:
-        data = p.stdout.read(limit + 1)
-    finally:
-        p.kill()
-        p.wait()
-    return None if len(data) > limit else data
+    got = {}
+    reader = threading.Thread(target=lambda: got.update(data=p.stdout.read(limit + 1)), daemon=True)
+    reader.start()
+    reader.join(BLOB_TIMEOUT)                             # git stuck: give up rather than wait forever
+    stuck = reader.is_alive()
+    p.kill()                                              # also ends a read still waiting on the pipe
+    p.wait()
+    reader.join(2)
+    data = got.get("data")
+    return None if stuck or data is None or len(data) > limit else data
 
 
 def committed(folder: Folder, rel: str):
