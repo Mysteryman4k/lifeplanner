@@ -359,3 +359,19 @@ def test_recover_after_a_crash_while_writing_without_hard_links(c, A, fake, proj
     expected = (ORIGINAL, "proposed") if written == "half" else (new, "applied")
     assert ((proj / "calc.py").read_bytes(), store.get(card["change_id"])["status"]) == expected
     assert [p.name for p in proj.iterdir() if p.name.startswith(".eut-")] == []
+
+
+def test_recover_keeps_an_edit_saved_just_before_an_undo_moved_the_file(c, A, fake, proj):
+    """Undo of a created file was cut off right after the move, and the moved file had been edited: keep it."""
+    from ai.code_changes import ChangeStore
+    f = setup(c, proj)
+    card = cards(propose(c, fake, f, {"path": "notes.txt", "replace": "hello\n", "summary": "new"}))[0]
+    c.post(f"/api/code/changes/{card['change_id']}/apply")
+    store = ChangeStore(A.db, A.DB_PATH.parent)
+    store.set(card["change_id"], status="undoing")
+    hold = ChangeStore.hold_path(proj / "notes.txt", str(card["change_id"]))
+    hold.write_bytes(b"hello, with my edit\n")
+    (proj / "notes.txt").unlink()
+    store.recover()
+    assert (proj / "notes.txt").read_bytes() == b"hello, with my edit\n"
+    assert store.get(card["change_id"])["status"] == "applied" and not hold.exists()

@@ -323,8 +323,9 @@ class ChangeStore:
                 if hold.is_file() and target.exists():
                     self._tidy_hold(c, target, hold)
                 if hold.is_file() and not target.exists():   # the crash came while the file was moved aside
-                    if c["status"] == "undoing" and not c["backup"]:
-                        hold.unlink()                        # Undo of a file the change made: it should be gone
+                    if (c["status"] == "undoing" and not c["backup"] and c["applied_hash"]
+                            and sha(hold.read_bytes()) == c["applied_hash"]):
+                        hold.unlink()                        # Undo of a file the change made, unedited: it goes
                     else:
                         try:
                             self._put(hold, target)          # put the file back as it was before the click
