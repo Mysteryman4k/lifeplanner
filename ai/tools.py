@@ -163,8 +163,9 @@ class TaskTools:
             spawned = (after.get("next_task") or {}).get("id")
             return {"op": "complete", "task_id": before["id"], "before": before, "spawned": spawned}
         if name == "delete_task":
+            notes = self.store.note_ids(before["id"])
             self.store.delete(before["id"])
-            return {"op": "delete", "task_id": before["id"], "before": before}
+            return {"op": "delete", "task_id": before["id"], "before": before, "notes": notes}
         raise ToolError(f"There's no tool called {name}.")
 
     # ── after the reply: the student's buttons ──
@@ -174,16 +175,27 @@ class TaskTools:
             self.log.set_status(action_id, "rejected")
             return {"status": "rejected"}
         ops, failed = [], []
-        for call in calls:
-            try:
-                ops.append(self._apply(call))
-            except ToolError as e:
-                failed.append(str(e))
-        self.log.complete_pending(action_id, ops)
+        try:
+            for call in calls:
+                try:
+                    ops.append(self._apply(call))
+                except ToolError as e:
+                    failed.append(str(e))
+        finally:
+            self.log.complete_pending(action_id, ops)       # whatever was applied can still be undone
         return {"status": "done", "done": len(ops), "failed": failed}
 
     def undo(self, action_id: int) -> dict:
         ops = self.log.take_done(action_id)
+        try:
+            self._reverse(ops)
+        except Exception:
+            self.log.set_status(action_id, "done")          # not undone: let the student try again
+            raise
+        self.log.set_status(action_id, "undone")
+        return {"status": "undone"}
+
+    def _reverse(self, ops: list):
         for op in reversed(ops):
             if op["op"] == "add":
                 self.store.delete(op["task_id"])
@@ -193,5 +205,4 @@ class TaskTools:
                 self.store.restore(op["before"])
             elif op["op"] == "delete":
                 self.store.restore(op["before"])
-        self.log.set_status(action_id, "undone")
-        return {"status": "undone"}
+                self.store.relink_notes(op["task_id"], op.get("notes") or [])

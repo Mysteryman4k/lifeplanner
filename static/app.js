@@ -1112,7 +1112,7 @@ function chatCard(card, i, n) {
     const title = card.kind === 'action' ? esc(card.summary) : `Done: ${card.items.map(esc).join('; ')}`;
     return `<div class="chat-card ${undone ? 'muted-card' : 'ok'}">${icon(undone ? 'x' : 'check', 15)}
       <span class="chat-card-text">${undone ? `Undone · <s>${title}</s>` : title}</span>
-      ${undone ? '' : `<button class="btn btn-ghost btn-sm keep-label" data-action="chat-undo" ${ref}>${icon('repeat', 14)}Undo</button>`}</div>`;
+      ${undone ? '' : `<button class="btn btn-ghost btn-sm keep-label" data-action="chat-undo" ${ref} ${card.busy ? 'disabled' : ''}>${icon('repeat', 14)}Undo</button>`}</div>`;
   }
   if (card.status === 'rejected') {
     return `<div class="chat-card muted-card">${icon('x', 15)}<span class="chat-card-text">Left as it was · <s>${card.items.map(esc).join('; ')}</s></span></div>`;
@@ -1562,13 +1562,15 @@ function celebrate(from) {
 const ACTIONS = {
   async 'chat-undo'(el) {
     const card = chatState().messages[Number(el.dataset.i)]?.cards?.[Number(el.dataset.c)];
-    if (!card) return;
+    if (!card || card.busy) return;
+    card.busy = true; chatRefresh();
     try {
       await api('/api/ai/undo', { method: 'POST', body: { action_id: card.id } });
       card.status = 'undone';
       await reloadTasks();
       toast('Undone');
     } catch (e) { toast(e.message, 'error'); }
+    card.busy = false;
     chatRefresh();
   },
   async 'chat-confirm'(el) {

@@ -1270,6 +1270,15 @@ class TaskStore:
     def delete(self, task_id: int):
         delete_task(task_id)
 
+    def note_ids(self, task_id: int) -> list:
+        """Notes linked to a task (deleting the task unlinks them, so Undo links them again)."""
+        with db() as conn:
+            return [r["id"] for r in conn.execute("SELECT id FROM notes WHERE task_id=?", (task_id,))]
+
+    def relink_notes(self, task_id: int, note_ids: list):
+        with db() as conn:
+            conn.executemany("UPDATE notes SET task_id=? WHERE id=? AND task_id IS NULL", [(task_id, n) for n in note_ids])
+
     def restore(self, row: dict):
         """Put a task back exactly as it was (Undo): update it if it still exists, otherwise re-create it."""
         cols = [c for c in self.COLUMNS if c in row]
@@ -1306,11 +1315,14 @@ class ActionLog:
                                 ("; ".join(summaries), json.dumps(calls))).lastrowid
 
     def _take(self, action_id: int, status: str) -> list:
+        """Claim the action in one step, so a double-click can't apply (or undo) it twice."""
         with db() as conn:
             row = conn.execute("SELECT status, data FROM ai_actions WHERE id=?", (action_id,)).fetchone()
+            claimed = row and conn.execute("UPDATE ai_actions SET status=? WHERE id=? AND status=?",
+                                           ({"pending": "applying", "done": "undoing"}[status], action_id, status)).rowcount
         if not row:
             raise HTTPException(404, "That change isn't known any more.")
-        if row["status"] != status:
+        if not claimed:
             raise HTTPException(409, {"pending": "That change was already confirmed or declined.",
                                       "done": "That change can't be undone now (it was already undone)."}[status])
         return json.loads(row["data"])

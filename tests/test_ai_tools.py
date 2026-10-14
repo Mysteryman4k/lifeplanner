@@ -90,6 +90,31 @@ def test_deleting_always_asks_first(c, fake):
     assert back["title"] == "Old task" and back["notes"] == "keep these notes" and back["priority"] == "high"
 
 
+def test_undoing_a_delete_relinks_its_notes(c, fake):
+    ready(c)
+    t = c.post("/api/tasks", json={"title": "Essay"}).json()
+    note = c.post("/api/notes", json={"title": "Essay plan", "body": "intro", "task_id": t["id"]}).json()
+    fake.script = [[calls(("delete_task", {"id": t["id"]}))], [{"type": "text", "text": "ok"}]]
+    card = next(e for e in chat(c) if e["type"] == "confirm")
+    c.post("/api/ai/confirm", json={"action_id": card["action_id"], "approve": True})
+    assert next(n for n in c.get("/api/notes").json() if n["id"] == note["id"])["task_id"] is None
+    assert c.post("/api/ai/undo", json={"action_id": card["action_id"]}).json() == {"status": "undone"}
+    assert next(n for n in c.get("/api/notes").json() if n["id"] == note["id"])["task_id"] == t["id"]
+
+
+def test_a_change_is_only_claimed_once(c, fake):
+    """Two clicks at once: the second sees the change is already being applied."""
+    import app as A
+    ready(c)
+    fake.script = [[calls(*[("add_task", {"title": f"Part {i}"}) for i in range(1, 5)])], [{"type": "text", "text": "ok"}]]
+    card = next(e for e in chat(c) if e["type"] == "confirm")
+    log = A.ActionLog()
+    log.take_pending(card["action_id"])                                 # first click claims it
+    with pytest.raises(A.HTTPException) as e:
+        log.take_pending(card["action_id"])                             # second click is refused
+    assert e.value.status_code == 409
+
+
 def test_keep_leaves_the_task_alone(c, fake):
     ready(c)
     t = c.post("/api/tasks", json={"title": "Keep me"}).json()
