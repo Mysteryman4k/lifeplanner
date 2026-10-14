@@ -1708,7 +1708,7 @@ async function codeAction(kind) {
   if (!open && kind !== 'practice') { toast('Open a file first.'); return; }
   if (kind === 'explain_change') {
     // Another file or folder opened while waiting: this answer is for something that isn't shown any more
-    const moved = () => k.folderId !== f.id || k.open?.path !== open;
+    const moved = () => route() !== 'code' || chatState().code !== f.id || k.folderId !== f.id || k.open?.path !== open;
     let r;
     try {
       r = await api(`/api/code/folders/${f.id}/diff`, { method: 'POST', body: { path: open, baseline: k.baselines[`${f.id}:${open}`] ?? null } });

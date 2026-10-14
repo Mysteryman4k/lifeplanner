@@ -1042,6 +1042,16 @@ def test_cs_quick_actions(server, page, tmp_path_factory):
         system = last_request()["messages"][0]["content"]
         assert "Task: explain my change" in system and "-    return -1" in system and "+    return None" in system
         page.wait_for_selector(".code-text >> text=return None")                        # the viewer shows it as it is now
+        # Leaving for the Study page while it's being worked out: nothing is sent there
+        sent = len([r for r in A.fake_net_seen if r.url.path.endswith("/chat/completions")])
+        (root / "search.py").write_text((root / "search.py").read_text().replace("return None", "return -2"), encoding="utf-8")
+        page.route("**/diff", lambda route: (page.wait_for_timeout(800), route.continue_()))
+        page.click(".chat-quick [data-kind=explain_change]")
+        page.evaluate("location.hash = '#/study'")
+        page.wait_for_timeout(1500)
+        page.unroute("**/diff")
+        assert len([r for r in A.fake_net_seen if r.url.path.endswith("/chat/completions")]) == sent
+        assert page.locator(".chat-msg.me").count() == 0
         if os.environ.get("EUT_SHOTS"):
             page.screenshot(path=os.path.join(os.environ["EUT_SHOTS"], "stage9-actions.png"))
     finally:                                                  # leave the shared server as it was
