@@ -824,7 +824,8 @@ def test_code_workspace(server, page, tmp_path_factory):
     page.wait_for_selector(".code-modes button.on >> text=Personal")
     page.click(".tree-row >> text=db")
     page.click(".tree-row >> text=queries.sql")
-    page.wait_for_selector(".code-file-head .explain-only")
+    page.wait_for_selector(".code-file-head >> text=queries.sql")
+    assert "main.py" in page.input_value("#runCommand")          # SQL itself can't run; the project's main.py can
     assert page.locator(".code-cloud-note").count() == 0
     page.evaluate("state.ai.provider = 'openai'; chatRefresh()")
     assert "Code you send goes to OpenAI" in page.locator(".code-cloud-note").inner_text()
@@ -902,5 +903,79 @@ def test_proposed_changes(server, page, tmp_path_factory):
     page.click(".change-card.proposed [data-action=code-change-apply]")
     page.locator(".change-card.stale").wait_for()
     assert (root / "calc.py").read_bytes() == original + b"# mine\r\n"
+    page.evaluate("chatReset()")
+    page.request.post(f"{server}/api/ai/terms/withdraw", headers=tok)
+
+
+@pytest.mark.ui
+def test_running_code(server, page, tmp_path_factory):
+    """The Run notice once, a program that asks for input, a server kept running with an Open in browser link
+    and Stop, and a crash whose line is linked and explained."""
+    import json
+    import os
+    import sys
+
+    import app as A
+    tok = {A.TOKEN_HEADER: A.SESSION_TOKEN}
+    root = tmp_path_factory.mktemp("lab8")
+    (root / "hello.py").write_text("name = input('Name? ')\nprint('Hello,', name)\n", encoding="utf-8")
+    (root / "server.py").write_text("import time\nprint('Running on http://127.0.0.1:5057/', flush=True)\ntime.sleep(60)\n")
+    (root / "crash.py").write_text("marks = []\nprint(sum(marks) / len(marks))\n")
+    terms = page.request.get(f"{server}/api/ai/terms").json()
+    page.request.post(f"{server}/api/ai/terms/agree", headers=tok,
+                      data={"version": terms["version"], "ticks": {k: True for k in terms["ticks"]}})
+    page.request.put(f"{server}/api/ai/settings", headers=tok,
+                     data={"provider": "ollama", "model": "qwen2.5:7b", "code_enabled": True})
+    folder = page.request.post(f"{server}/api/code/folders", headers=tok, data={"path": str(root), "mode": "assignment"}).json()
+    nl = chr(10)
+    say = "data: " + json.dumps({"choices": [{"delta": {"content": "You divide by len(marks), which is 0."}}]}) + nl + nl
+    A.fake_net["POST localhost/v1/chat/completions"] = (200, say)
+    py = f'"{sys.executable}"'
+
+    page.goto(f"{server}/#/code")
+    page.reload()
+    page.wait_for_selector(".code-tree")
+    if page.locator("#codeFolder").count():                    # other tests' folders may be linked too
+        page.select_option("#codeFolder", str(folder["id"]))
+    page.click(".tree-row >> text=hello.py")
+    page.wait_for_selector("#runCommand")
+    assert "hello.py" in page.input_value("#runCommand")
+    page.fill("#runCommand", f"{py} hello.py")
+    page.click("[data-action=code-run]")
+    page.wait_for_selector("#confirm:not([hidden]) >> text=Only run code you trust")         # the Run notice, once
+    page.click("#confirmYes")
+    page.wait_for_selector("#runText >> text=Name?")
+    page.fill("#runInput input", "Sean")
+    page.keyboard.press("Enter")
+    page.wait_for_selector("#runStatus >> text=Finished")
+    assert page.inner_text("#runText").strip() == "Name? Sean\nHello, Sean"
+
+    # A server: Keep running, an Open in browser link, then Stop
+    page.click(".tree-row >> text=server.py")
+    page.wait_for_selector(".code-file-head >> text=server.py")
+    page.fill("#runCommand", f"{py} server.py")
+    page.check("#runKeep")
+    page.click("[data-action=code-run]")
+    page.wait_for_selector("#runLinks a >> text=127.0.0.1:5057")
+    assert page.get_attribute("#runLinks a", "href") == "http://127.0.0.1:5057/"
+    page.click("[data-action=code-run-stop]")
+    page.wait_for_selector("#runStatus >> text=Stopped")
+    assert page.locator("#confirm:not([hidden])").count() == 0                                # not asked again
+
+    # A crash: the line is linked and marked, and Explain the error sends the output
+    page.click(".tree-row >> text=crash.py")
+    page.wait_for_selector(".code-file-head >> text=crash.py")
+    page.uncheck("#runKeep")
+    page.fill("#runCommand", f"{py} crash.py")
+    page.click("[data-action=code-run]")
+    page.wait_for_selector("#runStatus >> text=exit code 1")
+    page.wait_for_selector(".run-links >> text=crash.py line 2")
+    assert page.locator(".code-gutter .marked").inner_text() == "2"
+    if os.environ.get("EUT_SHOTS"):
+        page.screenshot(path=os.path.join(os.environ["EUT_SHOTS"], "stage8-run.png"))
+    page.click("[data-action=code-explain-error]")
+    page.wait_for_selector(".chat-msg.ai .chat-tools")
+    asked = json.loads([r for r in A.fake_net_seen if r.url.path.endswith("/chat/completions")][-1].content)
+    assert "ZeroDivisionError" in asked["messages"][-1]["content"] and "from running" in asked["messages"][-1]["content"]
     page.evaluate("chatReset()")
     page.request.post(f"{server}/api/ai/terms/withdraw", headers=tok)

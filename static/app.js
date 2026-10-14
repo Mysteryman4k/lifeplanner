@@ -641,6 +641,7 @@ const VIEWS = {
     $('#content').innerHTML = `<div class="code-ws">${treePane}${main}<section class="code-chat">${chatShell(false)}</section></div>`;
     codeScrollToMark();
     chatAfterRender();
+    if (k.run?.status === 'running') codePoll();
   },
 
   settings() {
@@ -1344,6 +1345,7 @@ async function chatSend(text) {
       else if (ev.type === 'usage') c.tokens += (ev.input || 0) + (ev.output || 0);
       else if (ev.type === 'error') reply.error = ev.message;
       else if (ev.type === 'action') { (reply.cards ||= []).push({ kind: 'action', id: ev.action_id, summary: ev.summary, status: 'done' }); tasksChanged = true; }
+      else if (ev.type === 'run_suggestion') (reply.cards ||= []).push({ kind: 'run', command: ev.command, why: ev.why, status: 'pending' });
       else if (ev.type === 'change') {           // a proposed file change (a second edit to the same file updates its card)
         const cards = reply.cards ||= [], card = { kind: 'change', id: ev.change_id, path: ev.path, summary: ev.summary, newFile: ev.new_file, diff: ev.diff, status: 'proposed' };
         const same = cards.find(x => x.kind === 'change' && x.id === ev.change_id);
@@ -1403,6 +1405,14 @@ function changeCard(card, ref) {
 function chatCard(card, i, n) {
   const ref = `data-i="${i}" data-c="${n}"`;
   if (card.kind === 'change') return changeCard(card, ref);
+  if (card.kind === 'run') {
+    return `<div class="chat-card run-card ${card.status}">${icon('code', 15)}<div class="chat-card-text">
+        <b>${card.status === 'ran' ? 'Ran' : card.status === 'cancelled' ? 'Not run' : 'Run this?'}</b>${card.why ? ` <span class="muted small">${esc(card.why)}</span>` : ''}
+        <pre class="chat-code run-suggestion"><code>${esc(card.command)}</code></pre>
+        ${card.status === 'pending' ? '<span class="muted small">It runs only if you click Run.</span>' : ''}</div>
+      ${card.status === 'pending' ? `<div class="chat-card-btns"><button class="btn btn-ghost btn-sm" data-action="run-suggest-cancel" ${ref}>Cancel</button>
+        <button class="btn btn-primary btn-sm" data-action="run-suggest-run" ${ref}>${icon('up', 14)}Run</button></div>` : ''}</div>`;
+  }
   if (card.kind === 'action' || card.status === 'approved' || card.status === 'undone') {
     const undone = card.status === 'undone';
     const title = card.kind === 'action' ? esc(card.summary) : `Done: ${card.items.map(esc).join('; ')}`;
@@ -1452,7 +1462,10 @@ function codeRender() { $('#content').classList.add('still'); VIEWS.code(); }   
 
 function codeState() {
   return state.code ||= { folders: null, folderId: null, tree: null, treeError: '', expanded: new Set(), open: null,
-    files: [], pinned: [], removed: [], marks: {} };
+    files: [], pinned: [], removed: [], marks: {}, commands: null, cmd: '', keep: false, limit: 30, runs: {},
+    // Each folder keeps its own run, so switching folders doesn't lose one that's still going
+    get run() { return this.runs[this.folderId] || null; },
+    set run(v) { this.runs[this.folderId] = v; } };
 }
 function codeFolder() { const k = codeState(); return (k.folders || []).find(f => f.id === k.folderId) || null; }
 
@@ -1470,12 +1483,14 @@ async function codeLoadTree() {
   if (route() === 'code') codeRender();
   try { const tree = await api(`/api/code/folders/${id}/tree`); if (k.folderId === id) k.tree = tree; }
   catch (e) { if (k.folderId === id) k.treeError = e.message; }
+  if (k.folderId === id && !k.open) await codeLoadCommands();             // the project's own commands
   if (k.folderId === id && route() === 'code') codeRender();
 }
 
 function codeSelectFolder(id) {
   const k = codeState();
-  Object.assign(k, { folderId: id, tree: null, treeError: '', expanded: new Set(), open: null, files: [], pinned: [], removed: [], marks: {} });
+  Object.assign(k, { folderId: id, tree: null, treeError: '', expanded: new Set(), open: null, files: [], pinned: [], removed: [], marks: {},
+    commands: null, cmd: '', cmdEdited: false, customRun: false });
   chatReset(null, id);
   codeLoadTree();
 }
@@ -1503,7 +1518,7 @@ function codeTreeNodes(nodes, depth = 0) {
 
 function codeViewer() {
   const k = codeState(), f = k.open;
-  if (!f) return emptyState('file', 'Choose a file', 'Pick a file on the left to read it here. Hidden files stay hidden and are never sent.');
+  if (!f) return emptyState('file', 'Choose a file', 'Pick a file on the left to read it here. Hidden files stay hidden and are never sent.') + codeRunPanel();
   const lines = f.text.split('\n');
   let html = esc(f.text);
   if (f.highlight && window.hljs?.getLanguage(f.highlight)) {
@@ -1512,13 +1527,159 @@ function codeViewer() {
   const marks = k.marks[f.path] || [];
   const sending = k.files.some(x => x.path === f.path);
   return `<div class="code-file-head">${icon('file', 15)}<b class="code-path">${esc(f.path)}</b><span class="pill">${esc(f.language)}</span>
-      ${f.tier === 3 ? '<span class="pill explain-only" title="EasyUniTrack can explain, debug and trace this by reading it, but can\'t run it">Explain only</span>' : ''}
       <span class="spacer"></span>
       <button class="btn btn-ghost btn-sm keep-label" data-action="${sending ? 'code-unsend' : 'code-send-open'}" data-path="${esc(f.path)}">${icon(sending ? 'check' : 'plus', 14)}${sending ? 'Sending' : 'Send with question'}</button></div>
     <div class="code-view" id="codeView"><div class="code-lines">
       ${marks.map(n => `<div class="code-mark" style="top:${(n - 1) * 20 + 10}px" title="Line ${n} is in the error"></div>`).join('')}
       <div class="code-gutter" aria-hidden="true">${lines.map((_, i) => `<span class="${marks.includes(i + 1) ? 'marked' : ''}">${i + 1}</span>`).join('')}</div>
-      <pre class="code-text"><code class="hljs">${html}</code></pre></div></div>`;
+      <pre class="code-text"><code class="hljs">${html}</code></pre></div></div>${codeRunPanel()}`;
+}
+
+// ── Running code: the student's click only, in the linked folder, with a time limit and Stop ──
+const RUN_LIMITS = [[30, '30 s'], [60, '1 min'], [120, '2 min'], [300, '5 min']];
+const ANSI = new RegExp(String.fromCharCode(27) + '\\[[0-9;?]*[A-Za-z]', 'g');
+
+function codeRunPanel() {
+  const k = codeState(), run = k.run, cmds = k.commands?.commands || [];
+  const running = run?.status === 'running';
+  if (!cmds.length && !run && !k.customRun) {
+    if (!k.commands) return '';
+    return `<div class="code-run"><div class="run-bar explain-bar">${icon('alert', 15)}
+      <span><b>Explain only.</b> ${esc(k.commands.explain_only || '')}</span>
+      <button class="btn btn-ghost btn-sm" data-action="code-run-custom">Run a command anyway</button></div></div>`;
+  }
+  const chosen = cmds.find(c => c.command === k.cmd);
+  const missing = chosen?.missing?.length ? `<span class="run-note">${icon('alert', 13)}${esc(chosen.missing.join(', '))} wasn't found on this PC.</span>` : '';
+  const why = chosen?.why ? `<span class="run-note">${esc(chosen.why)}</span>` : '';
+  return `<div class="code-run">
+    <div class="run-bar">
+      <input class="input run-command" id="runCommand" list="runCommands" value="${esc(k.cmd || '')}" aria-label="Command to run" spellcheck="false" ${running ? 'disabled' : ''}>
+      <datalist id="runCommands">${cmds.map(c => `<option value="${esc(c.command)}">${esc(c.label)}</option>`).join('')}</datalist>
+      <label class="run-keep" title="For servers and apps: no time limit, Stop when you're done"><input type="checkbox" id="runKeep" ${k.keep ? 'checked' : ''} ${running ? 'disabled' : ''}>Keep running</label>
+      ${k.keep ? '' : `<select class="select select-sm" id="runLimit" aria-label="Time limit" ${running ? 'disabled' : ''}>${RUN_LIMITS.map(([v, l]) => opt(v, l, k.limit || 30)).join('')}</select>`}
+      ${running ? `<button class="btn btn-ghost btn-sm" data-action="code-run-stop">${icon('x', 15)}Stop</button>`
+        : `<button class="btn btn-primary btn-sm" data-action="code-run">${icon('up', 15)}Run</button>`}
+    </div>
+    ${missing || why ? `<div class="run-notes">${missing}${why}</div>` : ''}
+    ${run ? codeRunOutput() : ''}
+  </div>`;
+}
+
+function codeRunOutput() {
+  const run = codeState().run;
+  const state = { running: `${icon('clock', 13)}Running… <span id="runElapsed">${run.elapsed}</span> s`,
+    finished: run.exit_code === 0 ? `${icon('check', 13)}Finished in ${run.elapsed} s` : `${icon('alert', 13)}Ended with exit code ${run.exit_code} after ${run.elapsed} s`,
+    timed_out: `${icon('alert', 13)}${esc(run.reason)}`, stopped: `${icon('x', 13)}Stopped after ${run.elapsed} s` }[run.status] || '';
+  const lines = run.status !== 'running' ? codeErrorTargets(run.text) : [];
+  return `<div class="run-out">
+    <div class="run-status ${run.status} ${run.exit_code ? 'failed' : ''}" id="runStatus">${state}
+      <span class="spacer"></span><button class="icon-btn" data-action="code-run-clear" aria-label="Clear the output" title="Clear">${icon('trash', 14)}</button></div>
+    <div class="run-links" id="runLinks">${codeRunLinks(run)}${lines.map(t => `<button class="link-btn" data-action="code-goto" data-path="${esc(t.path)}" data-line="${t.line}">${esc(t.path)} line ${t.line}</button>`).join(' ')}</div>
+    <pre class="run-text" id="runText" aria-live="polite">${esc(run.text.replace(ANSI, ''))}${run.truncated ? '\n… (the rest of the output isn\'t shown: it\'s over 200 KB)' : ''}</pre>
+    ${run.status === 'running' ? `<form class="run-input" id="runInput"><input class="input" name="line" placeholder="Type input for the program and press Enter" autocomplete="off" aria-label="Input for the program">
+      <button class="btn btn-ghost btn-sm" type="submit">Send</button></form>` : ''}
+  </div>`;
+}
+
+function codeRunLinks(run) {
+  return (run.links || []).map(u => `<a class="btn btn-ghost btn-sm keep-label" href="${esc(u.replace('0.0.0.0', 'localhost'))}" target="_blank" rel="noopener">${icon('external', 13)}Open ${esc(u.replace(/^https?:\/\//, ''))} in browser</a>`).join('');
+}
+
+/** Files and lines an error in the output points at (only files in this folder). */
+function codeErrorTargets(text) {
+  const files = codeFiles(), out = [];
+  for (const { name, line } of errorLines((text || '').replace(ANSI, ''))) {
+    const path = files.find(p => p === name || name.endsWith('/' + p))
+      || (files.filter(p => p.split('/').pop() === name.split('/').pop()).length === 1 && files.find(p => p.split('/').pop() === name.split('/').pop()));
+    if (path && !out.some(t => t.path === path && t.line === line)) out.push({ path, line });
+  }
+  return out.slice(-4);
+}
+
+async function codeLoadCommands() {
+  const k = codeState(), id = k.folderId, open = k.open?.path || '';
+  try {
+    const r = await api(`/api/code/folders/${id}/commands?open_file=${encodeURIComponent(open)}`);
+    if (k.folderId !== id) return;
+    k.commands = r;
+    const mine = r.commands.find(c => c.label === `Run ${open.split('/').pop()}`);
+    if (!k.cmdEdited || !k.cmd) {
+      const pick = mine || r.commands[0];
+      k.cmd = pick?.command || '';
+      k.keep = !!pick?.keep_running;
+    }
+  } catch (_) { k.commands = { commands: [], explain_only: '' }; }
+}
+
+async function codeStartRun(command) {
+  const k = codeState(), f = codeFolder();
+  if (!f || !command.trim()) { toast('Type a command to run first.', 'error'); return; }
+  if (!state.ai?.run_notice) {
+    const ok = await confirmDialog('Before you run code',
+      'Code runs on this PC with your permissions, so it can read and change your files, and read the AI key saved in EasyUniTrack. Only run code you trust. ' +
+      'Nothing runs unless you click Run, and EasyUniTrack stops a run at its time limit or when you click Stop.', 'I understand', 'primary');
+    if (!ok) return;
+    try { await api('/api/ai/run-notice', { method: 'POST' }); state.ai.run_notice = true; } catch (e) { toast(e.message, 'error'); return; }
+  }
+  try {
+    const r = await api(`/api/code/folders/${f.id}/run`, { method: 'POST',
+      body: { command: command.trim(), keep_running: !!k.keep, timeout: Number(k.limit) || 30 } });
+    k.run = { ...r, text: r.output };
+  } catch (e) { toast(e.message, 'error'); return; }
+  codeRunRefresh();
+  codePoll();
+}
+
+function codePoll(run = codeState().run) {
+  const k = codeState();
+  if (!run || run.status !== 'running') return;
+  clearTimeout(run.timer);                                 // one poller per run, whichever folder is shown
+  run.timer = setTimeout(async () => {
+    if (k.runs[run.folder_id] !== run) return;           // cleared or replaced
+    try {
+      const v = await api(`/api/code/runs/${run.id}?since=${run.next}`);
+      if (k.runs[run.folder_id] !== run) return;
+      const shown = k.folderId === run.folder_id && route() === 'code';
+      const grew = !!v.output, done = v.status !== 'running';
+      Object.assign(run, { ...v, text: run.text + v.output });
+      if (done) {
+        if (shown) {
+          codeRunRefresh();
+          if (run.exit_code) codeMarkErrors(run.text.replace(ANSI, ''));
+        }
+        return;
+      }
+      if (grew && shown) {                                        // add to the output without redrawing the input box
+        const pre = $('#runText');
+        if (pre) {
+          const atEnd = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 40;
+          pre.textContent = run.text.replace(ANSI, '');
+          if (atEnd) pre.scrollTop = pre.scrollHeight;
+        }
+        const links = $('#runLinks');
+        if (links && run.links?.length) links.innerHTML = codeRunLinks(run);
+      }
+      const el = shown && $('#runElapsed');
+      if (el) el.textContent = run.elapsed;
+    } catch (_) { /* try again on the next tick */ }
+    codePoll(run);
+  }, 300);
+}
+
+function codeRunRefresh() {
+  const panel = $('.code-run');
+  const html = codeRunPanel();
+  if (panel) panel.outerHTML = html || '<div class="code-run"></div>';
+  const pre = $('#runText');
+  if (pre) pre.scrollTop = pre.scrollHeight;
+  $('#runInput input')?.focus();
+}
+
+/** The last run's output, when it failed, for Explain the error and Debug. */
+function codeFailedOutput() {
+  const run = codeState().run;
+  if (!run || run.status === 'running' || (run.exit_code === 0 && run.status === 'finished')) return '';
+  return run.text.replace(ANSI, '').slice(-4000);
 }
 
 function codeScrollToMark() {
@@ -1536,7 +1697,7 @@ async function codeOpen(path) {
     k.removed = [];
     for (let p = path.split('/').slice(0, -1), i = 1; i <= p.length; i++) k.expanded.add(p.slice(0, i).join('/'));
   } catch (e) { toast(e.message, 'error'); return; }
-  await codeChoose('');
+  await Promise.all([codeChoose(''), codeLoadCommands()]);
   if (route() === 'code') codeRender();
 }
 
@@ -2157,14 +2318,41 @@ const ACTIONS = {
     codeChoose('').then(() => { const main = $('#codeMain'); if (k.open?.path === p && main) main.innerHTML = codeViewer(); });
   },
   'code-explain-error'() {
-    const box = $('#chatInput'), text = box?.value.trim();
-    if (!text) { toast('Paste the error message into the box first, then click Explain the error.'); box?.focus(); return; }
-    chatSend(`Explain this error:\n\n\`\`\`\n${text}\n\`\`\``);
+    const box = $('#chatInput'), typed = box?.value.trim(), ran = codeFailedOutput();
+    const text = typed || ran;
+    if (!text) { toast('Run the program, or paste the error message into the box, then click Explain the error.'); box?.focus(); return; }
+    const from = !typed && ran ? ` from running \`${codeState().run.command}\`` : '';
+    chatSend(`Explain this error${from}:\n\n\`\`\`\n${text}\n\`\`\``);
   },
   'code-debug'() {
-    const k = codeState(), text = $('#chatInput')?.value.trim() || '';
-    if (!text && !k.open) { toast('Open the file with the problem, or describe it in the box first.'); return; }
-    chatSend(`Help me find the bug${k.open ? ` in ${k.open.path}` : ''}.${text ? `\n\n${text}` : ''}`);
+    const k = codeState(), text = $('#chatInput')?.value.trim() || '', ran = codeFailedOutput();
+    if (!text && !k.open && !ran) { toast('Open the file with the problem, or describe it in the box first.'); return; }
+    chatSend(`Help me find the bug${k.open ? ` in ${k.open.path}` : ''}.${text ? `\n\n${text}` : ''}` +
+      (ran ? `\n\nWhen I ran \`${k.run.command}\` it printed:\n\`\`\`\n${ran}\n\`\`\`` : ''));
+  },
+  'code-run'() { const k = codeState(); k.cmd = $('#runCommand')?.value ?? k.cmd; codeStartRun(k.cmd); },
+  async 'code-run-stop'() {
+    const run = codeState().run;
+    if (run) { try { await api(`/api/code/runs/${run.id}/stop`, { method: 'POST' }); } catch (e) { toast(e.message, 'error'); } }
+  },
+  'code-run-clear'() { const k = codeState(); if (k.run?.status !== 'running') { k.run = null; codeRunRefresh(); } },
+  'code-run-custom'() { const k = codeState(); k.customRun = true; k.cmd = ''; codeRunRefresh(); $('#runCommand')?.focus(); },
+  'code-goto'(el) {
+    const k = codeState(), path = el.dataset.path, line = Number(el.dataset.line);
+    k.marks = { [path]: [line] };
+    if (k.open?.path === path) { $('#codeMain').innerHTML = codeViewer(); codeScrollToMark(); } else codeOpen(path).then(codeScrollToMark);
+  },
+  'run-suggest-run'(el) {
+    const card = chatState().messages[Number(el.dataset.i)]?.cards?.[Number(el.dataset.c)];
+    if (!card) return;
+    const k = codeState();
+    k.cmd = card.command; k.cmdEdited = true;
+    card.status = 'ran'; chatRefresh();
+    codeStartRun(card.command);
+  },
+  'run-suggest-cancel'(el) {
+    const card = chatState().messages[Number(el.dataset.i)]?.cards?.[Number(el.dataset.c)];
+    if (card) { card.status = 'cancelled'; chatRefresh(); }
   },
   async 'code-copy'(el) {
     try { await navigator.clipboard.writeText($('code', el.closest('.code-wrap')).textContent); toast('Copied'); }
@@ -2494,6 +2682,7 @@ document.addEventListener('click', e => {
 
 document.addEventListener('keydown', e => {
   if (e.target.id === 'noteTopicInput' && e.key === 'Enter') { e.preventDefault(); noteTopicWrite(); return; }
+  if (e.target.id === 'runCommand' && e.key === 'Enter' && !e.isComposing) { e.preventDefault(); ACTIONS['code-run'](); return; }
   if (e.target.id === 'chatInput' && e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
     e.preventDefault(); chatSend(e.target.value);
   }
@@ -2510,6 +2699,14 @@ document.addEventListener('input', e => {
 document.addEventListener('change', async e => {
   if (e.target.id === 'chatFormat') { chatState().format = e.target.value; return; }
   if (e.target.id === 'codeFolder') { codeSelectFolder(Number(e.target.value)); return; }
+  if (e.target.id === 'runKeep') { codeState().keep = e.target.checked; codeRunRefresh(); return; }
+  if (e.target.id === 'runLimit') { codeState().limit = Number(e.target.value); return; }
+  if (e.target.id === 'runCommand') {                      // picked from the list, or typed
+    const k = codeState(), pick = (k.commands?.commands || []).find(c => c.command === e.target.value);
+    k.cmd = e.target.value; k.cmdEdited = true;
+    if (pick) { k.keep = !!pick.keep_running; codeRunRefresh(); }
+    return;
+  }
   if (e.target.classList.contains('chat-reformat') && e.target.value) {
     const c = chatState(), f = e.target.value;
     c.format = f;
@@ -2543,6 +2740,20 @@ document.addEventListener('change', async e => {
 document.addEventListener('submit', e => {
   const form = e.target;
   if (form.id === 'chatForm') { e.preventDefault(); const t = $('#chatInput', form); chatSend(t.value); return; }
+  if (form.id === 'runInput') {                            // a line of keyboard input for the running program
+    e.preventDefault();
+    const run = codeState().run, box = form.line, line = box.value;
+    if (!run || run.status !== 'running') return;
+    box.value = '';
+    api(`/api/code/runs/${run.id}/input`, { method: 'POST', body: { text: line } })
+      .then(() => {                                          // show what was typed, as a terminal would
+        run.text += line + '\n';
+        const pre = $('#runText');
+        if (pre) { pre.textContent = run.text.replace(ANSI, ''); pre.scrollTop = pre.scrollHeight; }
+      })
+      .catch(err => toast(err.message, 'error'));
+    return;
+  }
   e.preventDefault();
   if (form.id === 'drawerForm') return submitDrawer(form);
   if (form.classList.contains('unit-add')) {
