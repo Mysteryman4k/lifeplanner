@@ -52,7 +52,7 @@ class ChatMessage(BaseModel):
 
 
 class ChatIn(BaseModel):
-    mode: Literal["explain", "practise"] = "explain"
+    mode: Literal["explain", "practise", "notes"] = "explain"
     messages: list[ChatMessage] = Field(min_length=1, max_length=200)
     task_id: Optional[int] = None
 
