@@ -966,7 +966,7 @@ const CHAT_IDEAS = ['Explain recursion with a simple example', 'Give me a practi
   'What is the difference between a stack and a queue?', 'Help me plan revision for a mid-semester exam'];
 
 function chatState() {
-  if (!state.chat) state.chat = { mode: 'explain', format: 'auto', messages: [], tokens: 0, streaming: false, taskId: null, controller: null };
+  if (!state.chat) state.chat = { mode: 'explain', format: 'auto', session: {}, messages: [], tokens: 0, streaming: false, taskId: null, controller: null };
   return state.chat;
 }
 
@@ -1449,7 +1449,8 @@ function chatCard(card, i, n) {
 function chatReset(taskId = null, code = null) {
   const c = chatState();
   c.controller?.abort();                       // stop any reply still streaming for the old chat
-  Object.assign(c, { id: null, messages: [], tokens: 0, taskId, code, streaming: false, controller: null, run: null });
+  // A new session: saves still queued for the chat that was showing can't touch this one (chatSave)
+  Object.assign(c, { id: null, session: {}, messages: [], tokens: 0, taskId, code, streaming: false, controller: null, run: null });
 }
 
 // ── Saved chats: kept after each reply, listed under Recent chats, and opened again ──
@@ -1478,13 +1479,13 @@ function chatSave() {
   if (!messages.some(m => m.role === 'user')) return Promise.resolve();
   const body = { kind: c.code ? 'code' : 'study', mode: c.code ? 'code' : c.mode, format: c.format || 'auto',
     task_id: c.taskId || null, folder_id: c.code || null, tokens: c.tokens || 0, messages };
-  const chat = c;
+  const chat = c, session = c.session;
   chatSave.queue = (chatSave.queue || Promise.resolve()).then(async () => {
-    if (chatState() !== chat) return;
+    if (chat.session !== session) return;                // reset, or another chat opened, since this was asked for
     try {
       const saved = chat.id ? await api(`/api/ai/chats/${chat.id}`, { method: 'PUT', body })
         : await api('/api/ai/chats', { method: 'POST', body });
-      if (!chat.id && chatState() === chat && chat.messages.length) chat.id = saved.id;
+      if (!chat.id && chat.session === session) chat.id = saved.id;
       loadChats();
     } catch (e) {
       if (/deleted/.test(e.message)) chat.id = null;     // deleted elsewhere: the next save makes a new one

@@ -1133,6 +1133,20 @@ def test_saved_chats_quiz_and_videos(server, page):
         if os.environ.get("EUT_SHOTS"):
             page.screenshot(path=os.path.join(os.environ["EUT_SHOTS"], "stage10-chats.png"))
 
+        # Saves still queued for one chat can't land on another opened meanwhile
+        other = page.request.post(f"{server}/api/ai/chats", headers=tok, data={"title": "Other chat", "messages": [
+            {"role": "user", "content": "Other question"}, {"role": "assistant", "content": "Other answer"}]}).json()
+        page.route("**/api/ai/chats/*", lambda route: (page.wait_for_timeout(1500), route.continue_())
+                   if route.request.method == "PUT" else route.continue_())
+        page.evaluate(f"async () => {{ chatSave(); chatSave(); await chatOpen({other['id']}); }}")
+        page.wait_for_selector(".chat-msg.ai >> text=Other answer")
+        page.wait_for_timeout(4000)
+        page.unroute("**/api/ai/chats/*")
+        kept = page.request.get(f"{server}/api/ai/chats/{other['id']}").json()
+        assert [m["content"] for m in kept["messages"]] == ["Other question", "Other answer"]
+        page.request.delete(f"{server}/api/ai/chats/{other['id']}", headers=tok)
+        page.evaluate("loadChats()")
+
         # The Chats list, and deleting one
         page.click("[data-action=chats-all]")
         page.wait_for_selector("#drawer .chat-list-row >> text=Quiz me on stacks")
