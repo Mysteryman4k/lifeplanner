@@ -1160,6 +1160,21 @@ def test_saved_chats_quiz_and_videos(server, page):
         page.request.delete(f"{server}/api/ai/chats/{other['id']}", headers=tok)
         page.evaluate("loadChats()")
 
+        # A very long chat keeps saving (the newest 400 messages, the server's limit)
+        long = page.evaluate("""async () => {
+            chatReset();
+            const c = chatState();
+            for (let i = 0; i < 230; i++) {
+                c.messages.push({ role: 'user', content: 'q' + i }, { role: 'assistant', content: 'a' + i });
+            }
+            await chatSave();
+            return c.id;
+        }""")
+        saved = page.request.get(f"{server}/api/ai/chats/{long}").json()["messages"]
+        assert len(saved) == 400 and saved[-1]["content"] == "a229"
+        page.request.delete(f"{server}/api/ai/chats/{long}", headers=tok)
+        page.evaluate("chatReset(); loadChats()")
+
         # The Chats list, and deleting one
         page.click("[data-action=chats-all]")
         page.wait_for_selector("#drawer .chat-list-row >> text=Quiz me on stacks")

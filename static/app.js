@@ -1469,9 +1469,12 @@ function recentChats() {
 }
 
 /** Save the chat as it is now (after a reply, or when a card changes). One save at a time, newest wins. */
+const CHAT_SAVE_MAX = 400;                       // MAX_MESSAGES in ai/chats.py
+
 function chatSave() {
   const c = chatState();
-  const messages = c.messages.filter(m => m.content || m.cards?.length || m.error).map(m => ({
+  // The newest 400 (the server's limit): a very long chat keeps saving, without its oldest messages
+  const messages = c.messages.filter(m => m.content || m.cards?.length || m.error).slice(-CHAT_SAVE_MAX).map(m => ({
     role: m.role, content: m.content || '',
     meta: Object.fromEntries(Object.entries({ cards: m.cards?.map(({ busy, ...card }) => card), files: m.files,
       leftOut: m.leftOut, error: m.error, stopped: m.stopped }).filter(([, v]) => v !== undefined && v !== null && v !== false)),
