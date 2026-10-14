@@ -5,6 +5,7 @@ import httpx
 
 TIMEOUT = httpx.Timeout(20.0, connect=6.0)
 CREDENTIAL_HEADERS = {"authorization", "x-api-key"}
+MAX_SSE_LINE = 1024 * 1024        # a streamed line longer than this means a broken service
 LOOPBACK = {"localhost", "127.0.0.1", "::1", "[::1]"}
 
 
@@ -23,6 +24,25 @@ def secure_for_keys(url: str) -> bool:
     """Keys may only travel over HTTPS, or plain HTTP to a service on this PC (e.g. LM Studio)."""
     u = httpx.URL(url)
     return u.scheme == "https" or (u.scheme == "http" and u.host in LOOPBACK)
+
+
+def bounded_lines(chunks, name: str):
+    """Split a byte stream into text lines, refusing any line longer than MAX_SSE_LINE, so a service that
+    never sends a line break can't make the app buffer without limit."""
+    buf = b""
+    for chunk in chunks:
+        buf += chunk
+        while True:
+            cut = buf.find(b"\n")
+            if cut < 0:
+                break
+            line, buf = buf[:cut], buf[cut + 1:]
+            yield line.rstrip(b"\r").decode("utf-8", "replace")
+        if len(buf) > MAX_SSE_LINE:
+            raise ProviderError(f"{name} sent a reply EasyUniTrack couldn't read (a line was too long). "
+                                "Check the base URL, or try again.")
+    if buf:
+        yield buf.rstrip(b"\r").decode("utf-8", "replace")
 
 
 class ProviderError(Exception):
@@ -97,7 +117,7 @@ class Provider:
                 if r.status_code >= 400:
                     r.read()
                     self.raise_for_status(r.status_code, name)
-                for line in r.iter_lines():
+                for line in bounded_lines(r.iter_bytes(), name):
                     if line.startswith("data:"):
                         data = line[5:].strip()
                         if data and data != "[DONE]":

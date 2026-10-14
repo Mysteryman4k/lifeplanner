@@ -127,3 +127,26 @@ def test_a_chat_without_a_task_accepts_null(c, fake):
     ready(c)
     r = c.post("/api/ai/chat", json={"task_id": None, "messages": [{"role": "user", "content": "hi"}]})
     assert r.status_code == 200 and "Task:" not in fake.last["system"]
+
+
+# ── review fixes ──
+
+def test_stream_lines_are_split_and_bounded():
+    from ai.providers.base import MAX_SSE_LINE, ProviderError, bounded_lines
+    assert list(bounded_lines([b"data: a\r\n", b"data: b", b"\n\ndata: c"], "X")) == ["data: a", "data: b", "", "data: c"]
+    with pytest.raises(ProviderError, match="too long"):
+        list(bounded_lines((b"x" * 65536 for _ in range(MAX_SSE_LINE // 65536 + 2)), "X"))
+
+
+def test_a_service_that_never_ends_a_line_gets_a_plain_error(c, A):
+    """A broken custom service can't make the app buffer without limit."""
+    from ai.providers.base import MAX_SSE_LINE
+    ready(c, "ollama", "m")
+
+    class Endless(httpx.SyncByteStream):
+        def __iter__(self):
+            for _ in range(MAX_SSE_LINE // 65536 + 2):
+                yield b"y" * 65536
+    A.AI_TRANSPORT["value"] = httpx.MockTransport(lambda req: httpx.Response(200, stream=Endless()))
+    ev = events(c.post("/api/ai/chat", json={"messages": [{"role": "user", "content": "hi"}]}))
+    assert any(e["type"] == "error" and "too long" in e["message"] for e in ev) and ev[-1]["type"] == "done"

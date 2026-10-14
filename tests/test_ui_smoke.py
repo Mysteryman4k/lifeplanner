@@ -390,3 +390,46 @@ def test_study_assistant_chat_streams_safely_and_helps_with_a_task(server, page)
     assert page.inner_text("#pageTitle") != "Study assistant"     # sent to Today instead
     assert page.locator("#nav a[href='#/study']").count() == 0
     page.errors.clear()                                            # the offline Ollama check logs a failed fetch
+
+
+def test_long_chats_and_switching_tasks_mid_reply(server, page):
+    """Only the last 20 messages are sent, and a reply still streaming for an old chat can't touch the new one."""
+    import json
+
+    import app as A
+    tok = {A.TOKEN_HEADER: A.SESSION_TOKEN}
+    terms = page.request.get(f"{server}/api/ai/terms").json()
+    page.request.post(f"{server}/api/ai/terms/agree", headers=tok,
+                      data={"version": terms["version"], "ticks": {k: True for k in terms["ticks"]}})
+    page.request.put(f"{server}/api/ai/settings", headers=tok, data={"provider": "ollama", "model": "qwen2.5:7b"})
+    nl = chr(10)
+    sse = ("data: " + json.dumps({"choices": [{"delta": {"content": "ok"}}]}) + nl + nl + "data: "
+           + json.dumps({"choices": [], "usage": {"prompt_tokens": 7, "completion_tokens": 3}}) + nl + nl)
+    A.fake_net["POST localhost/v1/chat/completions"] = (200, sse)
+    page.goto(f"{server}/#/today")
+    page.reload()
+    page.wait_for_selector("#nav a[href='#/study']")
+
+    # 150 earlier messages: the request carries only the last 20, starting with the student's
+    page.evaluate("""() => { chatReset(); const c = chatState();
+        for (let i = 0; i < 150; i++) c.messages.push({ role: i % 2 ? 'assistant' : 'user', content: 'm' + i }); }""")
+    page.evaluate("chatSend('latest question')")
+    page.wait_for_function("!chatState().streaming")
+    body = json.loads([r for r in A.fake_net_seen if r.url.path.endswith("/chat/completions")][-1].content)
+    sent = body["messages"][1:]                                    # after the system prompt
+    assert len(sent) <= 20 and sent[0]["role"] == "user" and sent[-1]["content"] == "latest question"
+    assert not any(e for e in page.errors if "422" in e)
+
+    # A reply for the old chat is still arriving when another chat starts: it must be ignored
+    state = page.evaluate("""async () => {
+        chatReset();
+        const pending = chatSend('old chat question');
+        chatReset(42);                                             // e.g. Help me with this on another task
+        await pending;
+        const c = chatState();
+        return { tokens: c.tokens, messages: c.messages.length, streaming: c.streaming, taskId: c.taskId };
+    }""")
+    assert state == {"tokens": 0, "messages": 0, "streaming": False, "taskId": 42}
+    page.evaluate("chatReset()")
+    page.request.post(f"{server}/api/ai/terms/withdraw", headers=tok)
+    page.errors.clear()

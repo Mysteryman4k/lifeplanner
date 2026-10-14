@@ -1031,9 +1031,12 @@ async function chatSend(text) {
   c.messages.push({ role: 'user', content: text }, { role: 'assistant', content: '' });
   c.streaming = true;
   c.controller = new AbortController();
+  const run = c.run = {};                      // a newer chat (New chat, another task) takes over the state
+  const current = () => c.run === run;
   chatRefresh();
   const reply = c.messages[c.messages.length - 1];
-  const history = c.messages.slice(0, -1).filter(m => m.content && !m.error).map(m => ({ role: m.role, content: m.content }));
+  let history = c.messages.slice(0, -1).filter(m => m.content && !m.error).map(m => ({ role: m.role, content: m.content })).slice(-20);
+  while (history.length && history[0].role !== 'user') history = history.slice(1);   // same window as the server
   try {
     const res = await fetch('/api/ai/chat', {
       method: 'POST', signal: c.controller.signal,
@@ -1053,7 +1056,7 @@ async function chatSend(text) {
     let buf = '';
     for (;;) {
       const { value, done } = await reader.read();
-      if (done) break;
+      if (done || !current()) break;
       buf += dec.decode(value, { stream: true });
       let cut;
       while ((cut = buf.indexOf('\n\n')) >= 0) {
@@ -1061,6 +1064,7 @@ async function chatSend(text) {
         buf = buf.slice(cut + 2);
         if (!line.startsWith('data:')) continue;
         const ev = JSON.parse(line.slice(5));
+        if (!current()) break;
         if (ev.type === 'text') reply.content += ev.text;
         else if (ev.type === 'usage') c.tokens += (ev.input || 0) + (ev.output || 0);
         else if (ev.type === 'error') reply.error = ev.message;
@@ -1068,17 +1072,26 @@ async function chatSend(text) {
       }
     }
   } catch (e) {
+    if (!current()) return;                    // replaced by a newer chat: leave its state alone
     if (e.name === 'AbortError') reply.stopped = true;
     else reply.error = e.message;
   }
+  if (!current()) return;
   c.streaming = false;
   c.controller = null;
+  c.run = null;
   chatRefresh();
+}
+
+function chatReset(taskId = null) {
+  const c = chatState();
+  c.controller?.abort();                       // stop any reply still streaming for the old chat
+  Object.assign(c, { messages: [], tokens: 0, taskId, streaming: false, controller: null, run: null });
 }
 
 function openChatPanel(taskId) {
   const c = chatState();
-  if (c.taskId !== taskId) { c.taskId = taskId; c.messages = []; c.tokens = 0; }
+  if (c.taskId !== taskId) chatReset(taskId);
   const foot = `<span class="spacer"></span><a class="btn btn-ghost" href="#/study" data-action="chat-full">${icon('external', 15)}Open full page</a>`;
   openDrawer('Help with this task', chatShell(true), foot, 'chat');
   chatAfterRender();
@@ -1385,9 +1398,7 @@ function celebrate(from) {
 // ── Actions (event delegation) ────────────────────────────────────
 const ACTIONS = {
   'chat-new'() {
-    const c = chatState();
-    if (c.streaming) return;
-    Object.assign(c, { messages: [], tokens: 0, taskId: null });
+    chatReset();
     chatRefresh();
   },
   'chat-mode'(el) { if (!chatState().streaming) { chatState().mode = el.dataset.mode; chatRefresh(); } },
