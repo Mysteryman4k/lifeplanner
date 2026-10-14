@@ -136,6 +136,10 @@ def test_stream_lines_are_split_and_bounded():
     assert list(bounded_lines([b"data: a\r\n", b"data: b", b"\n\ndata: c"], "X")) == ["data: a", "data: b", "", "data: c"]
     with pytest.raises(ProviderError, match="too long"):
         list(bounded_lines((b"x" * 65536 for _ in range(MAX_SSE_LINE // 65536 + 2)), "X"))
+    with pytest.raises(ProviderError, match="too long"):                # an oversized line that does end
+        list(bounded_lines([b"z" * (MAX_SSE_LINE + 10) + b"\ndata: next\n"], "X"))
+    exact = b"a" * MAX_SSE_LINE                                       # right at the limit is still fine
+    assert [len(x) for x in bounded_lines([exact + b"\n"], "X")] == [MAX_SSE_LINE]
 
 
 def test_a_service_that_never_ends_a_line_gets_a_plain_error(c, A):

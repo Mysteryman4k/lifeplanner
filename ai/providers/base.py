@@ -37,6 +37,9 @@ def bounded_lines(chunks, name: str):
             if cut < 0:
                 break
             line, buf = buf[:cut], buf[cut + 1:]
+            if len(line) > MAX_SSE_LINE:
+                raise ProviderError(f"{name} sent a reply EasyUniTrack couldn't read (a line was too long). "
+                                    "Check the base URL, or try again.")
             yield line.rstrip(b"\r").decode("utf-8", "replace")
         if len(buf) > MAX_SSE_LINE:
             raise ProviderError(f"{name} sent a reply EasyUniTrack couldn't read (a line was too long). "
