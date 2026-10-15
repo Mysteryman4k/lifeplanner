@@ -30,11 +30,30 @@ ASSETS = {"StoreLogo": (50, 50), "Square44x44Logo": (44, 44), "Square71x71Logo":
 
 
 def package_version(version: str) -> str:
-    """MSIX versions are four numbers. The Store reserves the last one, so it must be 0."""
-    m = re.match(r"^(\d+)\.(\d+)\.(\d+)", version.strip())
+    """MSIX versions are four numbers. The Store reserves the last one, so it must be 0.
+
+    A pre-release (for a Store package flight) gets a number just below its release, because Partner Center
+    refuses a second package with the same version, and flight testers only move on to the public release if
+    it's higher: 4.0.0-beta.1 -> 3.99.1.0 and 4.1.0-beta.2 -> 4.0.9902.0, then 4.0.0 -> 4.0.0.0."""
+    m = re.match(r"^(\d+)\.(\d+)\.(\d+)(-[0-9A-Za-z.-]+)?$", version.strip())
     if not m:
         sys.exit(f"Can't turn '{version}' into a package version.")
-    return ".".join(m.groups()) + ".0"
+    major, minor, patch = (int(x) for x in m.groups()[:3])
+    if not m.group(4):
+        return f"{major}.{minor}.{patch}.0"
+    number = re.search(r"(\d+)$", m.group(4))
+    if not number:
+        sys.exit(f"Number the pre-release, for example {major}.{minor}.{patch}-beta.1, to build it for the Store.")
+    pre = int(number.group(1))
+    if not 1 <= pre <= 99:
+        sys.exit("A pre-release for the Store needs a number from 1 to 99, for example 4.0.0-beta.1.")
+    if patch:
+        sys.exit("Store flights are for new major or minor versions (4.0.0-beta.1, 4.1.0-beta.1), not patches.")
+    if minor:
+        return f"{major}.{minor - 1}.{9900 + pre}.0"
+    if not major:
+        sys.exit("There's no version below 0.0.0 for this pre-release.")
+    return f"{major - 1}.99.{pre}.0"
 
 
 def render_manifest(identity_name: str, publisher: str, publisher_display_name: str, version: str) -> str:

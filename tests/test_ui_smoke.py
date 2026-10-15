@@ -1397,6 +1397,12 @@ def test_long_chats_keep_chats_and_linked_folders(server, page, tmp_path_factory
         page.wait_for_selector(".chat-summary >> text=Earlier messages are summarised for the assistant")
         page.click(".chat-summary > summary")
         page.wait_for_selector(".chat-summary[open] >> text=The student revised stacks and heaps.")
+        # Every reply can be reported (Microsoft Store Policies 11.16): a GitHub issue with the reply filled in
+        report = page.locator(".chat-msg.ai").last.locator("a", has_text="Report")
+        href = report.get_attribute("href")
+        assert href.startswith("https://github.com/Mysteryman4k/lifeplanner/issues/new?labels=ai-response&")
+        assert "Answer%2015." in href and report.get_attribute("target") == "_blank"
+        assert page.locator(".chat-msg.ai a", has_text="Report").count() == page.locator(".chat-msg.ai").count()
         chat_id = None
         for _ in range(100):                                                    # saved with the chat
             chat_id = page.evaluate("chatState().id")

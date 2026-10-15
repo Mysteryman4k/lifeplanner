@@ -8,6 +8,12 @@
 #endif
 #define AppName "EasyUniTrack"
 #define AppExe "EasyUniTrack.exe"
+; Windows file versions are numbers only, so a pre-release (4.0.0-beta.1) uses 4.0.0 there
+#if Pos("-", AppVersion) > 0
+  #define FileVersion Copy(AppVersion, 1, Pos("-", AppVersion) - 1)
+#else
+  #define FileVersion AppVersion
+#endif
 
 [Setup]
 ; Keep this AppId the same forever, so new versions update the existing install
@@ -19,7 +25,7 @@ AppPublisher=Mysteryman4k
 AppPublisherURL=https://github.com/Mysteryman4k/lifeplanner
 AppSupportURL=https://github.com/Mysteryman4k/lifeplanner/issues
 AppUpdatesURL=https://github.com/Mysteryman4k/lifeplanner/releases
-VersionInfoVersion={#AppVersion}
+VersionInfoVersion={#FileVersion}
 DefaultDirName={localappdata}\Programs\{#AppName}
 DefaultGroupName={#AppName}
 ; The app was called Trackademic before 3.6.0. Updating moves it to the new folder and Start-menu name

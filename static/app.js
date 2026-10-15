@@ -1201,7 +1201,8 @@ function chatMessage(m, i) {
     const sent = m.files ? `<div class="chat-sent">${m.files.length ? `Sent with this: ${m.files.map(p =>
         `<button class="link-btn" data-action="code-open" data-path="${esc(p)}">${esc(p)}</button>`).join(', ')}` : 'No files were sent with this.'}
       ${(m.leftOut || []).map(x => `<span class="muted" title="${esc(x.why)}">· not sent: ${esc(x.path)}</span>`).join(' ')}</div>` : '';
-    const body = m.content.includes('```') ? `<div class="chat-text">${chatMarkdown(m.content)}</div>` : esc(m.content).replace(/\n/g, '<br>');
+    // Plain text keeps its spacing, so a pasted traceback or code keeps its indentation
+    const body = m.content.includes('```') ? `<div class="chat-text">${chatMarkdown(m.content)}</div>` : `<span class="chat-plain">${esc(m.content)}</span>`;
     return `<div class="chat-msg me">${body}</div>${sent}`;
   }
   const c = chatState();

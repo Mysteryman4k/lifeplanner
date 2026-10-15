@@ -39,7 +39,8 @@ TERMS = [
     ("2. AI can be wrong",
      "Answers, explanations, code, fixes and plans come from an AI model and can be inaccurate, incomplete or out "
      "of date, sometimes confidently so. Check important information against your unit material, and test any "
-     "code yourself. Don't rely on the AI features for decisions where a mistake could cause you harm."),
+     "code yourself. Don't rely on the AI features for decisions where a mistake could cause you harm. If a reply "
+     "is wrong, inappropriate or harmful, use Report under it to tell us."),
     ("3. Your studies are your responsibility",
      "Universities and units have different rules on using AI. It's your responsibility to know and follow the "
      "rules that apply to you, including academic integrity policies, and to make sure any work you submit is "
@@ -71,7 +72,8 @@ TERMS = [
      "Australian Consumer Law or other laws that can't be excluded."),
     ("9. Turning it off",
      "You can turn the AI features off at any time in Settings, which withdraws your agreement. \"Remove all AI "
-     "data\" deletes your saved keys and AI settings from EasyUniTrack."),
+     "data\" deletes your saved keys, chats, linked folder records (not the folders), suggested code changes and "
+     "their backups, and your AI settings from EasyUniTrack. Your notes stay."),
     ("10. Changes",
      "If these terms change, EasyUniTrack will ask you to agree again before you can keep using the AI features."),
     ("11. Contact", "Questions: https://github.com/Mysteryman4k/lifeplanner/issues"),

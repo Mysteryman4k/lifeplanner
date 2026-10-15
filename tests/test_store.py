@@ -90,9 +90,28 @@ def test_not_a_sign_in_launch_outside_the_store(monkeypatch):
     assert store.launched_at_sign_in() is False
 
 
-@pytest.mark.parametrize("version,expected", [("3.5.2", "3.5.2.0"), ("4.0.0-beta.1", "4.0.0.0")])
+@pytest.mark.parametrize("version,expected", [
+    ("3.5.2", "3.5.2.0"), ("4.0.0", "4.0.0.0"),
+    # A pre-release for a Store flight sits just below its release: Partner Center refuses a repeated version,
+    # and testers only move on to the public release if it's higher
+    ("4.0.0-beta.1", "3.99.1.0"), ("4.0.0-beta.12", "3.99.12.0"), ("4.1.0-rc.2", "4.0.9902.0"),
+])
 def test_package_version(version, expected):
     assert load_builder().package_version(version) == expected
+
+
+def test_pre_release_package_versions_sort_between_the_releases():
+    b = load_builder()
+    order = ["3.6.1", "4.0.0-beta.1", "4.0.0-beta.2", "4.0.0", "4.0.5", "4.1.0-beta.1", "4.1.0"]
+    numbers = [tuple(int(x) for x in b.package_version(v).split(".")) for v in order]
+    assert numbers == sorted(numbers) and len(set(numbers)) == len(numbers)
+    assert all(0 <= n <= 65535 for v in numbers for n in v)
+
+
+@pytest.mark.parametrize("version", ["4.0.0-beta", "4.0.1-beta.1", "4.0.0-beta.100", "0.0.0-beta.1", "four"])
+def test_versions_the_store_cant_take(version):
+    with pytest.raises(SystemExit):
+        load_builder().package_version(version)
 
 
 class _WindowCreated(Exception):
