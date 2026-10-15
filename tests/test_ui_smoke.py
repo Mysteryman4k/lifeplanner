@@ -414,15 +414,22 @@ def test_long_chats_and_switching_tasks_mid_reply(server, page):
     page.reload()
     page.wait_for_selector("#nav a[href='#/study']")
 
-    # 150 earlier messages: the request carries only the last 20, starting with the student's
+    # 150 earlier messages, none summarised yet: the request carries the last 40, starting with the student's
     page.evaluate("""() => { chatReset(); const c = chatState();
         for (let i = 0; i < 150; i++) c.messages.push({ role: i % 2 ? 'assistant' : 'user', content: 'm' + i }); }""")
+    seen = len(A.fake_net_seen)
     page.evaluate("chatSend('latest question')")
-    page.wait_for_function("!chatState().streaming")
-    body = json.loads([r for r in A.fake_net_seen if r.url.path.endswith("/chat/completions")][-1].content)
+    page.wait_for_function("!chatState().streaming && !chatState().summarising")
+    bodies = [json.loads(r.content) for r in A.fake_net_seen[seen:] if r.url.path.endswith("/chat/completions")]
+    summaries = [b for b in bodies if b["messages"][0]["content"].startswith("You keep a running summary")]
+    body = next(b for b in bodies if b not in summaries)
     sent = body["messages"][1:]                                    # after the system prompt
-    assert len(sent) <= 20 and sent[0]["role"] == "user" and sent[-1]["content"] == "latest question"
+    assert len(sent) == 39 and sent[0]["content"] == "m112" and sent[-1]["content"] == "latest question"
     assert not any(e for e in page.errors if "422" in e)
+    # The 132 messages before the window (150, the question and its reply, less 20) are summarised, 60 at a time
+    assert [b["messages"][1]["content"].count("Student: ") + b["messages"][1]["content"].count("Assistant: ")
+            for b in summaries] == [60, 60, 12]
+    assert page.evaluate("chatState().messages.filter(m => m.summarised).length") == 132
 
     # A reply for the old chat is still arriving when another chat starts: it must be ignored
     state = page.evaluate("""async () => {
@@ -1320,3 +1327,155 @@ def test_attached_files(server, page):
         page.request.post(f"{server}/api/ai/terms/withdraw", headers=tok)
         A.fake_net.pop("POST localhost/v1/chat/completions", None)
         A.fake_net.pop("GET localhost/api/ps", None)
+
+
+@pytest.mark.ui
+def test_long_chats_keep_chats_and_linked_folders(server, page, tmp_path_factory):
+    """A long chat's older messages are summarised for the assistant (and the summary is shown and saved); Keep
+    chats deletes older chats after asking; code folders can be linked from a subject and managed in Settings."""
+    import json
+
+    import app as A
+    tok = {A.TOKEN_HEADER: A.SESSION_TOKEN}
+    terms = page.request.get(f"{server}/api/ai/terms").json()
+    page.request.post(f"{server}/api/ai/terms/agree", headers=tok,
+                      data={"version": terms["version"], "ticks": {k: True for k in terms["ticks"]}})
+    page.request.put(f"{server}/api/ai/settings", headers=tok,
+                     data={"provider": "ollama", "model": "qwen2.5:7b", "code_enabled": True})
+    nl = chr(10)
+
+    def say(text):
+        return "data: " + json.dumps({"choices": [{"delta": {"content": text}}]}) + nl + nl
+    A.fake_net["POST localhost/v1/chat/completions"] = (200, [say("Answer 13."), say("Answer 14."),
+                                                              say("The student revised stacks and heaps."), say("Answer 15.")])
+
+    def requests():
+        return [json.loads(r.content) for r in A.fake_net_seen if r.url.path.endswith("/chat/completions")]
+    page.errors.clear()
+    try:
+        page.goto(f"{server}/#/study")
+        page.reload()
+        page.click("[data-action=chat-new]")
+        page.evaluate("""() => {
+            const c = chatState();
+            for (let i = 1; i <= 12; i++) {
+                c.messages.push({ role: 'user', content: 'Question ' + i }, { role: 'assistant', content: 'Answer ' + i + '.' });
+            }
+            chatRefresh();
+        }""")
+        seen = len(requests())
+
+        def ask(text, answer):
+            page.fill("#chatInput", text)
+            page.keyboard.press("Enter")
+            page.wait_for_selector(f".chat-msg.ai >> text={answer}")
+            page.wait_for_function("!chatState().streaming")
+
+        # Six messages have left the 20-message window, so a summary is due after the reply. If it fails, the
+        # messages it would have covered still go with the next question: nothing is left out
+        page.route("**/api/ai/summarise", lambda route: route.fulfill(status=502, json={"detail": "Ollama isn't running."}))
+        ask("Question 13", "Answer 13.")
+        page.wait_for_function("!chatState().summarising")
+        page.unroute("**/api/ai/summarise")
+        page.route("**/api/ai/summarise", lambda route: (page.wait_for_timeout(1500), route.continue_()))
+        ask("Question 14", "Answer 14.")
+        asked = requests()[seen:]
+        assert len(asked) == 2 and [m["content"] for m in asked[1]["messages"][1:3]] == ["Question 1", "Answer 1."]
+        assert len(asked[1]["messages"]) == 1 + 27 and "Summary of the earlier part" not in asked[1]["messages"][0]["content"]
+        # The summary is being made now (slowly): a question asked meanwhile waits for it, then goes with it
+        assert page.evaluate("chatState().summarising") is True
+        ask("Question 15", "Answer 15.")
+        page.unroute("**/api/ai/summarise")
+        asked = requests()[seen:]
+        assert len(asked) == 4 and asked[2]["messages"][0]["content"].startswith("You keep a running summary")
+        folded = asked[2]["messages"][1]["content"]
+        assert "Student: Question 1" in folded and "Assistant: Answer 4." in folded and "Question 5" not in folded
+        system = asked[3]["messages"][0]["content"]
+        assert "Summary of the earlier part of this chat" in system and "The student revised stacks and heaps." in system
+        # ...in place of the eight messages it covers: the rest still go as they are
+        assert [m["content"] for m in asked[3]["messages"][1:2]] == ["Question 5"] and len(asked[3]["messages"]) == 1 + 21
+        page.wait_for_selector(".chat-summary >> text=Earlier messages are summarised for the assistant")
+        page.click(".chat-summary > summary")
+        page.wait_for_selector(".chat-summary[open] >> text=The student revised stacks and heaps.")
+        chat_id = None
+        for _ in range(100):                                                    # saved with the chat
+            chat_id = page.evaluate("chatState().id")
+            if chat_id and page.request.get(f"{server}/api/ai/chats/{chat_id}").json().get("summary"):
+                break
+            page.wait_for_timeout(100)
+        else:
+            pytest.fail("The summary wasn't saved")
+        saved = page.request.get(f"{server}/api/ai/chats/{chat_id}").json()
+        assert sum(1 for m in saved["messages"] if m["meta"].get("summarised")) == 8
+
+        # Keep chats: choosing a limit asks first, then deletes chats not continued for that long
+        with A.db() as conn:
+            conn.execute("UPDATE conversations SET updated_at=datetime('now', 'localtime', '-60 days') WHERE id=?", (chat_id,))
+        page.evaluate("chatReset()")
+        page.goto(f"{server}/#/settings")
+        page.wait_for_selector("#aiKeepChats")
+        page.select_option("#aiKeepChats", label="1 month")
+        page.wait_for_selector("#confirm >> text=Delete older chats?")
+        page.click("#confirmYes")
+        page.wait_for_selector("#toast.show >> text=Deleted 1 older chat")
+        assert page.request.get(f"{server}/api/ai/chats/{chat_id}").status == 404
+        assert page.request.get(f"{server}/api/ai/state").json()["keep_chats_days"] == 30
+        page.select_option("#aiKeepChats", label="Until I delete them")             # longer: nothing to ask
+        page.wait_for_selector("#toast.show >> text=Chats are kept until you delete them")
+
+        # The open chat is deleted meanwhile (by Keep chats, say): its next save keeps it as a new chat straight away
+        kept = page.request.post(f"{server}/api/ai/chats", headers=tok, data={"title": "Open one", "messages": [
+            {"role": "user", "content": "Still here?"}, {"role": "assistant", "content": "Yes."}]}).json()
+        page.evaluate(f"chatOpen({kept['id']})")
+        page.wait_for_selector(".chat-msg.ai >> text=Yes.")
+        page.request.delete(f"{server}/api/ai/chats/{kept['id']}", headers=tok)
+        new_id = page.evaluate("""async () => {
+            chatState().messages.push({ role: 'user', content: 'One more' }, { role: 'assistant', content: 'Kept.' });
+            await chatSave();
+            return chatState().id;
+        }""")
+        assert new_id and new_id != kept["id"]
+        assert [m["content"] for m in page.request.get(f"{server}/api/ai/chats/{new_id}").json()["messages"]] == [
+            "Still here?", "Yes.", "One more", "Kept."]
+        page.request.delete(f"{server}/api/ai/chats/{new_id}", headers=tok)
+        page.evaluate("chatReset()")
+        page.errors[:] = [e for e in page.errors if "status of 404" not in e]   # the refused save
+
+        # Linking a code folder from a subject, then managing it in Settings
+        root = tmp_path_factory.mktemp("assignment2")
+        (root / "main.py").write_text("print('hi')\n", encoding="utf-8")
+        subject = page.request.post(f"{server}/api/subjects", headers=tok, data={"name": "COMP2123 Data Structures"}).json()
+        page.evaluate("loadAll()")
+        page.wait_for_selector("#nav")
+        page.goto(f"{server}/#/subjects")
+        card = page.locator(".subject", has_text="COMP2123")
+        card.locator("text=Link the folder with your code for this subject").wait_for()
+        card.locator("[data-action=code-link-subject]").click()
+        page.wait_for_selector("#drawerForm[data-kind=code-folder]")
+        assert page.input_value("#drawerForm [name=subject_id]") == str(subject["id"])
+        page.fill("#drawerForm [name=path]", str(root))
+        page.click("#drawerFoot [type=submit]")
+        page.wait_for_selector(".code-tree .tree-row >> text=main.py")
+        page.goto(f"{server}/#/subjects")
+        page.locator(".subject", has_text="COMP2123").locator(".note-row >> text=assignment2").click()
+        page.wait_for_selector(".code-tree .tree-row >> text=main.py")
+        page.goto(f"{server}/#/settings")
+        row = page.locator(".linked-folder", has_text="assignment2")
+        row.wait_for()
+        assert "COMP2123 Data Structures" in row.inner_text()
+        row.locator("[data-action=code-unlink]").click()
+        page.click("#confirmYes")
+        row.wait_for(state="detached")
+        assert all(f["name"] != "assignment2" for f in page.request.get(f"{server}/api/code/folders").json())
+        assert (root / "main.py").exists()                                       # the files themselves stay
+        assert [e for e in page.errors if "status of 502" not in e] == []          # only the summary made to fail
+        page.errors.clear()
+    finally:
+        page.evaluate("chatReset()")
+        for ch in page.request.get(f"{server}/api/ai/chats").json():
+            page.request.delete(f"{server}/api/ai/chats/{ch['id']}", headers=tok)
+        for f in page.request.get(f"{server}/api/code/folders").json():
+            page.request.delete(f"{server}/api/code/folders/{f['id']}", headers=tok)
+        page.request.put(f"{server}/api/ai/settings", headers=tok, data={"keep_chats_days": 0, "code_enabled": False})
+        page.request.post(f"{server}/api/ai/terms/withdraw", headers=tok)
+        A.fake_net.pop("POST localhost/v1/chat/completions", None)

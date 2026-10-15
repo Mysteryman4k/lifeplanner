@@ -850,3 +850,17 @@ fieldset.field { border: 0; padding: 0; margin: 0; min-width: 0; }
 .chat-file-note { display: flex; gap: 6px; align-items: flex-start; font-size: 12.5px; color: var(--ink-2); }
 .chat-file-note .ic { flex: none; margin-top: 2px; }
 .chat-file-note.warn { color: var(--warn); font-weight: 650; }
+
+/* ── Long chats, clean-up and linked folders (stage 11b) ──────────── */
+.chat-summary { border: 1px dashed var(--line); border-radius: var(--r-sm); padding: 6px 10px; font-size: 13px; color: var(--muted); }
+.chat-summary > summary { display: flex; align-items: center; gap: 6px; cursor: pointer; font-weight: 600; }
+.chat-summary > summary::-webkit-details-marker { display: none; }   /* the chevron below shows open or closed */
+.chat-summary-mark { flex: none; transition: transform .15s ease; }
+.chat-summary[open] .chat-summary-mark { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .chat-summary-mark { transition: none; } }
+.chat-summary .chat-text { margin-top: 6px; font-size: 13px; color: var(--ink-2); }
+.linked-folders { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.linked-folder { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.linked-folder > .ic { flex: none; color: var(--accent-text); }
+.linked-folder .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.linked-folder .icon-btn { margin-left: auto; }

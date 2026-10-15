@@ -177,8 +177,12 @@ def _q(path: str) -> str:
     return f'"{path}"' if re.search(r"[\s&()^|<>]", path) else path
 
 
-def _exe(stem: str) -> str:
-    return f"{stem}.exe" if os.name == "nt" else f"./{stem}"
+def _exe(stem: str) -> tuple:
+    """The program a compiler should write, and how to run it from the folder. On Windows the name has .exe:
+    MinGW's gcc adds it by itself, but rustc writes exactly the name it's given (found by the Real runs CI job)."""
+    if os.name == "nt":
+        return _q(f"{stem}.exe"), _q(f"{stem}.exe")
+    return _q(stem), _q(f"./{stem}")
 
 
 EXPLAIN_ONLY_PROJECTS = [   # (marker, what it is)
@@ -282,17 +286,18 @@ def suggestions(root: Path, open_file: str = "", tools: dict = None) -> dict:
     if open_file:
         f = Path(open_file)
         rel, stem, ext = _q(open_file), f.stem, f.suffix.lower()
-        exe = _exe(stem)
+        binary, exe = _exe(stem)
+        jar = _q(f"{stem}.jar")
         single = {
             ".py": (f"{py} {rel}", ["python"]), ".pyw": (f"{py} {rel}", ["python"]),
             ".java": (f"java {rel}", ["java"]),
-            ".c": (f"gcc {rel} -o {stem} && {exe}", ["gcc"]),
-            ".cpp": (f"g++ {rel} -o {stem} && {exe}", ["g++"]), ".cc": (f"g++ {rel} -o {stem} && {exe}", ["g++"]),
-            ".cxx": (f"g++ {rel} -o {stem} && {exe}", ["g++"]),
+            ".c": (f"gcc {rel} -o {binary} && {exe}", ["gcc"]),
+            ".cpp": (f"g++ {rel} -o {binary} && {exe}", ["g++"]), ".cc": (f"g++ {rel} -o {binary} && {exe}", ["g++"]),
+            ".cxx": (f"g++ {rel} -o {binary} && {exe}", ["g++"]),
             ".js": (f"node {rel}", ["node"]), ".mjs": (f"node {rel}", ["node"]), ".cjs": (f"node {rel}", ["node"]),
             ".ts": (f"tsx {rel}", ["tsx"]) if "tsx" in tools else (f"ts-node {rel}", ["ts-node"]),
-            ".go": (f"go run {rel}", ["go"]), ".rs": (f"rustc {rel} -o {stem} && {exe}", ["rustc"]),
-            ".kt": (f"kotlinc {rel} -include-runtime -d {stem}.jar && java -jar {stem}.jar", ["kotlinc", "java"]),
+            ".go": (f"go run {rel}", ["go"]), ".rs": (f"rustc {rel} -o {binary} && {exe}", ["rustc"]),
+            ".kt": (f"kotlinc {rel} -include-runtime -d {jar} && java -jar {jar}", ["kotlinc", "java"]),
             ".scala": (f"scala {rel}", ["scala"]), ".php": (f"php {rel}", ["php"]), ".rb": (f"ruby {rel}", ["ruby"]),
             ".dart": (f"dart run {rel}", ["dart"]), ".lua": (f"lua {rel}", ["lua"]), ".r": (f"Rscript {rel}", ["Rscript"]),
             ".hs": (f"runghc {rel}", ["runghc"]), ".pl": (f"swipl {rel}", ["swipl"]),

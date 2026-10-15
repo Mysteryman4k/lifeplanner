@@ -191,7 +191,7 @@ def main():
     system_integration.claim_instance(DB_PATH.parent, port, SESSION_TOKEN)
 
     import app as backend
-    threading.Thread(target=backend.auto_backup, name="backup", daemon=True).start()
+    threading.Thread(target=backend.start_up_jobs, name="start-up-jobs", daemon=True).start()
     backend.start_reminders()
 
     try:

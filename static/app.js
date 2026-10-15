@@ -492,6 +492,7 @@ const VIEWS = {
           <button class="btn btn-ghost btn-sm" type="submit">Add</button>
         </form>
         ${notesBlock(s.id)}
+        ${subjectCodeBlock(s.id)}
       </article>`;
     }).join('')}${notesBlock(null)}</div>`;
   },
@@ -616,6 +617,11 @@ const VIEWS = {
       return;
     }
     const f = codeFolder();
+    if (!f && k.folders.length) {                   // listed from Settings or a subject, none open yet
+      k.folderId = k.folders[0].id;
+      codeLoadTree();
+      return;
+    }
     if (!f) {
       setHeader('Code workspace', 'Preview · help with your code');
       $('#content').innerHTML = `<div class="card">${emptyState('folder', 'Link a code folder',
@@ -887,6 +893,9 @@ function aiCard() {
       <button class="switch ${a.assistant_enabled ? 'on' : ''}" role="switch" aria-checked="${a.assistant_enabled}" data-action="toggle-ai-assistant" aria-label="Study assistant"><i></i></button></div>
     <div class="setting"><div><div class="setting-title">Code workspace</div><div class="setting-desc">Help with code in folders you link. Code only runs when you click Run.</div></div>
       <button class="switch ${a.code_enabled ? 'on' : ''}" role="switch" aria-checked="${a.code_enabled}" data-action="toggle-ai-code" aria-label="Code workspace"><i></i></button></div>
+    ${a.code_enabled ? codeFoldersSetting() : ''}
+    <div class="setting"><div><div class="setting-title">Keep chats</div><div class="setting-desc">Saved chats you haven't continued for this long are deleted. Suggested code changes, their backups and the record of changes to your tasks are cleared after 90 days.</div></div>
+      <select class="select" id="aiKeepChats" style="max-width:220px" aria-label="Keep chats">${KEEP_CHATS.map(([v, l]) => opt(v, l, a.keep_chats_days || 0)).join('')}</select></div>
     <div class="setting ai-provider"><div style="flex:1;min-width:0"><div class="setting-title">AI provider</div>
       <div class="segmented ai-pills" role="group" aria-label="AI provider">${Object.entries(a.providers).map(([k, v]) => pill(k, v)).join('')}</div>
       ${preset ? `<div class="setting-desc ai-about-provider">${esc(preset.about)}</div>${links ? `<div class="small ai-links">${links}</div>` : ''}` : `<div class="setting-desc">Choose where the AI runs. You can change this any time.</div>`}
@@ -941,6 +950,8 @@ async function openAiTerms(readOnly) {
   openDrawer('Terms of use', body, foot, 'ai-terms');
 }
 
+const KEEP_CHATS = [[0, 'Until I delete them'], [365, '1 year'], [180, '6 months'], [90, '3 months'], [30, '1 month']];
+
 async function aiSettings(body) {
   state.ai = await api('/api/ai/settings', { method: 'PUT', body });
   return state.ai;
@@ -967,7 +978,7 @@ const CHAT_IDEAS = ['Explain recursion with a simple example', 'Give me a practi
   'What is the difference between a stack and a queue?', 'Help me plan revision for a mid-semester exam'];
 
 function chatState() {
-  if (!state.chat) state.chat = { mode: 'explain', format: 'auto', session: {}, messages: [], tokens: 0, streaming: false, taskId: null, controller: null, file: null, attaching: null };
+  if (!state.chat) state.chat = { mode: 'explain', format: 'auto', session: {}, messages: [], tokens: 0, streaming: false, taskId: null, controller: null, file: null, attaching: null, summary: '' };
   return state.chat;
 }
 
@@ -1248,7 +1259,8 @@ function chatShell(inPanel) {
         <span class="chat-meta" title="Tokens used in this chat (billed by cloud providers)">${icon('spark', 13)}${esc(a.model)} · <span id="chatTokens">${c.tokens.toLocaleString()}</span> tokens</span>
       </div>
       ${task ? `<div class="chat-attached">${icon('tasks', 15)}<div><b>${esc(task.title)}</b><span class="muted small">${[task.subject_name, task.due_date ? 'due ' + fmt(task.due_date, { weekday: 'short', day: 'numeric', month: 'short' }) : ''].filter(Boolean).map(esc).join(' · ')}</span></div></div>` : ''}
-      <div class="chat-log" id="chatLog" aria-live="polite">${intro}${c.messages.map(chatMessage).join('')}</div>
+      <div class="chat-log" id="chatLog" aria-live="polite">${intro}${c.summary && chatConversation().some(m => m.summarised) ? `<details class="chat-summary">
+          <summary>${icon('chevronRight', 14, 'chat-summary-mark')}Earlier messages are summarised for the assistant</summary><div class="chat-text">${chatMarkdown(c.summary)}</div></details>` : ''}${c.messages.map(chatMessage).join('')}</div>
       ${folder ? codeSendList() + cloud : ''}
       ${chatFileChip()}
       <form class="chat-composer" id="chatForm">
@@ -1350,10 +1362,18 @@ async function chatSend(text, extra = {}) {
   chatRefresh();
   const reply = c.messages[c.messages.length - 1];
   let tasksChanged = false;
-  let history = c.messages.slice(0, -1).filter(m => m.content && !m.error).map(m => ({ role: m.role, content: m.content })).slice(-20);
+  if (c.summaryRun) {                          // older messages being summarised: wait, so this question has it
+    await c.summaryRun;
+    if (!current()) return;
+  }
+  // Everything the summary doesn't cover goes with the question: the last CHAT_WINDOW messages, and any older
+  // ones not summarised yet (the next summary is due, or the last one failed), up to CHAT_MAX
+  const convo = chatConversation();              // not the reply being written (it's empty)
+  let history = convo.filter(m => !m.summarised).map(m => ({ role: m.role, content: m.content })).slice(-CHAT_MAX);
   while (history.length && history[0].role !== 'user') history = history.slice(1);   // same window as the server
   try {
     const file = c.file ? { attachment: { name: c.file.name, included: chatFileIncluded(c.file), text: chatFileText(c.file) } } : {};
+    if (c.summary && convo.some(m => m.summarised)) file.summary = c.summary;   // in place of the summarised ones
     const payload = folderId
       ? { mode: 'code', format: c.format || 'auto', messages: history, ...file,
           code: { folder_id: folderId, files: (codeState().files || []).map(f => f.path), ...extra } }
@@ -1387,6 +1407,49 @@ async function chatSend(text, extra = {}) {
   if (tasksChanged) await reloadTasks();
   chatRefresh();
   chatSave();
+  chatSummarise();
+}
+
+// ── Long chats: messages older than the last CHAT_WINDOW are folded into a running summary (every few turns,
+// after a reply), and the summary goes with each question in their place ──
+const CHAT_WINDOW = 20;                          // always sent as they are
+const CHAT_MAX = 40;                             // MAX_HISTORY in ai/routes.py: the window and any not yet summarised
+const SUMMARY_EVERY = 6;                         // messages left out of the window before the summary is updated
+const SUMMARY_BATCH = 60;                        // messages folded in at a time (the server takes up to 200)
+
+/** The messages that count as the conversation (not empty replies or errors), as the server sees them. */
+function chatConversation() { return chatState().messages.filter(m => m.content && !m.error); }
+
+function chatSummarise() {
+  const c = chatState();
+  if (c.summarising || c.streaming) return;
+  const run = chatSummariseNow(c);                 // never rejects: a failed summary is tried again later
+  c.summaryRun = run;                              // a question asked meanwhile waits for it (chatSend)
+  run.finally(() => { if (c.summaryRun === run) c.summaryRun = null; });
+}
+
+async function chatSummariseNow(c) {
+  const session = c.session;
+  c.summarising = true;
+  try {
+    for (;;) {                                    // a long chat from before summaries goes in batches, oldest first
+      const fresh = chatConversation().slice(0, -CHAT_WINDOW).filter(m => !m.summarised);
+      if (fresh.length < SUMMARY_EVERY) break;
+      const batch = fresh.slice(0, SUMMARY_BATCH);
+      const r = await api('/api/ai/summarise', { method: 'POST', body: { kind: c.code ? 'code' : 'study', previous: c.summary || '',
+        messages: batch.map(m => ({ role: m.role, content: m.content.slice(0, 20000) })) } });
+      if (c.session !== session) return;          // another chat since
+      c.summary = r.summary;
+      batch.forEach(m => { m.summarised = true; });
+      c.tokens += r.tokens || 0;
+      if (!c.streaming) chatRefresh({ keepDraft: true });    // shows the summary note (a reply streaming redraws anyway)
+      chatSave();
+    }
+  } catch (_) {
+    // Tried again after the next reply; meanwhile the messages it would have covered go with each question
+  } finally {
+    if (c.session === session) c.summarising = false;
+  }
 }
 
 async function reloadTasks() {
@@ -1464,7 +1527,8 @@ function chatReset(taskId = null, code = null, fromOpen = false) {
   const c = chatState();
   c.controller?.abort();                       // stop any reply still streaming for the old chat
   // A new session: saves still queued for the chat that was showing can't touch this one (chatSave)
-  Object.assign(c, { id: null, session: {}, messages: [], tokens: 0, taskId, code, streaming: false, controller: null, run: null, file: null, attaching: null });
+  Object.assign(c, { id: null, session: {}, messages: [], tokens: 0, taskId, code, streaming: false, controller: null, run: null, file: null, attaching: null,
+    summary: '', summarising: false, summaryRun: null });
 }
 
 // ── Saved chats: kept after each reply, listed under Recent chats, and opened again ──
@@ -1492,12 +1556,12 @@ function chatSave() {
   const messages = c.messages.filter(m => m.content || m.cards?.length || m.error).slice(-CHAT_SAVE_MAX).map(m => ({
     role: m.role, content: m.content || '',
     meta: Object.fromEntries(Object.entries({ cards: m.cards?.map(({ busy, ...card }) => card), files: m.files,
-      leftOut: m.leftOut, error: m.error, stopped: m.stopped }).filter(([, v]) => v !== undefined && v !== null && v !== false)),
+      leftOut: m.leftOut, error: m.error, stopped: m.stopped, summarised: m.summarised }).filter(([, v]) => v !== undefined && v !== null && v !== false)),
   }));
   if (!messages.some(m => m.role === 'user')) return Promise.resolve();
   const fileText = c.file ? chatFileText(c.file) : '';
   const body = { kind: c.code ? 'code' : 'study', mode: c.code ? 'code' : c.mode, format: c.format || 'auto',
-    task_id: c.taskId || null, folder_id: c.code || null, tokens: c.tokens || 0, messages,
+    task_id: c.taskId || null, folder_id: c.code || null, tokens: c.tokens || 0, messages, summary: c.summary || '',
     attachment: fileText ? { name: c.file.name, kind: c.file.kind || '', included: chatFileIncluded(c.file), text: fileText, chars: fileText.length } : null };
   const chat = c, session = c.session;
   chatSave.queue = (chatSave.queue || Promise.resolve()).then(async () => {
@@ -1508,8 +1572,18 @@ function chatSave() {
       if (!chat.id && chat.session === session) chat.id = saved.id;
       loadChats();
     } catch (e) {
-      // Deleted elsewhere: the next save makes a new one (only for this session: another chat may be open now)
-      if (/deleted/.test(e.message) && chat.session === session) chat.id = null;
+      // Deleted meanwhile (elsewhere, or by Keep chats): kept as a new chat straight away, so the reply isn't
+      // lost if the app closes first. Only for this session: another chat may be open now
+      if (/deleted/.test(e.message) && chat.session === session && chat.id) {
+        chat.id = null;
+        try {
+          const saved = await api('/api/ai/chats', { method: 'POST', body });
+          // If another chat was opened meanwhile, this conversation is still kept, as its own chat under Recent
+          // chats: it's the student's, with the reply this save is for. It just isn't the one on screen any more
+          if (chat.session === session) chat.id = saved.id;
+          loadChats();
+        } catch (_) { /* the next save tries again */ }
+      }
     }
   });
   return chatSave.queue;
@@ -1535,6 +1609,7 @@ async function chatOpen(id) {
     mode: ch.kind === 'study' && CHAT_MODES[ch.mode] ? ch.mode : c.mode,
     // The file's text that went with its questions carries on (its other pages aren't kept: attach it again for those)
     file: ch.attachment ? { name: ch.attachment.name, kind: ch.attachment.kind, included: ch.attachment.included, text: ch.attachment.text } : null,
+    summary: ch.summary || '',
     messages: ch.messages.map(m => ({ role: m.role, content: m.content, ...m.meta })) });
   closeDrawer();
   const target = ch.kind === 'code' ? '#/code' : '#/study';
@@ -1656,6 +1731,44 @@ function chatFileChip() {
         <button class="chip" data-action="chat-file-ask" data-kind="notes" ${c.streaming ? 'disabled' : ''}>Write notes on this</button>
         <button class="chip" data-action="chat-file-ask" data-kind="quiz" ${c.streaming ? 'disabled' : ''}>Quiz me on this</button></div>` : ''}
     </div>`;
+}
+
+// ── Linked folders outside the workspace: on each subject, and in Settings ──
+/** Just the list of linked folders (the workspace loads the open folder's files itself). */
+async function codeLoadFolders() {
+  const k = codeState();
+  if (k.loadingFolders || k.folders) return;
+  k.loadingFolders = true;
+  try { k.folders = await api('/api/code/folders'); } catch (_) { k.folders = []; }
+  finally { k.loadingFolders = false; }
+  if (route() === 'settings' || route() === 'subjects') stillRender();
+}
+
+function subjectCodeBlock(subjectId) {
+  if (!codeOn()) return '';
+  const k = codeState();
+  if (!k.folders) { codeLoadFolders(); return ''; }
+  const list = k.folders.filter(f => f.subject_id === subjectId);
+  return `<div class="subject-notes subject-code">
+      <div class="subject-notes-head"><span>Code folders</span>${list.length ? `<span class="muted small">${list.length}</span>` : ''}<span class="spacer"></span>
+        <button class="icon-btn sm" data-action="code-link-subject" data-subject="${subjectId}" title="Link a code folder" aria-label="Link a code folder">${icon('plus', 15)}</button></div>
+      ${list.length ? `<div class="note-list">${list.map(f => `<button class="note-row" data-action="code-go" data-id="${f.id}">${icon('folder', 14)}<span class="note-title">${esc(f.name)}</span>
+          <span class="muted small">${f.mode === 'personal' ? 'Personal' : 'Assignment'}</span></button>`).join('')}</div>`
+        : '<p class="small muted notes-empty">Link the folder with your code for this subject, to get help with it in the code workspace.</p>'}
+    </div>`;
+}
+
+function codeFoldersSetting() {
+  const k = codeState();
+  if (!k.folders) codeLoadFolders();
+  const list = k.folders || [];
+  return `<div class="setting"><div style="flex:1;min-width:0"><div class="setting-title">Linked code folders</div>
+      ${list.length ? `<div class="linked-folders">${list.map(f => `<div class="linked-folder">${icon('folder', 15)}
+          <button class="link-btn" data-action="code-go" data-id="${f.id}">${esc(f.name)}</button>
+          <span class="muted small">${esc([f.subject_name, f.mode === 'personal' ? 'Personal project' : 'Assignment'].filter(Boolean).join(' · '))}</span>
+          <button class="icon-btn sm" data-action="code-unlink" data-id="${f.id}" aria-label="Unlink ${esc(f.name)}" title="Unlink (your files aren't touched)">${icon('x', 14)}</button></div>`).join('')}</div>`
+        : `<div class="setting-desc">${k.folders ? 'None yet. The assistant only reads folders you link.' : 'Loading…'}</div>`}</div>
+    ${btn('code-link', 'Link a folder', 'folder', 'btn-ghost btn-sm keep-label')}</div>`;
 }
 
 // ── Code workspace: a linked folder's tree, a file viewer, and the files sent with each question ──
@@ -2610,14 +2723,24 @@ const ACTIONS = {
     toast(f.mode === 'personal' ? 'Personal project: fixes come straight away' : 'Assignment: hints first');
     codeRender();
   },
-  async 'code-unlink'() {
-    const f = codeFolder();
+  async 'code-unlink'(el) {
+    const k = codeState(), id = el?.dataset?.id ? Number(el.dataset.id) : k.folderId;   // from Settings, or the open one
+    const f = (k.folders || []).find(x => x.id === id);
     if (!f || !(await confirmDialog(`Unlink ${f.name}?`, "EasyUniTrack stops reading it. Your files aren't changed or deleted.", 'Unlink'))) return;
     try { await api(`/api/code/folders/${f.id}`, { method: 'DELETE' }); } catch (e) { toast(e.message, 'error'); return; }
-    const k = codeState();
     k.folders = k.folders.filter(x => x.id !== f.id);
-    codeSelectFolder(k.folders[0]?.id ?? null);
-    if (!k.folderId) codeRender();
+    if (k.folderId === f.id) {
+      const next = k.folders[0]?.id ?? null;
+      if (next) codeSelectFolder(next);
+      else { k.folderId = null; if (chatState().code === f.id) chatReset(); }
+    }
+    if (route() === 'code') codeRender(); else stillRender();
+  },
+  'code-link-subject'(el) { codeLinkForm(Number(el.dataset.subject)); },
+  'code-go'(el) {
+    const id = Number(el.dataset.id), k = codeState();
+    if (k.folderId !== id) codeSelectFolder(id);
+    location.hash = '#/code';
   },
   'code-unsend'(el) {
     const k = codeState(), p = el.dataset.path;
@@ -3033,6 +3156,22 @@ document.addEventListener('input', e => {
 document.addEventListener('change', async e => {
   if (e.target.id === 'chatFormat') { chatState().format = e.target.value; return; }
   if (e.target.id === 'chatFile') { if (e.target.files[0]) chatAttach(e.target.files[0]); return; }
+  if (e.target.id === 'aiKeepChats') {
+    const days = Number(e.target.value), before = state.ai?.keep_chats_days || 0;
+    const label = (KEEP_CHATS.find(([v]) => v === days) || [])[1] || '';
+    if (days && (!before || days < before) && !(await confirmDialog('Delete older chats?',
+      `Saved chats you haven't continued for ${label.toLowerCase()} are deleted now, and from now on. This can't be undone.`, 'Delete them'))) {
+      e.target.value = String(before);
+      return;
+    }
+    try {
+      const r = await aiSettings({ keep_chats_days: days });
+      toast(r.clean_up_failed ? "Saved. Older chats couldn't be deleted just now, so they'll be deleted when EasyUniTrack next starts."
+        : r.removed_chats ? `Deleted ${plural(r.removed_chats, 'older chat')}` : days ? `Chats are kept for ${label.toLowerCase()}` : 'Chats are kept until you delete them');
+      loadChats();
+    } catch (err) { toast(err.message, 'error'); e.target.value = String(before); }
+    return;
+  }
   if (e.target.dataset.fileRange) {                        // the pages, slides or sections to send
     const f = chatState().file, i = Number(e.target.value);
     if (!f?.parts) return;

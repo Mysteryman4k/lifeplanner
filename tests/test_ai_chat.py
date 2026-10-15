@@ -73,7 +73,7 @@ def test_last_message_must_be_the_students_and_history_is_trimmed(c, fake):
     msgs = [{"role": "user" if i % 2 == 0 else "assistant", "content": f"m{i}"} for i in range(45)]
     c.post("/api/ai/chat", json={"messages": msgs})
     sent = fake.last["messages"]
-    assert len(sent) <= 20 and sent[0]["role"] == "user" and sent[-1]["content"] == "m44"
+    assert len(sent) == 39 and sent[0]["content"] == "m6" and sent[-1]["content"] == "m44"   # 40, from the student's
 
 
 def test_help_me_with_this_attaches_the_task(c, fake):
