@@ -854,6 +854,10 @@ fieldset.field { border: 0; padding: 0; margin: 0; min-width: 0; }
 /* ── Long chats, clean-up and linked folders (stage 11b) ──────────── */
 .chat-summary { border: 1px dashed var(--line); border-radius: var(--r-sm); padding: 6px 10px; font-size: 13px; color: var(--muted); }
 .chat-summary > summary { display: flex; align-items: center; gap: 6px; cursor: pointer; font-weight: 600; }
+.chat-summary > summary::-webkit-details-marker { display: none; }   /* the chevron below shows open or closed */
+.chat-summary-mark { flex: none; transition: transform .15s ease; }
+.chat-summary[open] .chat-summary-mark { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .chat-summary-mark { transition: none; } }
 .chat-summary .chat-text { margin-top: 6px; font-size: 13px; color: var(--ink-2); }
 .linked-folders { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
 .linked-folder { display: flex; align-items: center; gap: 8px; min-width: 0; }

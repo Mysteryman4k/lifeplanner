@@ -18,7 +18,8 @@ from .providers import PRESETS, get_provider, suggest_model
 ProviderId = Literal["", "anthropic", "openai", "deepseek", "ollama", "custom"]
 KeepChats = Literal[0, 30, 90, 180, 365]                   # ai/chats.py KEEP_CHATS
 SETTING_KEY = "ai"
-MAX_HISTORY = 20            # messages sent with each request (older ones stay on screen only)
+MAX_HISTORY = 40            # messages sent with each request: the page sends the last 20, and any older ones its
+                            # summary doesn't cover yet (the summary goes in place of the rest)
 MAX_TOOL_ROUNDS = 5         # tool calls and replies in one turn, so a confused model can't loop forever
 
 
@@ -87,7 +88,7 @@ class ChatIn(BaseModel):
 
 
 class SummariseIn(BaseModel):
-    """Messages that no longer go with each question (only the last MAX_HISTORY do), to fold into the summary."""
+    """Messages older than the last 20 of a chat, to fold into its running summary."""
     kind: Literal["study", "code"] = "study"
     previous: str = Field(default="", max_length=8000)
     messages: list[ChatMessage] = Field(min_length=1, max_length=200)
@@ -194,7 +195,11 @@ def register(app, get_setting, put_setting, transport_hook=lambda: None, task_co
         save(s)
         state = public_state(s)
         if s.keep_chats_days != keep_before and s.keep_chats_days:      # a shorter limit applies straight away
-            state["removed_chats"] = clean_up().get("chats", 0)
+            try:
+                state["removed_chats"] = clean_up().get("chats", 0)
+            except Exception as e:                       # the setting is saved: it's applied when the app next starts
+                print(f"Clearing old chats failed: {e!r}", flush=True)
+                state["clean_up_failed"] = True
         return state
 
     @app.put("/api/ai/key")
@@ -350,7 +355,7 @@ def register(app, get_setting, put_setting, transport_hook=lambda: None, task_co
     @app.post("/api/ai/summarise")
     def summarise(b: SummariseIn):
         """Fold messages that no longer go with each question into the chat's running summary, so a long chat
-        keeps its thread. The page asks for this after a reply, every few turns once a chat passes MAX_HISTORY."""
+        keeps its thread. The page asks for this after a reply, every few turns once a chat passes 20 messages."""
         from .providers import ProviderError
         s = require_agreement()
         if not (s.code_enabled if b.kind == "code" else s.assistant_enabled):

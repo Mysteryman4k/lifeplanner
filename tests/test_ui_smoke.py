@@ -414,7 +414,7 @@ def test_long_chats_and_switching_tasks_mid_reply(server, page):
     page.reload()
     page.wait_for_selector("#nav a[href='#/study']")
 
-    # 150 earlier messages: the request carries only the last 20, starting with the student's
+    # 150 earlier messages, none summarised yet: the request carries the last 40, starting with the student's
     page.evaluate("""() => { chatReset(); const c = chatState();
         for (let i = 0; i < 150; i++) c.messages.push({ role: i % 2 ? 'assistant' : 'user', content: 'm' + i }); }""")
     seen = len(A.fake_net_seen)
@@ -424,7 +424,7 @@ def test_long_chats_and_switching_tasks_mid_reply(server, page):
     summaries = [b for b in bodies if b["messages"][0]["content"].startswith("You keep a running summary")]
     body = next(b for b in bodies if b not in summaries)
     sent = body["messages"][1:]                                    # after the system prompt
-    assert len(sent) <= 20 and sent[0]["role"] == "user" and sent[-1]["content"] == "latest question"
+    assert len(sent) == 39 and sent[0]["content"] == "m112" and sent[-1]["content"] == "latest question"
     assert not any(e for e in page.errors if "422" in e)
     # The 132 messages before the window (150, the question and its reply, less 20) are summarised, 60 at a time
     assert [b["messages"][1]["content"].count("Student: ") + b["messages"][1]["content"].count("Assistant: ")
@@ -1346,8 +1346,8 @@ def test_long_chats_keep_chats_and_linked_folders(server, page, tmp_path_factory
 
     def say(text):
         return "data: " + json.dumps({"choices": [{"delta": {"content": text}}]}) + nl + nl
-    A.fake_net["POST localhost/v1/chat/completions"] = (200, [say("Answer 13."), say("The student revised stacks and heaps."),
-                                                              say("Answer 14.")])
+    A.fake_net["POST localhost/v1/chat/completions"] = (200, [say("Answer 13."), say("Answer 14."),
+                                                              say("The student revised stacks and heaps."), say("Answer 15.")])
 
     def requests():
         return [json.loads(r.content) for r in A.fake_net_seen if r.url.path.endswith("/chat/completions")]
@@ -1364,24 +1364,39 @@ def test_long_chats_keep_chats_and_linked_folders(server, page, tmp_path_factory
             chatRefresh();
         }""")
         seen = len(requests())
-        page.fill("#chatInput", "Question 13")
-        page.keyboard.press("Enter")
-        page.wait_for_selector(".chat-msg.ai >> text=Answer 13.")
-        # Six messages have left the 20-message window, so they're summarised after the reply
-        page.wait_for_selector(".chat-summary >> text=Earlier messages are summarised for the assistant")
+
+        def ask(text, answer):
+            page.fill("#chatInput", text)
+            page.keyboard.press("Enter")
+            page.wait_for_selector(f".chat-msg.ai >> text={answer}")
+            page.wait_for_function("!chatState().streaming")
+
+        # Six messages have left the 20-message window, so a summary is due after the reply. If it fails, the
+        # messages it would have covered still go with the next question: nothing is left out
+        page.route("**/api/ai/summarise", lambda route: route.fulfill(status=502, json={"detail": "Ollama isn't running."}))
+        ask("Question 13", "Answer 13.")
+        page.wait_for_function("!chatState().summarising")
+        page.unroute("**/api/ai/summarise")
+        page.route("**/api/ai/summarise", lambda route: (page.wait_for_timeout(1500), route.continue_()))
+        ask("Question 14", "Answer 14.")
         asked = requests()[seen:]
-        # system + the last 20, less the reply that would start it (a window starts with the student's message)
-        assert len(asked) == 2 and len(asked[0]["messages"]) == 20
-        assert asked[1]["messages"][0]["content"].startswith("You keep a running summary")
-        folded = asked[1]["messages"][1]["content"]
-        assert "Student: Question 1" in folded and "Question 4" not in folded
-        page.click(".chat-summary > summary")
-        page.wait_for_selector(".chat-summary >> text=The student revised stacks and heaps.")
-        page.fill("#chatInput", "Question 14")
-        page.keyboard.press("Enter")
-        page.wait_for_selector(".chat-msg.ai >> text=Answer 14.")
-        system = requests()[-1]["messages"][0]["content"]
+        assert len(asked) == 2 and [m["content"] for m in asked[1]["messages"][1:3]] == ["Question 1", "Answer 1."]
+        assert len(asked[1]["messages"]) == 1 + 27 and "Summary of the earlier part" not in asked[1]["messages"][0]["content"]
+        # The summary is being made now (slowly): a question asked meanwhile waits for it, then goes with it
+        assert page.evaluate("chatState().summarising") is True
+        ask("Question 15", "Answer 15.")
+        page.unroute("**/api/ai/summarise")
+        asked = requests()[seen:]
+        assert len(asked) == 4 and asked[2]["messages"][0]["content"].startswith("You keep a running summary")
+        folded = asked[2]["messages"][1]["content"]
+        assert "Student: Question 1" in folded and "Assistant: Answer 4." in folded and "Question 5" not in folded
+        system = asked[3]["messages"][0]["content"]
         assert "Summary of the earlier part of this chat" in system and "The student revised stacks and heaps." in system
+        # ...in place of the eight messages it covers: the rest still go as they are
+        assert [m["content"] for m in asked[3]["messages"][1:2]] == ["Question 5"] and len(asked[3]["messages"]) == 1 + 21
+        page.wait_for_selector(".chat-summary >> text=Earlier messages are summarised for the assistant")
+        page.click(".chat-summary > summary")
+        page.wait_for_selector(".chat-summary[open] >> text=The student revised stacks and heaps.")
         chat_id = None
         for _ in range(100):                                                    # saved with the chat
             chat_id = page.evaluate("chatState().id")
@@ -1391,7 +1406,7 @@ def test_long_chats_keep_chats_and_linked_folders(server, page, tmp_path_factory
         else:
             pytest.fail("The summary wasn't saved")
         saved = page.request.get(f"{server}/api/ai/chats/{chat_id}").json()
-        assert sum(1 for m in saved["messages"] if m["meta"].get("summarised")) == 6
+        assert sum(1 for m in saved["messages"] if m["meta"].get("summarised")) == 8
 
         # Keep chats: choosing a limit asks first, then deletes chats not continued for that long
         with A.db() as conn:
@@ -1435,7 +1450,8 @@ def test_long_chats_keep_chats_and_linked_folders(server, page, tmp_path_factory
         row.wait_for(state="detached")
         assert all(f["name"] != "assignment2" for f in page.request.get(f"{server}/api/code/folders").json())
         assert (root / "main.py").exists()                                       # the files themselves stay
-        assert not page.errors, page.errors
+        assert [e for e in page.errors if "status of 502" not in e] == []          # only the summary made to fail
+        page.errors.clear()
     finally:
         page.evaluate("chatReset()")
         for ch in page.request.get(f"{server}/api/ai/chats").json():

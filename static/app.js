@@ -1259,8 +1259,8 @@ function chatShell(inPanel) {
         <span class="chat-meta" title="Tokens used in this chat (billed by cloud providers)">${icon('spark', 13)}${esc(a.model)} · <span id="chatTokens">${c.tokens.toLocaleString()}</span> tokens</span>
       </div>
       ${task ? `<div class="chat-attached">${icon('tasks', 15)}<div><b>${esc(task.title)}</b><span class="muted small">${[task.subject_name, task.due_date ? 'due ' + fmt(task.due_date, { weekday: 'short', day: 'numeric', month: 'short' }) : ''].filter(Boolean).map(esc).join(' · ')}</span></div></div>` : ''}
-      <div class="chat-log" id="chatLog" aria-live="polite">${intro}${c.summary && chatConversation().length > CHAT_WINDOW ? `<details class="chat-summary">
-          <summary>${icon('layers', 14)}Earlier messages are summarised for the assistant</summary><div class="chat-text">${chatMarkdown(c.summary)}</div></details>` : ''}${c.messages.map(chatMessage).join('')}</div>
+      <div class="chat-log" id="chatLog" aria-live="polite">${intro}${c.summary && chatConversation().some(m => m.summarised) ? `<details class="chat-summary">
+          <summary>${icon('chevronRight', 14, 'chat-summary-mark')}Earlier messages are summarised for the assistant</summary><div class="chat-text">${chatMarkdown(c.summary)}</div></details>` : ''}${c.messages.map(chatMessage).join('')}</div>
       ${folder ? codeSendList() + cloud : ''}
       ${chatFileChip()}
       <form class="chat-composer" id="chatForm">
@@ -1362,13 +1362,18 @@ async function chatSend(text, extra = {}) {
   chatRefresh();
   const reply = c.messages[c.messages.length - 1];
   let tasksChanged = false;
+  if (c.summaryRun) {                          // older messages being summarised: wait, so this question has it
+    await c.summaryRun;
+    if (!current()) return;
+  }
+  // Everything the summary doesn't cover goes with the question: the last CHAT_WINDOW messages, and any older
+  // ones not summarised yet (the next summary is due, or the last one failed), up to CHAT_MAX
   const convo = chatConversation();              // not the reply being written (it's empty)
-  let history = convo.map(m => ({ role: m.role, content: m.content })).slice(-CHAT_WINDOW);
+  let history = convo.filter(m => !m.summarised).map(m => ({ role: m.role, content: m.content })).slice(-CHAT_MAX);
   while (history.length && history[0].role !== 'user') history = history.slice(1);   // same window as the server
   try {
     const file = c.file ? { attachment: { name: c.file.name, included: chatFileIncluded(c.file), text: chatFileText(c.file) } } : {};
-    // Older messages don't go with the question: their summary does
-    if (convo.length > CHAT_WINDOW && c.summary) file.summary = c.summary;
+    if (c.summary && convo.some(m => m.summarised)) file.summary = c.summary;   // in place of the summarised ones
     const payload = folderId
       ? { mode: 'code', format: c.format || 'auto', messages: history, ...file,
           code: { folder_id: folderId, files: (codeState().files || []).map(f => f.path), ...extra } }
@@ -1405,18 +1410,26 @@ async function chatSend(text, extra = {}) {
   chatSummarise();
 }
 
-// ── Long chats: only the last CHAT_WINDOW messages go with each question, so older ones are folded into a
-// running summary (every few turns, after a reply), and the summary goes instead ──
-const CHAT_WINDOW = 20;                          // MAX_HISTORY in ai/routes.py
+// ── Long chats: messages older than the last CHAT_WINDOW are folded into a running summary (every few turns,
+// after a reply), and the summary goes with each question in their place ──
+const CHAT_WINDOW = 20;                          // always sent as they are
+const CHAT_MAX = 40;                             // MAX_HISTORY in ai/routes.py: the window and any not yet summarised
 const SUMMARY_EVERY = 6;                         // messages left out of the window before the summary is updated
 const SUMMARY_BATCH = 60;                        // messages folded in at a time (the server takes up to 200)
 
 /** The messages that count as the conversation (not empty replies or errors), as the server sees them. */
 function chatConversation() { return chatState().messages.filter(m => m.content && !m.error); }
 
-async function chatSummarise() {
-  const c = chatState(), session = c.session;
+function chatSummarise() {
+  const c = chatState();
   if (c.summarising || c.streaming) return;
+  const run = chatSummariseNow(c);                 // never rejects: a failed summary is tried again later
+  c.summaryRun = run;                              // a question asked meanwhile waits for it (chatSend)
+  run.finally(() => { if (c.summaryRun === run) c.summaryRun = null; });
+}
+
+async function chatSummariseNow(c) {
+  const session = c.session;
   c.summarising = true;
   try {
     for (;;) {                                    // a long chat from before summaries goes in batches, oldest first
@@ -1433,7 +1446,7 @@ async function chatSummarise() {
       chatSave();
     }
   } catch (_) {
-    // Tried again after the next reply; meanwhile the last summary (if any) still goes with each question
+    // Tried again after the next reply; meanwhile the messages it would have covered go with each question
   } finally {
     if (c.session === session) c.summarising = false;
   }
@@ -1515,7 +1528,7 @@ function chatReset(taskId = null, code = null, fromOpen = false) {
   c.controller?.abort();                       // stop any reply still streaming for the old chat
   // A new session: saves still queued for the chat that was showing can't touch this one (chatSave)
   Object.assign(c, { id: null, session: {}, messages: [], tokens: 0, taskId, code, streaming: false, controller: null, run: null, file: null, attaching: null,
-    summary: '', summarising: false });
+    summary: '', summarising: false, summaryRun: null });
 }
 
 // ── Saved chats: kept after each reply, listed under Recent chats, and opened again ──
@@ -3143,7 +3156,8 @@ document.addEventListener('change', async e => {
     }
     try {
       const r = await aiSettings({ keep_chats_days: days });
-      toast(r.removed_chats ? `Deleted ${plural(r.removed_chats, 'older chat')}` : days ? `Chats are kept for ${label.toLowerCase()}` : 'Chats are kept until you delete them');
+      toast(r.clean_up_failed ? "Saved. Older chats couldn't be deleted just now, so they'll be deleted when EasyUniTrack next starts."
+        : r.removed_chats ? `Deleted ${plural(r.removed_chats, 'older chat')}` : days ? `Chats are kept for ${label.toLowerCase()}` : 'Chats are kept until you delete them');
       loadChats();
     } catch (err) { toast(err.message, 'error'); e.target.value = String(before); }
     return;

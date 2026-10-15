@@ -165,6 +165,17 @@ def test_chats_are_kept_until_the_student_chooses_a_limit(c, A):
     assert c.put("/api/ai/settings", json={"keep_chats_days": 45}).status_code == 422
 
 
+def test_a_failed_clean_up_doesnt_undo_the_saved_setting(c, A, monkeypatch):
+    agree(c)
+
+    def locked(*a, **k):
+        raise OSError("database is locked")
+    monkeypatch.setattr(chats, "clean_up_records", locked)
+    r = c.put("/api/ai/settings", json={"keep_chats_days": 30})
+    assert r.status_code == 200 and r.json()["clean_up_failed"] is True and r.json()["keep_chats_days"] == 30
+    assert c.get("/api/ai/state").json()["keep_chats_days"] == 30           # applied when the app next starts
+
+
 def test_clearing_runs_when_the_app_starts(A, monkeypatch):
     calls = []
     monkeypatch.setattr(A, "auto_backup", lambda: calls.append("backup"))
