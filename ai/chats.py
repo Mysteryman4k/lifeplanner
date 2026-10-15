@@ -6,6 +6,7 @@ cards. Gate: the current terms must be agreed. Like every change, saving needs t
 """
 import json
 import shutil
+import time
 from pathlib import Path
 from typing import Literal, Optional
 
@@ -17,6 +18,11 @@ from . import files, terms
 MAX_MESSAGES = 400
 MAX_META = 200_000                 # characters of a message's cards and the like, as JSON
 LIST_LIMIT = 100
+MAX_SUMMARY = 8000                 # characters of the summary of a long chat's older messages
+KEEP_DAYS = 90                     # suggested code changes and task-change records are kept this long...
+KEEP_CHANGES = 200                 # ...and at least the newest this many changes
+KEEP_ACTIONS = 500                 # ...and task-change records
+KEEP_CHATS = (0, 30, 90, 180, 365)  # the student's choice for saved chats, in days (0: keep them all)
 
 
 class SavedMessage(BaseModel):
@@ -51,6 +57,7 @@ class ChatSave(BaseModel):
     tokens: int = Field(default=0, ge=0)
     messages: list[SavedMessage] = Field(min_length=1, max_length=MAX_MESSAGES)
     attachment: Optional[SavedAttachment] = None
+    summary: str = Field(default="", max_length=MAX_SUMMARY)  # older messages, summarised for the assistant
 
 
 def register(app, db, load_ai_settings, data_dir: Path):
@@ -77,8 +84,8 @@ def register(app, db, load_ai_settings, data_dir: Path):
         folder_id = c.folder_id if exists(conn, "code_folders", c.folder_id) else None
         attachment = c.attachment.model_dump_json() if c.attachment else ""
         conn.execute("UPDATE conversations SET title=?, kind=?, mode=?, format=?, task_id=?, folder_id=?, tokens=?, "
-                     "attachment=?, updated_at=datetime('now','localtime') WHERE id=?",
-                     (title_of(c), c.kind, c.mode, c.format, task_id, folder_id, c.tokens, attachment, chat_id))
+                     "attachment=?, summary=?, updated_at=datetime('now','localtime') WHERE id=?",
+                     (title_of(c), c.kind, c.mode, c.format, task_id, folder_id, c.tokens, attachment, c.summary, chat_id))
         conn.execute("DELETE FROM messages WHERE conversation_id=?", (chat_id,))
         conn.executemany("INSERT INTO messages (conversation_id, position, role, content, meta) VALUES (?, ?, ?, ?, ?)",
                          [(chat_id, i, m.role, m.content, json.dumps(m.meta)) for i, m in enumerate(c.messages)])
@@ -137,6 +144,10 @@ def register(app, db, load_ai_settings, data_dir: Path):
             conn.execute("DELETE FROM conversations WHERE id=?", (chat_id,))
         return {"ok": True}
 
+    def clean_up():
+        """Old records that are only useful for a while (run when the app starts, and when Keep chats changes)."""
+        return clean_up_records(db, data_dir, load_ai_settings().keep_chats_days)
+
     def remove_ai_data():
         """For Remove all AI data: chats, linked folders (the folders themselves aren't touched), proposed changes,
         the action log, and the copies kept for Undo."""
@@ -151,4 +162,47 @@ def register(app, db, load_ai_settings, data_dir: Path):
                 raise HTTPException(500, "Your chats and folder links were removed, but some code backups couldn't be "
                                          f"deleted ({target}). Close any program using them and click Remove again.") from e
 
-    return remove_ai_data
+    return remove_ai_data, clean_up
+
+
+def clean_up_records(db, data_dir: Path, keep_chats_days: int = 0) -> dict:
+    """Keep what only matters for a while from growing forever:
+    - suggested code changes (and the backups Undo uses) older than KEEP_DAYS, beyond the newest KEEP_CHANGES;
+    - the record of task changes (Undo for those) on the same terms, beyond the newest KEEP_ACTIONS;
+    - code backups nothing refers to any more (a removed link, or a crash), once they're an hour old;
+    - saved chats not opened or changed for keep_chats_days, only if the student chose a limit (0: kept).
+    Nothing that's part-way through (being applied or undone, or waiting for a yes) is touched."""
+    age = f"-{KEEP_DAYS} days"
+    removed = {}
+    with db() as conn:
+        removed["changes"] = conn.execute(
+            "DELETE FROM file_changes WHERE status NOT IN ('applying', 'undoing') AND created_at < "
+            "datetime('now', 'localtime', ?) AND id NOT IN (SELECT id FROM file_changes ORDER BY id DESC LIMIT ?)",
+            (age, KEEP_CHANGES)).rowcount
+        removed["actions"] = conn.execute(
+            "DELETE FROM ai_actions WHERE status NOT IN ('pending', 'applying', 'undoing') AND created_at < "
+            "datetime('now', 'localtime', ?) AND id NOT IN (SELECT id FROM ai_actions ORDER BY id DESC LIMIT ?)",
+            (age, KEEP_ACTIONS)).rowcount
+        removed["chats"] = 0
+        if keep_chats_days:
+            old = [r[0] for r in conn.execute("SELECT id FROM conversations WHERE updated_at < datetime('now', 'localtime', ?)",
+                                              (f"-{int(keep_chats_days)} days",))]
+            for i in range(0, len(old), 500):
+                part = old[i:i + 500]
+                marks = ",".join("?" * len(part))
+                conn.execute(f"DELETE FROM messages WHERE conversation_id IN ({marks})", part)
+                conn.execute(f"DELETE FROM conversations WHERE id IN ({marks})", part)
+            removed["chats"] = len(old)
+        in_use = {Path(r[0]).name for r in conn.execute("SELECT backup FROM file_changes WHERE backup != ''")}
+    removed["backups"] = 0
+    folder = Path(data_dir) / "code-backups"
+    if folder.is_dir():
+        settled = time.time() - 3600                      # one being written right now isn't recorded yet
+        for f in folder.iterdir():
+            try:
+                if f.is_file() and f.name not in in_use and f.stat().st_mtime < settled:
+                    f.unlink()
+                    removed["backups"] += 1
+            except OSError:                               # in use: tried again next time
+                pass
+    return removed

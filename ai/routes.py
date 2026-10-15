@@ -16,6 +16,7 @@ from .tools import TaskTools
 from .providers import PRESETS, get_provider, suggest_model
 
 ProviderId = Literal["", "anthropic", "openai", "deepseek", "ollama", "custom"]
+KeepChats = Literal[0, 30, 90, 180, 365]                   # ai/chats.py KEEP_CHATS
 SETTING_KEY = "ai"
 MAX_HISTORY = 20            # messages sent with each request (older ones stay on screen only)
 MAX_TOOL_ROUNDS = 5         # tool calls and replies in one turn, so a confused model can't loop forever
@@ -30,6 +31,7 @@ class AISettings(BaseModel):
     terms_version: str = ""                               # the version agreed to, "" if none
     terms_agreed_at: str = ""
     run_notice: bool = False                              # the one-time "only run code you trust" notice was read
+    keep_chats_days: KeepChats = 0                        # saved chats not continued for this long are deleted (0: kept)
 
 
 class AISettingsUpdate(BaseModel):
@@ -38,6 +40,7 @@ class AISettingsUpdate(BaseModel):
     provider: ProviderId = None
     model: str = Field(default=None, max_length=200)
     base_url: str = Field(default=None, max_length=500)
+    keep_chats_days: KeepChats = None
 
 
 class Agreement(BaseModel):
@@ -80,6 +83,14 @@ class ChatIn(BaseModel):
     code: Optional[CodeIn] = None                             # the code workspace: its folder and files
     action: Optional[Literal["videos"]] = None                 # a study reply's own action (Videos)
     attachment: Optional[AttachmentIn] = None                  # an attached file, sent with each question
+    summary: str = Field(default="", max_length=8000)          # older messages that no longer go with it, summarised
+
+
+class SummariseIn(BaseModel):
+    """Messages that no longer go with each question (only the last MAX_HISTORY do), to fold into the summary."""
+    kind: Literal["study", "code"] = "study"
+    previous: str = Field(default="", max_length=8000)
+    messages: list[ChatMessage] = Field(min_length=1, max_length=200)
 
 
 class ConfirmIn(BaseModel):
@@ -98,7 +109,7 @@ class TestIn(BaseModel):
 
 
 def register(app, get_setting, put_setting, transport_hook=lambda: None, task_context=lambda task_id: "",
-             task_store=None, action_log=None, code_context=None, remove_ai_data=lambda: None):
+             task_store=None, action_log=None, code_context=None, remove_ai_data=lambda: None, clean_up=lambda: None):
     """Add the /api/ai routes to the app. get_setting/put_setting are app.py's settings helpers.
     transport_hook lets tests supply an httpx.MockTransport so nothing goes over the network."""
 
@@ -129,6 +140,7 @@ def register(app, get_setting, put_setting, transport_hook=lambda: None, task_co
             "assistant_enabled": ok and s.assistant_enabled,
             "code_enabled": ok and s.code_enabled,
             "run_notice": s.run_notice,
+            "keep_chats_days": s.keep_chats_days,
             "provider": provider, "model": s.model, "base_url": s.base_url,
             "key": keys.hint(provider) if provider and (PRESETS[provider]["needs_key"] or provider == "custom") else None,
             "providers": {k: {x: v[x] for x in ("name", "needs_key", "key_url", "limit_url", "about", "base_url")}
@@ -174,12 +186,16 @@ def register(app, get_setting, put_setting, transport_hook=lambda: None, task_co
     @app.put("/api/ai/settings")
     def update_settings(u: AISettingsUpdate):
         s = require_agreement()
+        keep_before = s.keep_chats_days
         for k, v in u.model_dump(exclude_none=True).items():
             setattr(s, k, v.strip() if isinstance(v, str) else v)
         if s.base_url and not s.base_url.startswith(("http://", "https://")):
             raise HTTPException(400, "The base URL should start with http:// or https://")
         save(s)
-        return public_state(s)
+        state = public_state(s)
+        if s.keep_chats_days != keep_before and s.keep_chats_days:      # a shorter limit applies straight away
+            state["removed_chats"] = clean_up().get("chats", 0)
+        return state
 
     @app.put("/api/ai/key")
     def save_key(k: KeyIn):
@@ -284,6 +300,8 @@ def register(app, get_setting, put_setting, transport_hook=lambda: None, task_co
         else:
             system_text = prompts.system_prompt(c.mode, task_context(c.task_id) if c.task_id else "", c.format,
                                                 c.action or "")
+        if c.summary.strip():
+            system_text += "\n\n" + prompts.summary_block(c.summary)
         base = (s.base_url or None) if s.provider == "custom" else None
         provider = get_provider(s.provider, key=keys.get(s.provider), base_url=base, transport=transport_hook())
         # Task tools when the app provides them, the mode is a conversation, and the model can use tools
@@ -328,6 +346,33 @@ def register(app, get_setting, put_setting, transport_hook=lambda: None, task_co
             yield f"data: {json.dumps({'type': 'done', 'model': s.model})}\n\n"
 
         return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
+
+    @app.post("/api/ai/summarise")
+    def summarise(b: SummariseIn):
+        """Fold messages that no longer go with each question into the chat's running summary, so a long chat
+        keeps its thread. The page asks for this after a reply, every few turns once a chat passes MAX_HISTORY."""
+        from .providers import ProviderError
+        s = require_agreement()
+        if not (s.code_enabled if b.kind == "code" else s.assistant_enabled):
+            raise HTTPException(403, "Turn on the Study assistant in Settings first.")
+        if not s.provider or not s.model:
+            raise HTTPException(400, "Choose an AI provider and model in Settings first.")
+        base = (s.base_url or None) if s.provider == "custom" else None
+        provider = get_provider(s.provider, key=keys.get(s.provider), base_url=base, transport=transport_hook())
+        text, used = "", 0
+        try:
+            for ev in provider.stream_chat(s.model, prompts.SUMMARISE, [
+                    {"role": "user", "content": prompts.summarise_request(b.previous, [m.model_dump() for m in b.messages])}]):
+                if ev["type"] == "text":
+                    text += ev["text"]
+                elif ev["type"] == "usage":
+                    used = (ev.get("input") or 0) + (ev.get("output") or 0)
+        except ProviderError as e:
+            raise HTTPException(502, str(e)) from None
+        text = text.strip()
+        if not text:
+            raise HTTPException(502, "The summary came back empty.")
+        return {"summary": text[:8000], "tokens": used}
 
     @app.post("/api/ai/confirm")
     def confirm(c: ConfirmIn):

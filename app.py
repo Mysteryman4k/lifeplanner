@@ -306,6 +306,7 @@ def init_db():
                 folder_id INTEGER REFERENCES code_folders(id) ON DELETE SET NULL,
                 tokens INTEGER NOT NULL DEFAULT 0,
                 attachment TEXT NOT NULL DEFAULT '',          -- an attached file's chosen text, as JSON
+                summary TEXT NOT NULL DEFAULT '',             -- older messages, summarised for the assistant
                 created_at TEXT DEFAULT (datetime('now','localtime')),
                 updated_at TEXT DEFAULT (datetime('now','localtime'))
             );
@@ -327,8 +328,10 @@ def init_db():
                 created_at TEXT DEFAULT (datetime('now','localtime'))
             );
         """)
-        if "attachment" not in {r[1] for r in conn.execute("PRAGMA table_info(conversations)")}:   # v4 previews
-            conn.execute("ALTER TABLE conversations ADD COLUMN attachment TEXT NOT NULL DEFAULT ''")
+        chat_cols = {r[1] for r in conn.execute("PRAGMA table_info(conversations)")}               # v4 previews
+        for col in ("attachment", "summary"):
+            if col not in chat_cols:
+                conn.execute(f"ALTER TABLE conversations ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
         # A change cut off part-way (the app was closed mid-change) keeps the undo steps saved so far: offer Undo
         conn.execute("UPDATE ai_actions SET status='done' WHERE status IN ('applying', 'undoing')")
         conn.execute("INSERT INTO settings (key, value) VALUES ('last_run_version', ?) "
@@ -1420,10 +1423,10 @@ WINDOW = {"show": None, "pick_folder": None}
 
 code_context = code_routes.register(app, db, lambda: _get_setting(ai_routes.SETTING_KEY, ai_routes.AISettings),
                                     DB_PATH.parent, WINDOW)
-remove_ai_data = chats.register(app, db, lambda: _get_setting(ai_routes.SETTING_KEY, ai_routes.AISettings),
-                                DB_PATH.parent)
+remove_ai_data, clean_up_ai_records = chats.register(
+    app, db, lambda: _get_setting(ai_routes.SETTING_KEY, ai_routes.AISettings), DB_PATH.parent)
 ai_routes.register(app, _get_setting, _put_setting, lambda: AI_TRANSPORT["value"], _task_context,
-                   TaskStore(), ActionLog(), code_context, remove_ai_data)
+                   TaskStore(), ActionLog(), code_context, remove_ai_data, clean_up_ai_records)
 
 
 class MoneySettings(BaseModel):
@@ -1667,6 +1670,15 @@ def list_backups(kind: Optional[str] = None):
     return files
 
 
+def start_up_jobs():
+    """Slow jobs for when the app starts, off the start-up path: the daily backup, then clearing old AI records."""
+    auto_backup()
+    try:
+        clean_up_ai_records()
+    except Exception as e:                                  # never stops the app
+        print(f"Clearing old AI records failed: {e!r}", flush=True)
+
+
 def auto_backup():
     """One automatic backup a day, keeping the last few. Runs when the app starts."""
     try:
@@ -1862,5 +1874,5 @@ if __name__ == "__main__":
     # TRACKADEMIC_ALLOWED_HOSTS=192.168.1.20,my-laptop.local
     enable_lockdown(os.environ.get("TRACKADEMIC_ALLOWED_HOSTS", "").split(","))
     print(f"\n  {APP_NAME} {APP_VERSION} — http://127.0.0.1:{port}\n  Data: {DB_PATH}\n")
-    auto_backup()
+    start_up_jobs()
     uvicorn.run(app, host=host, port=port, log_level="info")
