@@ -1423,6 +1423,24 @@ def test_long_chats_keep_chats_and_linked_folders(server, page, tmp_path_factory
         page.select_option("#aiKeepChats", label="Until I delete them")             # longer: nothing to ask
         page.wait_for_selector("#toast.show >> text=Chats are kept until you delete them")
 
+        # The open chat is deleted meanwhile (by Keep chats, say): its next save keeps it as a new chat straight away
+        kept = page.request.post(f"{server}/api/ai/chats", headers=tok, data={"title": "Open one", "messages": [
+            {"role": "user", "content": "Still here?"}, {"role": "assistant", "content": "Yes."}]}).json()
+        page.evaluate(f"chatOpen({kept['id']})")
+        page.wait_for_selector(".chat-msg.ai >> text=Yes.")
+        page.request.delete(f"{server}/api/ai/chats/{kept['id']}", headers=tok)
+        new_id = page.evaluate("""async () => {
+            chatState().messages.push({ role: 'user', content: 'One more' }, { role: 'assistant', content: 'Kept.' });
+            await chatSave();
+            return chatState().id;
+        }""")
+        assert new_id and new_id != kept["id"]
+        assert [m["content"] for m in page.request.get(f"{server}/api/ai/chats/{new_id}").json()["messages"]] == [
+            "Still here?", "Yes.", "One more", "Kept."]
+        page.request.delete(f"{server}/api/ai/chats/{new_id}", headers=tok)
+        page.evaluate("chatReset()")
+        page.errors[:] = [e for e in page.errors if "status of 404" not in e]   # the refused save
+
         # Linking a code folder from a subject, then managing it in Settings
         root = tmp_path_factory.mktemp("assignment2")
         (root / "main.py").write_text("print('hi')\n", encoding="utf-8")

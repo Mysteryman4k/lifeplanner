@@ -1572,8 +1572,16 @@ function chatSave() {
       if (!chat.id && chat.session === session) chat.id = saved.id;
       loadChats();
     } catch (e) {
-      // Deleted elsewhere: the next save makes a new one (only for this session: another chat may be open now)
-      if (/deleted/.test(e.message) && chat.session === session) chat.id = null;
+      // Deleted meanwhile (elsewhere, or by Keep chats): kept as a new chat straight away, so the reply isn't
+      // lost if the app closes first. Only for this session: another chat may be open now
+      if (/deleted/.test(e.message) && chat.session === session && chat.id) {
+        chat.id = null;
+        try {
+          const saved = await api('/api/ai/chats', { method: 'POST', body });
+          if (chat.session === session) chat.id = saved.id;
+          loadChats();
+        } catch (_) { /* the next save tries again */ }
+      }
     }
   });
   return chatSave.queue;
