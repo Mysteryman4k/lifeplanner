@@ -110,8 +110,11 @@ def test_pre_release_package_versions_sort_between_the_releases():
     assert all(0 <= n <= 65535 for v in numbers for n in v)
 
 
-@pytest.mark.parametrize("version", ["4.0.0-beta", "4.0.0-preview.1", "4.0.1-beta.1", "4.0.0-beta.0",
-                                     "4.0.0-beta.1000", "0.0.0-beta.1", "four"])
+@pytest.mark.parametrize("version", [
+    "4.0.0-beta", "4.0.0-preview.1", "4.0.1-beta.1", "4.0.0-beta.0", "4.0.0-beta.1000", "four",
+    "4.0.0-beta.01", "04.0.0", "4.0.0-beta.١",           # one spelling per version: no leading zeros, ASCII digits
+    "0.5.0", "1.0.0-beta.1", "0.1.0-beta.1", "0.0.0-beta.1",  # the Store needs the first number to be at least 1
+])
 def test_versions_the_store_cant_take(version):
     with pytest.raises(SystemExit):
         load_builder().package_version(version)
