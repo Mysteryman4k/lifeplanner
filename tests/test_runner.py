@@ -162,7 +162,13 @@ def test_suggestions_for_single_files(tmp_path):
     assert one("game.py")["commands"][0]["why"] == "Opens its own window"
     java = one("Main.java")["commands"][0]
     assert java["command"] == "java Main.java" and java["missing"] == ["java"]
-    assert one("prog.c")["commands"][0]["command"].startswith("gcc prog.c -o prog && ")
+    windows = os.name == "nt"
+    assert one("prog.c")["commands"][0]["command"] == ("gcc prog.c -o prog.exe && prog.exe" if windows
+                                                       else "gcc prog.c -o prog && ./prog")
+    # rustc writes exactly the name it's given, so Windows needs .exe; names with spaces are quoted
+    (tmp_path / "my prog.rs").write_text("fn main() {}")
+    assert one("my prog.rs")["commands"][0]["command"] == ('rustc "my prog.rs" -o "my prog.exe" && "my prog.exe"' if windows
+                                                           else 'rustc "my prog.rs" -o "my prog" && "./my prog"')
     assert one("q.sql")["commands"] == [] and "explained" in one("q.sql")["explain_only"]
     assert "needs a project" in one("Program.cs")["explain_only"]
 

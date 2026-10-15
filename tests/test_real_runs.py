@@ -38,6 +38,8 @@ CASES = {   # case: (files, the open file or "", the suggestion's label, what th
              "Hello.java", "Run Hello.java", hello("java")),
     "c": ({"hello.c": f'#include <stdio.h>\nint main(void) {{ printf("{hello("c")}\\n"); return 0; }}\n'},
           "hello.c", "Run hello.c", hello("c")),
+    "c, a name with a space": ({"my prog.c": f'#include <stdio.h>\nint main(void) {{ printf("{hello("my prog")}\\n"); }}\n'},
+                               "my prog.c", "Run my prog.c", hello("my prog")),
     "cpp": ({"hello.cpp": f'#include <iostream>\nint main() {{ std::cout << "{hello("cpp")}" << std::endl; }}\n'},
             "hello.cpp", "Run hello.cpp", hello("cpp")),
     "go": ({"hello.go": f'package main\n\nimport "fmt"\n\nfunc main() {{ fmt.Println("{hello("go")}") }}\n'},
