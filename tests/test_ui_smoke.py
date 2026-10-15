@@ -1399,11 +1399,11 @@ def test_long_chats_keep_chats_and_linked_folders(server, page, tmp_path_factory
         page.wait_for_selector(".chat-summary[open] >> text=The student revised stacks and heaps.")
         # Every reply can be reported (Microsoft Store Policies 11.16): a GitHub issue opens, with nothing from the
         # chat in its address (GitHub would receive it as the page opens), and the reply is copied to paste in
-        report = page.locator(".chat-msg.ai").last.locator("a", has_text="Report")
+        report = page.locator(".chat-msg.ai").last.locator("a.chat-report[aria-label=Report]")
         href = report.get_attribute("href")
         assert href.startswith("https://github.com/Mysteryman4k/lifeplanner/issues/new?labels=ai-response&")
         assert "Answer" not in href and "Question" not in href and report.get_attribute("target") == "_blank"
-        assert page.locator(".chat-msg.ai a", has_text="Report").count() == page.locator(".chat-msg.ai").count()
+        assert page.locator(".chat-msg.ai a.chat-report").count() == page.locator(".chat-msg.ai").count()
         page.context.grant_permissions(["clipboard-read", "clipboard-write"], origin=server)
         page.context.route("https://github.com/**", lambda route: route.abort())     # no real request from tests
         with page.expect_popup() as popup:
@@ -1494,3 +1494,56 @@ def test_long_chats_keep_chats_and_linked_folders(server, page, tmp_path_factory
         page.request.put(f"{server}/api/ai/settings", headers=tok, data={"keep_chats_days": 0, "code_enabled": False})
         page.request.post(f"{server}/api/ai/terms/withdraw", headers=tok)
         A.fake_net.pop("POST localhost/v1/chat/completions", None)
+
+
+@pytest.mark.ui
+def test_design_refresh_details(server, page, tmp_path_factory):
+    """Tables in replies, the code workspace in a narrow window (code and chat in view, files with Files), a plain
+    hint before any file is open, and New chat clearing the open chat in Recent chats."""
+    import app as A
+    tok = {A.TOKEN_HEADER: A.SESSION_TOKEN}
+    folder = saved = None                               # set up inside try, so the clean-up always runs
+    page.errors.clear()
+    try:
+        terms = page.request.get(f"{server}/api/ai/terms").json()
+        page.request.post(f"{server}/api/ai/terms/agree", headers=tok,
+                          data={"version": terms["version"], "ticks": {k: True for k in terms["ticks"]}})
+        page.request.put(f"{server}/api/ai/settings", headers=tok,
+                         data={"provider": "ollama", "model": "qwen2.5:7b", "code_enabled": True})
+        root = tmp_path_factory.mktemp("narrow")
+        (root / "lib.py").write_text("print('hi')\n", encoding="utf-8")
+        folder = page.request.post(f"{server}/api/code/folders", headers=tok, data={"path": str(root)}).json()
+        saved = page.request.post(f"{server}/api/ai/chats", headers=tok, data={"title": "Old chat", "messages": [
+            {"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}]}).json()
+        page.goto(f"{server}/#/study")
+        page.reload()
+        html = page.evaluate("t => chatMarkdown(t)", "| Step | x |\n|---|--:|\n| 1 | **2** |")
+        assert '<table class="chat-table">' in html and '<td class="al-right"><strong>2</strong></td>' in html
+        page.evaluate(f"chatOpen({saved['id']})")
+        page.wait_for_selector(".nav-chat.on >> text=Old chat")
+        page.click("[data-action=chat-new]")
+        assert page.locator(".nav-chat.on").count() == 0
+
+        page.set_viewport_size({"width": 900, "height": 700})
+        page.goto(f"{server}/#/code")
+        page.wait_for_selector(".code-tree .tree-row >> text=lib.py", state="attached")
+        page.wait_for_selector("text=Open a file to see how to run it.")          # not "Explain only" yet
+        assert page.locator(".code-tree").is_hidden()
+        for pane in (".code-main", ".code-chat"):                                  # both in view, no scrolling
+            box = page.locator(pane).bounding_box()
+            assert box and box["y"] + box["height"] <= 700 + 1, pane
+        page.click(".files-toggle")
+        page.click(".code-tree .tree-row >> text=lib.py")
+        page.wait_for_selector(".code-tab >> text=lib.py")
+        assert page.locator(".code-tree").is_hidden()                              # picking a file closes the list
+        assert page.locator("#runCommand").input_value().startswith(("python", "py"))
+        assert not page.errors, page.errors
+    finally:
+        page.set_viewport_size({"width": 1280, "height": 800})
+        page.evaluate("chatReset()")
+        if saved:
+            page.request.delete(f"{server}/api/ai/chats/{saved['id']}", headers=tok)
+        if folder:
+            page.request.delete(f"{server}/api/code/folders/{folder['id']}", headers=tok)
+        page.request.put(f"{server}/api/ai/settings", headers=tok, data={"code_enabled": False})
+        page.request.post(f"{server}/api/ai/terms/withdraw", headers=tok)

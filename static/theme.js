@@ -5,9 +5,15 @@
    ═══════════════════════════════════════════════════════════════ */
 'use strict';
 
-/* Each theme: a gradient (a → b), the accent colour used for text/links,
-   the colour of text placed on the gradient, and a hue that tints the greys. */
+/* Each theme: a primary colour pair (a → b, the same for a solid colour), the accent colour used for
+   text/links, the colour of text placed on the primary colour, and a hue that tints the greys.
+   Plain is the default: neutral greys, near-black buttons and one quiet blue, calm for long sessions. */
 const THEMES = {
+  plain: {
+    name: 'Plain', hue: 220, sat: 5,
+    light: { a: '#1F2328', b: '#1F2328', text: '#1D5FAD', on: '#FFFFFF' },
+    dark:  { a: '#E8EAED', b: '#E8EAED', text: '#7DB0EA', on: '#16181C' },
+  },
   sunset: {
     name: 'Sunset', hue: 18, sat: 45,
     light: { a: '#D2461A', b: '#BE1F6A', text: '#B0245A', on: '#FFFFFF' },
@@ -42,6 +48,7 @@ const THEMES = {
 
 /* Text styles: a display face for headings/numbers and a body face. */
 const FONTS = {
+  system:     { name: 'System',     display: 'Segoe UI Variable Display', body: 'Segoe UI Variable Text', weight: 600, track: '-0.01em', sample: 'Plain and familiar' },
   rounded:    { name: 'Rounded',    display: 'Outfit',              body: 'Outfit',            weight: 700, track: '-0.025em', sample: 'Friendly and soft' },
   modern:     { name: 'Modern',     display: 'Plus Jakarta Sans',   body: 'Plus Jakarta Sans', weight: 800, track: '-0.03em',  sample: 'Clean and sharp' },
   expressive: { name: 'Expressive', display: 'Bricolage Grotesque', body: 'DM Sans',           weight: 800, track: '-0.035em', sample: 'Bold with character' },
@@ -49,7 +56,7 @@ const FONTS = {
   classic:    { name: 'Classic',    display: 'Fraunces',            body: 'DM Sans',           weight: 600, track: '-0.02em',  sample: 'Editorial serif' },
 };
 
-const DEFAULT_APPEARANCE = { theme: 'sunset', font: 'rounded', mode: 'system' };
+const DEFAULT_APPEARANCE = { theme: 'plain', font: 'system', mode: 'system' };
 const APPEARANCE_KEY = 'trackademic-appearance';   // kept from the old name so saved looks carry over
 
 function hsl(h, s, l) { return `hsl(${h} ${s}% ${l}%)`; }
@@ -82,8 +89,8 @@ function readAppearance() {
 
 function applyAppearance(p) {
   const pref = { ...DEFAULT_APPEARANCE, ...p };
-  const theme = THEMES[pref.theme] || THEMES.sunset;
-  const font = FONTS[pref.font] || FONTS.rounded;
+  const theme = THEMES[pref.theme] || THEMES.plain;
+  const font = FONTS[pref.font] || FONTS.system;
   const dark = pref.mode === 'dark' || (pref.mode === 'system' && systemDark.matches);
   const c = dark ? theme.dark : theme.light;
   const root = document.documentElement;
@@ -93,7 +100,7 @@ function applyAppearance(p) {
     '--grad': `linear-gradient(135deg, ${c.a}, ${c.b})`,
     '--accent': c.a, '--accent-text': c.text, '--accent-ink': c.on,
     '--display': `'${font.display}', system-ui, sans-serif`,
-    '--font': `'${font.body}', system-ui, -apple-system, 'Segoe UI', sans-serif`,
+    '--font': `'${font.body}', 'Segoe UI', system-ui, -apple-system, sans-serif`,
     '--display-weight': font.weight, '--display-track': font.track,
   };
   for (const [k, v] of Object.entries(vars)) root.style.setProperty(k, v);

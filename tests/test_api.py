@@ -77,7 +77,7 @@ def test_full_flow(c):
 
 
 def test_appearance_settings(c):
-    assert c.get("/api/settings/appearance").json() == {"theme": "sunset", "font": "rounded", "mode": "system"}
+    assert c.get("/api/settings/appearance").json() == {"theme": "plain", "font": "system", "mode": "system"}
     r = c.put("/api/settings/appearance", json={"theme": "midnight", "font": "techy", "mode": "dark"})
     assert r.status_code == 200
     assert c.get("/api/settings/appearance").json()["theme"] == "midnight"

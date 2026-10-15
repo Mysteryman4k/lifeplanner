@@ -212,8 +212,9 @@ def suggestions(root: Path, open_file: str = "", tools: dict = None) -> dict:
 
     for marker, what in EXPLAIN_ONLY_PROJECTS:
         if _has(root, marker):
-            return {"commands": [], "explain_only": f"This looks like {what}, which EasyUniTrack can't run. "
-                                                     "It can still explain and debug the code by reading it."}
+            return {"commands": [], "kind": "project",
+                    "explain_only": f"This looks like {what}, which EasyUniTrack can't run. "
+                                    "It can still explain and debug the code by reading it."}
 
     # Projects
     pkg = root / "package.json"
@@ -323,8 +324,9 @@ def suggestions(root: Path, open_file: str = "", tools: dict = None) -> dict:
             why = {".cs": "C# needs a project (.csproj) to run. Create one with `dotnet new console`.",
                    ".ipynb": "Jupyter notebooks can be read and explained, but not run here yet."}.get(
                 ext, "This kind of file can be explained and debugged by reading it, but not run here.")
-        return {"commands": [], "explain_only": why}
-    return {"commands": out, "explain_only": ""}
+        # kind: "file" (this kind of file can't be run), or "none" (no project here and no file open yet)
+        return {"commands": [], "explain_only": why, "kind": "file" if open_file else "none"}
+    return {"commands": out, "explain_only": "", "kind": "run"}
 
 
 # ── a run ──

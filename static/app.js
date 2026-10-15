@@ -269,6 +269,7 @@ const btn = (action, label, iconName, cls = 'btn-primary', extra = '') =>
 function render() {
   renderNav();
   const r = route();
+  document.documentElement.dataset.route = r;
   VIEWS[r]();
   $('.brand-mark').innerHTML = BRAND_MARK;
 }
@@ -646,7 +647,7 @@ const VIEWS = {
       ? `<section class="card code-main">${emptyState('alert', "This folder can't be found", esc(k.treeError),
           btn('code-unlink', 'Unlink it', 'x', 'btn-ghost'))}</section>`
       : `<section class="card code-main" id="codeMain">${codeViewer()}</section>`;
-    $('#content').innerHTML = `<div class="code-ws">${treePane}${main}<section class="code-chat">${chatShell(false)}</section></div>`;
+    $('#content').innerHTML = `<div class="code-ws ${k.filesOpen ? 'files-open' : ''}">${treePane}${main}<section class="code-chat">${chatShell(false)}</section></div>`;
     codeScrollToMark();
     chatAfterRender();
     if (k.run?.status === 'running') codePoll();
@@ -1005,8 +1006,21 @@ function chatMarkdown(src) {
   const out = [];
   let list = null;
   const closeList = () => { if (list) { out.push(`</${list}>`); list = null; } };
-  for (const line of text.split('\n')) {
+  const lines = text.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     let m;
+    if (line.includes('|') && (lines[i + 1] || '').includes('|') && TABLE_RULE.test(lines[i + 1])) {   // not a --- rule
+      closeList();
+      const head = tableCells(line), aligns = tableCells(lines[i + 1]).map(c => /^:-+:$/.test(c) ? 'center' : /-:$/.test(c) ? 'right' : '');
+      const al = j => aligns[j] ? ` class="al-${aligns[j]}"` : '';
+      const rows = [];
+      for (i += 2; i < lines.length && lines[i].includes('|') && lines[i].trim(); i++) rows.push(tableCells(lines[i]));
+      i--;
+      out.push(`<div class="chat-table-wrap"><table class="chat-table"><thead><tr>${head.map((c, j) => `<th${al(j)}>${inline(c)}</th>`).join('')}</tr></thead>` +
+        `<tbody>${rows.map(r => `<tr>${head.map((_, j) => `<td${al(j)}>${inline(r[j] ?? '')}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`);
+      continue;
+    }
     if ((m = line.match(/^\u0000(\d+)\u0000$/))) { closeList(); out.push(blocks[+m[1]]); }
     else if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) { closeList(); out.push('<hr>'); }
     else if ((m = line.match(/^(#{1,3})\s+(.*)$/))) { closeList(); out.push(`<h${m[1].length + 2}>${inline(m[2])}</h${m[1].length + 2}>`); }
@@ -1019,6 +1033,9 @@ function chatMarkdown(src) {
   const html = out.join('').replace(/\u0000(\d+)\u0000/g, (_, i) => blocks[+i]).replace(/\u0001(\d+)\u0001/g, (_, i) => spans[+i]);
   return window.DOMPurify ? DOMPurify.sanitize(html, PURIFY) : html;
 }
+
+const TABLE_RULE = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;      // a table's --- row (any number of dashes)
+const tableCells = line => line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim());
 
 function maths(tex, display) {
   if (!window.katex) return `<code>${esc(tex)}</code>`;
@@ -1212,17 +1229,17 @@ function chatMessage(m, i) {
   const c = chatState();
   const live = c.streaming && i === c.messages.length - 1;
   const last = !live && i === c.messages.length - 1 && !c.streaming;
-  return `<div class="chat-msg ai ${live ? 'live' : ''}" data-i="${i}">
+  return `<div class="chat-msg ai ${live ? 'live' : ''} ${last ? 'last' : ''}" data-i="${i}">
     <div class="chat-text">${m.content ? chatMarkdown(m.content) : (live ? `<span class="chat-typing" aria-label="Thinking"><i></i><i></i><i></i></span>${c.file ? '<span class="muted small"> Reading the file…</span>' : ''}` : '')}</div>
     ${(m.cards || []).map((card, n) => chatCard(card, i, n)).join('')}
     ${m.error ? `<div class="chat-error">${icon('alert', 15)}${esc(m.error)}</div>` : ''}
     ${m.stopped ? '<div class="small muted">Stopped.</div>' : ''}
     ${last && c.mode === 'quiz' && !c.code ? quizChoices(m.content) : ''}
     ${!live && m.content ? `<div class="chat-tools">
-      <button class="btn btn-ghost btn-sm keep-label" data-action="chat-save-note" data-i="${i}">${icon('subjects', 14)}Save as note</button>
-      ${c.code ? '' : `<button class="btn btn-ghost btn-sm keep-label" data-action="chat-videos" data-i="${i}" title="YouTube searches for this topic">${icon('external', 14)}Videos</button>`}
-      <button class="btn btn-ghost btn-sm keep-label" data-action="chat-copy" data-i="${i}">${icon('copy', 14)}Copy</button>
-      <a class="btn btn-ghost btn-sm keep-label chat-report" data-i="${i}" href="${esc(chatReportUrl())}" target="_blank" rel="noopener" title="Report this reply on GitHub. The reply is copied for you to paste in.">${icon('flag', 14)}Report</a>
+      <button class="icon-btn sm" data-action="chat-copy" data-i="${i}" aria-label="Copy" title="Copy">${icon('copy', 15)}</button>
+      <button class="icon-btn sm" data-action="chat-save-note" data-i="${i}" aria-label="Save as note" title="Save as note">${icon('subjects', 15)}</button>
+      ${c.code ? '' : `<button class="icon-btn sm" data-action="chat-videos" data-i="${i}" aria-label="Videos" title="Videos: YouTube searches for this topic">${icon('play', 15)}</button>`}
+      <a class="icon-btn sm chat-report" data-i="${i}" href="${esc(chatReportUrl())}" target="_blank" rel="noopener" aria-label="Report" title="Report this reply on GitHub (the reply is copied for you to paste in)">${icon('flag', 15)}</a>
       ${last ? `<select class="select select-sm chat-reformat" aria-label="Show this again in another format"><option value="">Show as…</option>
         ${Object.entries(FORMAT_ASK).map(([k]) => `<option value="${k}">${CHAT_FORMATS[k]}</option>`).join('')}</select>` : ''}</div>` : ''}
   </div>`;
@@ -1241,14 +1258,14 @@ function chatShell(inPanel) {
     : `<div class="segmented" role="group" aria-label="Study mode">${Object.entries(CHAT_MODES).map(([k, v]) =>
         `<button class="${c.mode === k ? 'on' : ''}" data-action="chat-mode" data-mode="${k}" ${c.streaming ? 'disabled' : ''}>${v}</button>`).join('')}</div>`;
   const intro = !c.messages.length ? (folder ? `<div class="chat-empty">
-      ${icon('code', 26)}<h3>Ask about your code</h3>
+      <h3>Ask about your code</h3>
       <p class="muted small">${folder.mode === 'personal'
         ? 'Personal project: the assistant explains problems and shows fixes straight away.'
         : 'Assignment: the assistant points at the problem and asks guiding questions, so the work stays yours.'}
         Paste an error and click Explain the error, or ask anything about the open file.</p></div>` : `<div class="chat-empty">
-      ${icon('spark', 26)}<h3>${task ? 'What would you like help with?' : 'Ask about anything in your units'}</h3>
+      <h3>${task ? 'What would you like help with?' : 'Ask about anything in your units'}</h3>
       <p class="muted small">${CHAT_MODE_HELP[c.mode] || CHAT_MODE_HELP.explain}</p>
-      ${task ? '' : `<div class="chat-ideas">${CHAT_IDEAS.map(x => `<button class="chip" data-action="chat-idea">${esc(x)}</button>`).join('')}</div>`}
+      ${task ? '' : `<div class="chat-ideas">${CHAT_IDEAS.map(x => `<button class="chat-idea" data-action="chat-idea">${esc(x)}</button>`).join('')}</div>`}
     </div>`) : '';
   const cloud = folder && a.provider && a.provider !== 'ollama'
     ? `<div class="code-cloud-note">${icon('shield', 14)}<span>Code you send goes to ${esc(a.providers?.[a.provider]?.name || a.provider)}. To keep it on this PC, use Ollama in Settings.</span></div>` : '';
@@ -1261,22 +1278,26 @@ function chatShell(inPanel) {
         <select class="select select-sm" id="chatFormat" aria-label="Format of replies" ${c.streaming ? 'disabled' : ''}>
           ${Object.entries(CHAT_FORMATS).map(([k, v]) => opt(k, v, c.format)).join('')}</select>
         <span class="spacer"></span>
-        <span class="chat-meta" title="Tokens used in this chat (billed by cloud providers)">${icon('spark', 13)}${esc(a.model)} · <span id="chatTokens">${c.tokens.toLocaleString()}</span> tokens</span>
+        <span class="chat-meta" title="Tokens used in this chat (billed by cloud providers)">${esc(a.model)} · <span id="chatTokens">${c.tokens.toLocaleString()}</span> tokens</span>
       </div>
       ${task ? `<div class="chat-attached">${icon('tasks', 15)}<div><b>${esc(task.title)}</b><span class="muted small">${[task.subject_name, task.due_date ? 'due ' + fmt(task.due_date, { weekday: 'short', day: 'numeric', month: 'short' }) : ''].filter(Boolean).map(esc).join(' · ')}</span></div></div>` : ''}
       <div class="chat-log" id="chatLog" aria-live="polite">${intro}${c.summary && chatConversation().some(m => m.summarised) ? `<details class="chat-summary">
           <summary>${icon('chevronRight', 14, 'chat-summary-mark')}Earlier messages are summarised for the assistant</summary><div class="chat-text">${chatMarkdown(c.summary)}</div></details>` : ''}${c.messages.map(chatMessage).join('')}</div>
       ${folder ? codeSendList() + cloud : ''}
       ${chatFileChip()}
-      <form class="chat-composer" id="chatForm">
-        <button class="icon-btn chat-attach" type="button" data-action="chat-attach" aria-label="Attach a file" title="Attach a PDF, PowerPoint (.pptx), Word (.docx) or text file. You can also drop one here." ${c.streaming || c.attaching ? 'disabled' : ''}>${icon('paperclip', 18)}</button>
-        <input type="file" id="chatFile" accept="${FILE_TYPES}" hidden>
-        <textarea class="textarea" id="chatInput" rows="2" maxlength="20000" placeholder="${folder ? 'Ask about this code, or paste an error message' : task ? 'Ask about this task' : c.file ? 'Ask about the attached file' : 'Ask a question, or paste something to work through'}" aria-label="Message" ${c.streaming ? 'disabled' : ''}></textarea>
-        ${c.streaming
-          ? `<button class="btn btn-ghost" type="button" data-action="chat-stop">${icon('x', 16)}Stop</button>`
-          : `<button class="btn btn-primary" type="submit" aria-label="Send" ${chatFileBlocked() ? 'disabled' : ''}>${icon('up', 17)}Send</button>`}
+      <form class="composer" id="chatForm">
+        <div class="composer-row">${folder ? '<span class="composer-prompt" aria-hidden="true">&gt;</span>' : ''}
+          <textarea class="composer-input" id="chatInput" rows="1" maxlength="20000" placeholder="${folder ? 'Ask about this code, or paste an error message' : task ? 'Ask about this task' : c.file ? 'Ask about the attached file' : 'Ask a question, or paste something to work through'}" aria-label="Message" ${c.streaming ? 'disabled' : ''}></textarea></div>
+        <div class="composer-bar">
+          <button class="icon-btn sm chat-attach" type="button" data-action="chat-attach" aria-label="Attach a file" title="Attach a PDF, PowerPoint (.pptx), Word (.docx) or text file. You can also drop one here." ${c.streaming || c.attaching ? 'disabled' : ''}>${icon('paperclip', 16)}</button>
+          <input type="file" id="chatFile" accept="${FILE_TYPES}" hidden>
+          <span class="composer-hint">Enter to send · Shift+Enter for a new line</span>
+          ${c.streaming
+            ? `<button class="send-btn stop" type="button" data-action="chat-stop" aria-label="Stop" title="Stop">${icon('stop', 15)}</button>`
+            : `<button class="send-btn" type="submit" aria-label="Send" title="Send" ${chatFileBlocked() ? 'disabled' : ''}>${icon('up', 16)}</button>`}
+        </div>
       </form>
-      <div class="chat-foot">Preview. The assistant can be wrong. Check important answers against your unit material.</div>
+      <div class="chat-foot">Preview. The assistant can be wrong: check important answers against your unit material.</div>
     </div>`;
 }
 
@@ -1857,7 +1878,8 @@ function codeTreeNodes(nodes, depth = 0) {
 
 function codeViewer() {
   const k = codeState(), f = k.open;
-  if (!f) return emptyState('file', 'Choose a file', 'Pick a file on the left to read it here. Hidden files stay hidden and are never sent.') + codeRunPanel();
+  if (!f) return `<div class="code-file-head">${codeFilesToggle()}<span class="muted small">No file open</span></div>` +
+    emptyState('file', 'Choose a file', 'Pick a file in the list to read it here. Hidden files stay hidden and are never sent.') + codeRunPanel();
   const lines = f.text.split('\n');
   let html = esc(f.text);
   if (f.highlight && window.hljs?.getLanguage(f.highlight)) {
@@ -1865,13 +1887,18 @@ function codeViewer() {
   }
   const marks = k.marks[f.path] || [];
   const sending = k.files.some(x => x.path === f.path);
-  return `<div class="code-file-head">${icon('file', 15)}<b class="code-path">${esc(f.path)}</b><span class="pill">${esc(f.language)}</span>
+  return `<div class="code-file-head">${codeFilesToggle()}<span class="code-tab">${icon('file', 14)}<b class="code-path">${esc(f.path)}</b><span class="pill">${esc(f.language)}</span></span>
       <span class="spacer"></span>
       <button class="btn btn-ghost btn-sm keep-label" data-action="${sending ? 'code-unsend' : 'code-send-open'}" data-path="${esc(f.path)}">${icon(sending ? 'check' : 'plus', 14)}${sending ? 'Sending' : 'Send with question'}</button></div>
     <div class="code-view" id="codeView"><div class="code-lines">
       ${marks.map(n => `<div class="code-mark" style="top:${(n - 1) * 20 + 10}px" title="Line ${n} is in the error"></div>`).join('')}
       <div class="code-gutter" aria-hidden="true">${lines.map((_, i) => `<span class="${marks.includes(i + 1) ? 'marked' : ''}">${i + 1}</span>`).join('')}</div>
       <pre class="code-text"><code class="hljs">${html}</code></pre></div></div>${codeRunPanel()}`;
+}
+
+/** Narrow windows hide the file list beside the code: this shows it over the code instead. */
+function codeFilesToggle() {
+  return `<button class="icon-btn sm files-toggle" data-action="code-files" aria-label="Show files" title="Files">${icon('folder', 15)}</button>`;
 }
 
 // ── Running code: the student's click only, in the linked folder, with a time limit and Stop ──
@@ -1883,6 +1910,11 @@ function codeRunPanel() {
   const running = run?.status === 'running';
   if (!cmds.length && !run && !k.customRun) {
     if (!k.commands) return '<div class="code-run"></div>';             // filled in when the commands arrive
+    if (k.commands.kind === 'none' && !k.open) {                        // nothing to go on yet: not a limitation
+      return `<div class="code-run"><div class="run-bar explain-bar neutral">${icon('terminal', 15)}
+        <span>Open a file to see how to run it.</span>
+        <button class="btn btn-ghost btn-sm" data-action="code-run-custom">Type a command</button></div></div>`;
+    }
     return `<div class="code-run"><div class="run-bar explain-bar">${icon('alert', 15)}
       <span><b>Explain only.</b> ${esc(k.commands.explain_only || '')}</span>
       <button class="btn btn-ghost btn-sm" data-action="code-run-custom">Run a command anyway</button></div></div>`;
@@ -1892,6 +1924,7 @@ function codeRunPanel() {
   const why = chosen?.why ? `<span class="run-note">${esc(chosen.why)}</span>` : '';
   return `<div class="code-run">
     <div class="run-bar">
+      <span class="run-prompt" aria-hidden="true">$</span>
       <input class="input run-command" id="runCommand" list="runCommands" value="${esc(k.cmd || '')}" aria-label="Command to run" spellcheck="false" ${running ? 'disabled' : ''}>
       <datalist id="runCommands">${cmds.map(c => `<option value="${esc(c.command)}">${esc(c.label)}</option>`).join('')}</datalist>
       <label class="run-keep" title="For servers and apps: no time limit, Stop when you're done"><input type="checkbox" id="runKeep" ${k.keep ? 'checked' : ''} ${running ? 'disabled' : ''}>Keep running</label>
@@ -2683,6 +2716,7 @@ const ACTIONS = {
   'chat-new'() {
     chatReset(null, route() === 'code' ? codeState().folderId : null);   // a new chat stays in the same folder
     chatRefresh();
+    renderNav();                                    // Recent chats no longer marks the old one as open
   },
   'chat-mode'(el) { if (!chatState().streaming) { chatState().mode = el.dataset.mode; chatRefresh(); } },
   'chat-attach'() {
@@ -2718,7 +2752,12 @@ const ACTIONS = {
     if (k.expanded.has(p)) k.expanded.delete(p); else k.expanded.add(p);
     $('#codeTree').innerHTML = codeTreeNodes(k.tree.children);
   },
-  'code-open'(el) { codeOpen(el.dataset.path); },
+  'code-open'(el) { codeState().filesOpen = false; codeOpen(el.dataset.path); },
+  'code-files'() {                                          // narrow windows: the file list over the code
+    const k = codeState();
+    k.filesOpen = !k.filesOpen;
+    $('.code-ws')?.classList.toggle('files-open', k.filesOpen);
+  },
   'code-refresh'() { codeLoadTree(); },
   async 'code-mode'(el) {
     const f = codeFolder();
@@ -3163,6 +3202,10 @@ document.addEventListener('drop', e => {
 // In the code workspace, files named in the message (an error you paste, say) join the list as you type
 let codeTyping = 0;
 document.addEventListener('input', e => {
+  if (e.target.id === 'chatInput') {                        // the message box grows with the message, up to a limit
+    e.target.style.height = 'auto';
+    e.target.style.height = `${Math.min(e.target.scrollHeight, 220)}px`;
+  }
   if (e.target.id !== 'chatInput' || !chatState().code) return;
   clearTimeout(codeTyping);
   codeTyping = setTimeout(() => codeChoose(e.target.value), 500);
