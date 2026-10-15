@@ -1215,8 +1215,8 @@ def get_stats():
 # ═══════════════════════════════════════════════════════════════════════════
 
 class Appearance(BaseModel):
-    theme: Literal["sunset", "midnight", "cobalt", "ocean", "berry", "graphite"] = "sunset"
-    font: Literal["rounded", "modern", "expressive", "techy", "classic"] = "rounded"
+    theme: Literal["plain", "sunset", "midnight", "cobalt", "ocean", "berry", "graphite"] = "plain"
+    font: Literal["system", "rounded", "modern", "expressive", "techy", "classic"] = "system"
     mode: Literal["system", "light", "dark"] = "system"
 
 

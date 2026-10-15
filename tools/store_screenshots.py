@@ -212,7 +212,7 @@ def main():
     with sync_playwright() as p:
         browser = p.chromium.launch()
         for name, route, mode in shots:
-            api("put", "/api/settings/appearance", {"theme": "sunset", "font": "rounded", "mode": mode})
+            api("put", "/api/settings/appearance", {"theme": "plain", "font": "system", "mode": mode})
             page = browser.new_page(viewport={"width": WIDTH, "height": HEIGHT}, device_scale_factor=SCALE,
                                     color_scheme=mode, timezone_id="Australia/Melbourne")
             page.goto(f"{base}/#/{route}")
@@ -225,7 +225,7 @@ def main():
         lab = Path(tempfile.mkdtemp(prefix="easyunitrack-screenshots-")) / "graph-lab"
         lab.mkdir()
         study_chat, code_chat = seed_ai(api, lab)
-        api("put", "/api/settings/appearance", {"theme": "sunset", "font": "rounded", "mode": "light"})
+        api("put", "/api/settings/appearance", {"theme": "plain", "font": "system", "mode": "light"})
         page = browser.new_page(viewport={"width": WIDTH, "height": HEIGHT}, device_scale_factor=SCALE,
                                 color_scheme="light", timezone_id="Australia/Melbourne")
         page.goto(f"{base}/#/study")

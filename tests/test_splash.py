@@ -10,7 +10,7 @@ STATIC = ROOT / "static"
 sys.path.insert(0, str(ROOT))
 from desktop import STYLE_FONTS, build_splash_html  # noqa: E402
 
-THEMES = ["sunset", "midnight", "cobalt", "ocean", "berry", "graphite"]
+THEMES = ["plain", "sunset", "midnight", "cobalt", "ocean", "berry", "graphite"]
 
 
 def intro_markup(html: str) -> str:
@@ -44,7 +44,7 @@ def test_text_style_fonts_match_theme_js():
     theme_js = (STATIC / "theme.js").read_text(encoding="utf-8")
     for key, (family, file) in STYLE_FONTS.items():
         assert re.search(rf"{key}:\s*\{{[^}}]*display:\s*'{re.escape(family)}'", theme_js), key
-        assert (STATIC / "fonts" / file).exists(), file
+        assert file is None or (STATIC / "fonts" / file).exists(), file    # System uses Windows' own font
 
 
 def test_splash_can_rescue_itself():

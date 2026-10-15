@@ -170,6 +170,8 @@ def test_suggestions_for_single_files(tmp_path):
     assert one("my prog.rs")["commands"][0]["command"] == ('rustc "my prog.rs" -o "my prog.exe" && "my prog.exe"' if windows
                                                            else 'rustc "my prog.rs" -o "my prog" && "./my prog"')
     assert one("q.sql")["commands"] == [] and "explained" in one("q.sql")["explain_only"]
+    assert one("q.sql")["kind"] == "file" and one("prog.c")["kind"] == "run"
+    assert R.suggestions(tmp_path, "", TOOLS)["kind"] == "none"      # no project and no file open: nothing to say yet
     assert "needs a project" in one("Program.cs")["explain_only"]
 
 

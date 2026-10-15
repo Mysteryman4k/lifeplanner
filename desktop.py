@@ -71,8 +71,9 @@ def wait_until_ready(url: str, timeout: float = 30.0) -> bool:
     return False
 
 
-# Display font for each text style (must match FONTS in static/theme.js)
+# Display font for each text style (must match FONTS in static/theme.js). System uses Windows' own font: no file
 STYLE_FONTS = {
+    "system": ("Segoe UI Variable Display", None),
     "rounded": ("Outfit", "outfit-latin-wght-normal.woff2"),
     "modern": ("Plus Jakarta Sans", "plus-jakarta-sans-latin-wght-normal.woff2"),
     "expressive": ("Bricolage Grotesque", "bricolage-grotesque-latin-wght-normal.woff2"),
@@ -88,12 +89,15 @@ def build_splash_html(static_dir, appearance: dict, intro: bool, version: str, a
     """The start-up screen, self-contained (inline CSS, font and theme) so it shows instantly,
     before the local server is running. Uses the same colours and font as the user's theme."""
     static_dir = Path(static_dir)
-    font_name, font_file = STYLE_FONTS.get(appearance.get("font"), STYLE_FONTS["rounded"])
-    font_b64 = base64.b64encode((static_dir / "fonts" / font_file).read_bytes()).decode()
+    font_name, font_file = STYLE_FONTS.get(appearance.get("font"), STYLE_FONTS["system"])
+    font_face = ""
+    if font_file:                       # a bundled font, embedded so the splash needs nothing else
+        font_b64 = base64.b64encode((static_dir / "fonts" / font_file).read_bytes()).decode()
+        font_face = (f"@font-face {{ font-family: '{font_name}'; src: url(data:font/woff2;base64,{font_b64}) "
+                     "format('woff2'); font-weight: 100 900; }")
     html = (static_dir / "splash.html").read_text(encoding="utf-8")
     for key, value in {
-        "{{FONT_NAME}}": font_name,
-        "{{FONT_B64}}": font_b64,
+        "{{FONT_FACE}}": font_face,
         "{{INTRO_CSS}}": (static_dir / "intro.css").read_text(encoding="utf-8"),
         "{{THEME_JS}}": (static_dir / "theme.js").read_text(encoding="utf-8"),
         "{{PREF}}": json.dumps(appearance),
