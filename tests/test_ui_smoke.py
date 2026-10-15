@@ -1502,18 +1502,19 @@ def test_design_refresh_details(server, page, tmp_path_factory):
     hint before any file is open, and New chat clearing the open chat in Recent chats."""
     import app as A
     tok = {A.TOKEN_HEADER: A.SESSION_TOKEN}
-    terms = page.request.get(f"{server}/api/ai/terms").json()
-    page.request.post(f"{server}/api/ai/terms/agree", headers=tok,
-                      data={"version": terms["version"], "ticks": {k: True for k in terms["ticks"]}})
-    page.request.put(f"{server}/api/ai/settings", headers=tok,
-                     data={"provider": "ollama", "model": "qwen2.5:7b", "code_enabled": True})
-    root = tmp_path_factory.mktemp("narrow")
-    (root / "lib.py").write_text("print('hi')\n", encoding="utf-8")
-    folder = page.request.post(f"{server}/api/code/folders", headers=tok, data={"path": str(root)}).json()
-    saved = page.request.post(f"{server}/api/ai/chats", headers=tok, data={"title": "Old chat", "messages": [
-        {"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}]}).json()
+    folder = saved = None                               # set up inside try, so the clean-up always runs
     page.errors.clear()
     try:
+        terms = page.request.get(f"{server}/api/ai/terms").json()
+        page.request.post(f"{server}/api/ai/terms/agree", headers=tok,
+                          data={"version": terms["version"], "ticks": {k: True for k in terms["ticks"]}})
+        page.request.put(f"{server}/api/ai/settings", headers=tok,
+                         data={"provider": "ollama", "model": "qwen2.5:7b", "code_enabled": True})
+        root = tmp_path_factory.mktemp("narrow")
+        (root / "lib.py").write_text("print('hi')\n", encoding="utf-8")
+        folder = page.request.post(f"{server}/api/code/folders", headers=tok, data={"path": str(root)}).json()
+        saved = page.request.post(f"{server}/api/ai/chats", headers=tok, data={"title": "Old chat", "messages": [
+            {"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}]}).json()
         page.goto(f"{server}/#/study")
         page.reload()
         html = page.evaluate("t => chatMarkdown(t)", "| Step | x |\n|---|--:|\n| 1 | **2** |")
@@ -1540,7 +1541,9 @@ def test_design_refresh_details(server, page, tmp_path_factory):
     finally:
         page.set_viewport_size({"width": 1280, "height": 800})
         page.evaluate("chatReset()")
-        page.request.delete(f"{server}/api/ai/chats/{saved['id']}", headers=tok)
-        page.request.delete(f"{server}/api/code/folders/{folder['id']}", headers=tok)
+        if saved:
+            page.request.delete(f"{server}/api/ai/chats/{saved['id']}", headers=tok)
+        if folder:
+            page.request.delete(f"{server}/api/code/folders/{folder['id']}", headers=tok)
         page.request.put(f"{server}/api/ai/settings", headers=tok, data={"code_enabled": False})
         page.request.post(f"{server}/api/ai/terms/withdraw", headers=tok)
