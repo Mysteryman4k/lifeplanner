@@ -333,6 +333,26 @@ def test_too_much_attached_text_is_refused_not_cut(c, fake):
     assert chat(c, attachment={"name": "a.pdf", "text": "x" * 6000}).status_code == 200
 
 
+def test_a_reopened_chats_file_is_checked_against_the_context_with_the_model_loaded(c, A):
+    """A reopened chat's file was chosen for the context then; Ollama's model may have been unloaded since."""
+    import httpx
+    ready(c)
+    seen = []
+
+    def ollama(request):
+        seen.append(request.url.path)
+        if request.url.path == "/api/ps":                        # unloaded until /api/generate loads it
+            models = [{"model": "m1", "context_length": 4096}] if "/api/generate" in seen else []
+            return httpx.Response(200, json={"models": models})
+        if request.url.path == "/api/generate":
+            return httpx.Response(200, json={"done": True})
+        raise httpx.ConnectError("unreachable", request=request)
+    A.AI_TRANSPORT["value"] = httpx.MockTransport(ollama)
+    r = chat(c, attachment={"name": "a.pdf", "text": "x" * 7000})
+    assert r.status_code == 413 and "about 6,553 characters" in r.json()["detail"]
+    assert seen == ["/api/ps", "/api/generate", "/api/ps"] and "/v1/chat/completions" not in seen
+
+
 def test_task_changes_ask_first_while_a_file_is_attached(c, fake):
     ready(c)
     fake.script = [[{"type": "tool_calls", "calls": [{"id": "1", "name": "add_task",
