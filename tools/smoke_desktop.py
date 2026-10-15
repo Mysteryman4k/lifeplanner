@@ -89,6 +89,9 @@ def run_once(cmd, port: int, max_seconds: float, intro: bool, second_copy: bool 
                 print(f"✗ The window ran cached screens from an old version (loaded app.js {last['app_js_versions']}), "
                       f"not {last['version']}")
                 ok = False
+            elif (last.get("readers") or {}).get("pdf") is False:   # key only exists from 4.0
+                print("✗ PDF reading (pypdf) is missing from the build, so attached PDFs can't be read")
+                ok = False
         elif proc.poll() is None:
             stage = "the server never answered" if last is None else "the server is up but the window never showed the app"
             print(f"✗ Not on screen after {max_seconds:.0f}s: {stage}")

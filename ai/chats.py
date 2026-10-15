@@ -12,7 +12,7 @@ from typing import Literal, Optional
 from fastapi import HTTPException
 from pydantic import BaseModel, Field, field_validator
 
-from . import terms
+from . import files, terms
 
 MAX_MESSAGES = 400
 MAX_META = 200_000                 # characters of a message's cards and the like, as JSON
@@ -32,6 +32,15 @@ class SavedMessage(BaseModel):
         return v
 
 
+class SavedAttachment(BaseModel):
+    """The attached file's text that went with the chat's questions, so it can carry on after reopening."""
+    name: str = Field(min_length=1, max_length=200)
+    kind: str = Field(default="", max_length=20)
+    included: str = Field(default="", max_length=200)
+    text: str = Field(min_length=1, max_length=files.CLOUD_CHARS + 20_000)
+    chars: int = Field(default=0, ge=0)
+
+
 class ChatSave(BaseModel):
     title: str = Field(default="", max_length=120)
     kind: Literal["study", "code"] = "study"
@@ -41,6 +50,7 @@ class ChatSave(BaseModel):
     folder_id: Optional[int] = None
     tokens: int = Field(default=0, ge=0)
     messages: list[SavedMessage] = Field(min_length=1, max_length=MAX_MESSAGES)
+    attachment: Optional[SavedAttachment] = None
 
 
 def register(app, db, load_ai_settings, data_dir: Path):
@@ -65,9 +75,10 @@ def register(app, db, load_ai_settings, data_dir: Path):
         # Links to a task or folder that has gone stay empty rather than refuse the save
         task_id = c.task_id if exists(conn, "tasks", c.task_id) else None
         folder_id = c.folder_id if exists(conn, "code_folders", c.folder_id) else None
+        attachment = c.attachment.model_dump_json() if c.attachment else ""
         conn.execute("UPDATE conversations SET title=?, kind=?, mode=?, format=?, task_id=?, folder_id=?, tokens=?, "
-                     "updated_at=datetime('now','localtime') WHERE id=?",
-                     (title_of(c), c.kind, c.mode, c.format, task_id, folder_id, c.tokens, chat_id))
+                     "attachment=?, updated_at=datetime('now','localtime') WHERE id=?",
+                     (title_of(c), c.kind, c.mode, c.format, task_id, folder_id, c.tokens, attachment, chat_id))
         conn.execute("DELETE FROM messages WHERE conversation_id=?", (chat_id,))
         conn.executemany("INSERT INTO messages (conversation_id, position, role, content, meta) VALUES (?, ?, ?, ?, ?)",
                          [(chat_id, i, m.role, m.content, json.dumps(m.meta)) for i, m in enumerate(c.messages)])
@@ -79,6 +90,7 @@ def register(app, db, load_ai_settings, data_dir: Path):
         with db() as conn:
             rows = conn.execute(
                 "SELECT c.id, c.title, c.kind, c.mode, c.task_id, c.folder_id, c.updated_at, f.name AS folder_name, "
+                "CASE WHEN json_valid(c.attachment) THEN json_extract(c.attachment, '$.name') END AS attachment_name, "
                 "(SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS count "
                 "FROM conversations c LEFT JOIN code_folders f ON f.id = c.folder_id "
                 "ORDER BY c.updated_at DESC, c.id DESC LIMIT ?", (max(1, min(limit, LIST_LIMIT)),)).fetchall()
@@ -94,7 +106,11 @@ def register(app, db, load_ai_settings, data_dir: Path):
             messages = [{"role": m["role"], "content": m["content"], "meta": json.loads(m["meta"] or "{}")}
                         for m in conn.execute("SELECT * FROM messages WHERE conversation_id=? ORDER BY position",
                                               (chat_id,))]
-        return {**dict(row), "messages": messages}
+        try:                                            # a damaged one (from an edited backup) is left off
+            attachment = SavedAttachment.model_validate_json(row["attachment"]).model_dump() if row["attachment"] else None
+        except ValueError:
+            attachment = None
+        return {**dict(row), "attachment": attachment, "messages": messages}
 
     @app.post("/api/ai/chats")
     def create_chat(c: ChatSave):

@@ -26,6 +26,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
 import ai.chats as chats
+import ai.files as ai_files
 import ai.code_routes as code_routes
 import ai.routes as ai_routes
 import reminders
@@ -304,6 +305,7 @@ def init_db():
                 task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
                 folder_id INTEGER REFERENCES code_folders(id) ON DELETE SET NULL,
                 tokens INTEGER NOT NULL DEFAULT 0,
+                attachment TEXT NOT NULL DEFAULT '',          -- an attached file's chosen text, as JSON
                 created_at TEXT DEFAULT (datetime('now','localtime')),
                 updated_at TEXT DEFAULT (datetime('now','localtime'))
             );
@@ -325,6 +327,8 @@ def init_db():
                 created_at TEXT DEFAULT (datetime('now','localtime'))
             );
         """)
+        if "attachment" not in {r[1] for r in conn.execute("PRAGMA table_info(conversations)")}:   # v4 previews
+            conn.execute("ALTER TABLE conversations ADD COLUMN attachment TEXT NOT NULL DEFAULT ''")
         # A change cut off part-way (the app was closed mid-change) keeps the undo steps saved so far: offer Undo
         conn.execute("UPDATE ai_actions SET status='done' WHERE status IN ('applying', 'undoing')")
         conn.execute("INSERT INTO settings (key, value) VALUES ('last_run_version', ?) "
@@ -643,7 +647,8 @@ def get_startup_status():
             # Which app.js the window asked the server for. If this doesn't include the current
             # version, the window ran a cached copy of the old screens (the 3.5.0 update bug).
             "app_js_versions": sorted(set(loads)),
-            "screens_current": f"{APP_VERSION}" in loads}
+            "screens_current": f"{APP_VERSION}" in loads,
+            "readers": ai_files.readers()}                    # PDF reading for attached files is in the build
 
 
 @app.get("/api/info")
