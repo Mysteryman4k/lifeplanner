@@ -65,11 +65,12 @@ class CodeIn(BaseModel):
 
 
 class ChatIn(BaseModel):
-    mode: Literal["explain", "practise", "notes", "code"] = "explain"
+    mode: Literal["explain", "practise", "quiz", "check", "notes", "code"] = "explain"
     format: Literal["auto", "notes", "diagram", "both", "maths", "code"] = "auto"
     messages: list[ChatMessage] = Field(min_length=1, max_length=200)
     task_id: Optional[int] = None
     code: Optional[CodeIn] = None                             # the code workspace: its folder and files
+    action: Optional[Literal["videos"]] = None                 # a study reply's own action (Videos)
 
 
 class ConfirmIn(BaseModel):
@@ -88,7 +89,7 @@ class TestIn(BaseModel):
 
 
 def register(app, get_setting, put_setting, transport_hook=lambda: None, task_context=lambda task_id: "",
-             task_store=None, action_log=None, code_context=None):
+             task_store=None, action_log=None, code_context=None, remove_ai_data=lambda: None):
     """Add the /api/ai routes to the app. get_setting/put_setting are app.py's settings helpers.
     transport_hook lets tests supply an httpx.MockTransport so nothing goes over the network."""
 
@@ -227,7 +228,8 @@ def register(app, get_setting, put_setting, transport_hook=lambda: None, task_co
             system_text = prompts.code_prompt(code["mode"], code["name"], code["subject"], code["text"], c.format,
                                               c.code.action or "", c.code.diff)
         else:
-            system_text = prompts.system_prompt(c.mode, task_context(c.task_id) if c.task_id else "", c.format)
+            system_text = prompts.system_prompt(c.mode, task_context(c.task_id) if c.task_id else "", c.format,
+                                                c.action or "")
         base = (s.base_url or None) if s.provider == "custom" else None
         provider = get_provider(s.provider, key=keys.get(s.provider), base_url=base, transport=transport_hook())
         # Task tools when the app provides them, the mode is a conversation, and the model can use tools
@@ -235,7 +237,7 @@ def register(app, get_setting, put_setting, transport_hook=lambda: None, task_co
         if code:                                         # the code workspace proposes file changes
             tools = code["tools"]() if can_use_tools else None
         else:                                            # study chats manage tasks
-            use_tools = task_store is not None and c.mode in ("explain", "practise") and can_use_tools
+            use_tools = task_store is not None and c.mode in ("explain", "practise", "quiz", "check") and can_use_tools
             tools = TaskTools(task_store, action_log) if use_tools else None
         if tools:
             system_text += "\n\n" + tools.addendum()
@@ -292,8 +294,8 @@ def register(app, get_setting, put_setting, transport_hook=lambda: None, task_co
 
     @app.delete("/api/ai/all")
     def remove_all():
-        """Remove all AI data: saved keys and AI settings, including the agreement. (Chats and
-        assistant-made notes join this list in later stages.)"""
+        """Remove all AI data: saved keys, chats, linked folders (not the folders), proposed changes and their
+        backups, and the AI settings including the agreement. Notes stay: they're the student's study notes."""
         removed, failed = [], []
         for provider, preset in PRESETS.items():
             if preset["needs_key"] or provider == "custom":
@@ -309,6 +311,7 @@ def register(app, get_setting, put_setting, transport_hook=lambda: None, task_co
                     if removed else " No keys were removed.")
             raise HTTPException(500, f"Couldn't remove the saved key for {', '.join(failed)} from Windows Credential "
                                      f"Manager.{done} Your AI settings weren't changed. Try again.")
+        remove_ai_data()
         s = AISettings()
         save(s)
         return public_state(s)

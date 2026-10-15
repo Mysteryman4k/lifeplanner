@@ -1071,3 +1071,139 @@ def test_cs_quick_actions(server, page, tmp_path_factory):
         page.evaluate("chatReset()")
         page.request.post(f"{server}/api/ai/terms/withdraw", headers=tok)
         A.fake_net.pop("POST localhost/v1/chat/completions", None)
+
+
+@pytest.mark.ui
+def test_saved_chats_quiz_and_videos(server, page):
+    """A chat is kept after the reply, listed under Recent chats after a reload, and opens again. Quiz me shows
+    answer buttons, Videos asks for YouTube searches, and a chat can be deleted."""
+    import json
+    import os
+
+    import app as A
+    tok = {A.TOKEN_HEADER: A.SESSION_TOKEN}
+    terms = page.request.get(f"{server}/api/ai/terms").json()
+    page.request.post(f"{server}/api/ai/terms/agree", headers=tok,
+                      data={"version": terms["version"], "ticks": {k: True for k in terms["ticks"]}})
+    page.request.put(f"{server}/api/ai/settings", headers=tok, data={"provider": "ollama", "model": "qwen2.5:7b"})
+    for ch in page.request.get(f"{server}/api/ai/chats").json():                # start from no saved chats
+        page.request.delete(f"{server}/api/ai/chats/{ch['id']}", headers=tok)
+    nl = chr(10)
+
+    def say(text):
+        return "data: " + json.dumps({"choices": [{"delta": {"content": text}}]}) + nl + nl
+    question = nl.join(["Question 1: What does a stack return first?", "A) The oldest item", "B) The newest item",
+                        "C) A random item", "D) The smallest item"])
+    A.fake_net["POST localhost/v1/chat/completions"] = (200, [say(question), say("Correct! Stacks are last in, first out."),
+                                                              say("[Search YouTube: stacks](https://www.youtube.com/results?search_query=stack+data+structure)")])
+
+    def last_request():
+        return json.loads([r for r in A.fake_net_seen if r.url.path.endswith("/chat/completions")][-1].content)
+    try:
+        page.goto(f"{server}/#/study")
+        page.reload()
+        page.click("[data-action=chat-new]")
+        page.click("[data-action=chat-mode][data-mode=quiz]")
+        page.fill("#chatInput", "Quiz me on stacks")
+        page.keyboard.press("Enter")
+        page.wait_for_selector(".quiz-choices button >> text=B")
+        assert "Mode: Quiz me" in last_request()["messages"][0]["content"]
+        assert page.locator(".quiz-choices button").count() == 4
+        page.click(".quiz-choices button >> text=B")
+        page.wait_for_selector(".chat-msg.ai >> text=Correct!")
+        assert last_request()["messages"][-1]["content"] == "B"
+        page.click(".chat-msg.ai:last-child [data-action=chat-videos]")
+        page.wait_for_selector(".chat-msg.ai a.link >> text=Search YouTube: stacks")
+        assert "Task: suggest videos" in last_request()["messages"][0]["content"]
+        page.wait_for_selector(".nav-chat >> text=Quiz me on stacks")
+        for _ in range(100):                                    # saving happens just after each reply
+            if [x["count"] for x in page.request.get(f"{server}/api/ai/chats").json()] == [6]:
+                break
+            page.wait_for_timeout(100)
+        else:
+            pytest.fail("The chat wasn't saved with all six messages")
+
+        # After a reload the chat is still there, and opens with its messages and mode
+        page.reload()
+        page.wait_for_selector(".nav-chat >> text=Quiz me on stacks")
+        page.click("[data-action=chat-new]")
+        assert page.locator(".chat-msg").count() == 0
+        page.click(".nav-chat >> text=Quiz me on stacks")
+        page.wait_for_selector(".chat-msg.ai >> text=Correct!")
+        assert page.locator(".chat-msg.me").count() == 3
+        assert page.locator("[data-action=chat-mode].on").inner_text() == "Quiz me"
+        if os.environ.get("EUT_SHOTS"):
+            page.screenshot(path=os.path.join(os.environ["EUT_SHOTS"], "stage10-chats.png"))
+
+        # Saves still queued for one chat can't land on another opened meanwhile
+        other = page.request.post(f"{server}/api/ai/chats", headers=tok, data={"title": "Other chat", "messages": [
+            {"role": "user", "content": "Other question"}, {"role": "assistant", "content": "Other answer"}]}).json()
+        page.route("**/api/ai/chats/*", lambda route: (page.wait_for_timeout(1500), route.continue_())
+                   if route.request.method == "PUT" else route.continue_())
+        page.evaluate(f"async () => {{ chatSave(); chatSave(); await chatOpen({other['id']}); }}")
+        page.wait_for_selector(".chat-msg.ai >> text=Other answer")
+        page.wait_for_timeout(4000)
+        page.unroute("**/api/ai/chats/*")
+        kept = page.request.get(f"{server}/api/ai/chats/{other['id']}").json()
+        assert [m["content"] for m in kept["messages"]] == ["Other question", "Other answer"]
+        # A save for a chat deleted elsewhere doesn't clear the id of the chat opened meanwhile
+        gone = page.request.post(f"{server}/api/ai/chats", headers=tok, data={"messages": [
+            {"role": "user", "content": "Gone"}, {"role": "assistant", "content": "soon"}]}).json()
+        page.evaluate(f"chatOpen({gone['id']})")
+        page.wait_for_selector(".chat-msg.ai >> text=soon")
+        page.request.delete(f"{server}/api/ai/chats/{gone['id']}", headers=tok)
+        page.route("**/api/ai/chats/*", lambda route: (page.wait_for_timeout(1500), route.continue_())
+                   if route.request.method == "PUT" else route.continue_())
+        page.evaluate(f"async () => {{ chatSave(); await chatOpen({other['id']}); }}")
+        page.wait_for_selector(".chat-msg.ai >> text=Other answer")
+        page.wait_for_timeout(2500)
+        page.unroute("**/api/ai/chats/*")
+        assert page.evaluate("chatState().id") == other["id"]
+        # Two chats clicked quickly: the second one shows, even if the first answers later
+        slow = page.request.post(f"{server}/api/ai/chats", headers=tok, data={"messages": [
+            {"role": "user", "content": "Slow one"}, {"role": "assistant", "content": "slow answer"}]}).json()
+        page.route(f"**/api/ai/chats/{slow['id']}", lambda route: (page.wait_for_timeout(1500), route.continue_())
+                   if route.request.method == "GET" else route.continue_())
+        page.evaluate(f"chatOpen({slow['id']}); chatOpen({other['id']})")
+        page.wait_for_selector(".chat-msg.ai >> text=Other answer")
+        page.wait_for_timeout(2500)
+        page.unroute(f"**/api/ai/chats/{slow['id']}")
+        assert page.evaluate("chatState().id") == other["id"] and page.locator(".chat-msg.ai >> text=slow answer").count() == 0
+        # New chat while one is still opening: the new chat stays
+        page.route(f"**/api/ai/chats/{slow['id']}", lambda route: (page.wait_for_timeout(1500), route.continue_())
+                   if route.request.method == "GET" else route.continue_())
+        page.evaluate(f"() => {{ chatOpen({slow['id']}); }}")           # not waited for: it's still loading
+        page.click("[data-action=chat-new]")
+        page.wait_for_timeout(2500)
+        page.unroute(f"**/api/ai/chats/{slow['id']}")
+        assert page.evaluate("chatState().id") is None and page.locator(".chat-msg").count() == 0
+        page.request.delete(f"{server}/api/ai/chats/{slow['id']}", headers=tok)
+        page.request.delete(f"{server}/api/ai/chats/{other['id']}", headers=tok)
+        page.evaluate("loadChats()")
+
+        # A very long chat keeps saving (the newest 400 messages, the server's limit)
+        long = page.evaluate("""async () => {
+            chatReset();
+            const c = chatState();
+            for (let i = 0; i < 230; i++) {
+                c.messages.push({ role: 'user', content: 'q' + i }, { role: 'assistant', content: 'a' + i });
+            }
+            await chatSave();
+            return c.id;
+        }""")
+        saved = page.request.get(f"{server}/api/ai/chats/{long}").json()["messages"]
+        assert len(saved) == 400 and saved[-1]["content"] == "a229"
+        page.request.delete(f"{server}/api/ai/chats/{long}", headers=tok)
+        page.evaluate("chatReset(); loadChats()")
+
+        # The Chats list, and deleting one
+        page.click("[data-action=chats-all]")
+        page.wait_for_selector("#drawer .chat-list-row >> text=Quiz me on stacks")
+        page.click("#drawer [data-action=chat-delete]")
+        page.click("#confirmYes")
+        page.wait_for_selector("#drawer >> text=No saved chats yet")
+        assert page.request.get(f"{server}/api/ai/chats").json() == []
+    finally:
+        page.evaluate("chatReset()")
+        page.request.post(f"{server}/api/ai/terms/withdraw", headers=tok)
+        A.fake_net.pop("POST localhost/v1/chat/completions", None)

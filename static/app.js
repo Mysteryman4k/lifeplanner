@@ -113,6 +113,7 @@ async function loadAll() {
   ]);
   state.notes = notes;
   if (ai) state.ai = ai;
+  if (ai?.terms?.agreed) loadChats();
   api('/api/settings/startup').then(st => { state.startup = st; }).catch(() => {});
   api('/api/settings/reminders').then(r => { state.reminders = r; }).catch(() => {});
   api('/api/settings/autostart').then(a => { state.autostart = a; }).catch(() => {});
@@ -246,7 +247,7 @@ function renderNav() {
   };
   $('#nav').innerHTML = `
     <div class="nav-label">Plan</div>${['today', 'tasks', 'calendar', 'subjects'].map(item).join('')}
-    ${aiOn() || codeOn() ? `<div class="nav-label">Study <span class="preview-badge sm">Preview</span></div>${aiOn() ? item('study') : ''}${codeOn() ? item('code') : ''}` : ''}
+    ${aiOn() || codeOn() ? `<div class="nav-label">Study <span class="preview-badge sm">Preview</span></div>${aiOn() ? item('study') : ''}${codeOn() ? item('code') : ''}${recentChats()}` : ''}
     <div class="nav-label">Track</div>${['jobs', 'money'].map(item).join('')}`;
   $('#navFoot').innerHTML = item('settings');
   $('#tabbar').innerHTML = ['today', 'tasks', 'calendar', 'jobs', 'money'].map(k =>
@@ -600,7 +601,7 @@ const VIEWS = {
 
   study() {
     if (chatState().code) chatReset();             // coming from the code workspace: a fresh study chat
-    setHeader('Study assistant', 'Preview · your AI tutor', btn('chat-new', 'New chat', 'plus', 'btn-ghost'));
+    setHeader('Study assistant', 'Preview · your AI tutor', btn('chats-all', 'Chats', 'inbox', 'btn-ghost') + btn('chat-new', 'New chat', 'plus', 'btn-ghost'));
     $('#content').innerHTML = `<div class="study">${chatShell(false)}</div>`;
     chatAfterRender();
   },
@@ -625,7 +626,7 @@ const VIEWS = {
     const modeBtn = (m, label) => `<button class="${f.mode === m ? 'on' : ''}" data-action="code-mode" data-mode="${m}">${label}</button>`;
     setHeader(f.name, `Code workspace · Preview${f.subject_name ? ' · ' + f.subject_name : ''}`,
       `<div class="segmented code-modes" role="group" aria-label="How the assistant helps">${modeBtn('assignment', 'Assignment · hints first')}${modeBtn('personal', 'Personal · fix freely')}</div>` +
-      btn('code-link', 'Link a folder', 'plus', 'btn-ghost'));
+      btn('chat-new', 'New chat', 'plus', 'btn-ghost') + btn('code-link', 'Link a folder', 'folder', 'btn-ghost'));
     const others = k.folders.length > 1 ? `<select class="select select-sm" id="codeFolder" aria-label="Linked folder">
       ${k.folders.map(x => opt(x.id, x.name, f.id)).join('')}</select>` : `<b class="code-folder-name">${icon('folder', 15)}${esc(f.name)}</b>`;
     const treePane = `<aside class="card code-tree">
@@ -901,7 +902,7 @@ function aiCard() {
     ${p === 'ollama' ? `<div class="setting"><div><div class="setting-title">This PC</div><div class="setting-desc">${sys ? `${esc(sys.advice)} ${sys.ollama.running ? `Ollama ${esc(sys.ollama.version)} is running.` : 'Ollama isn\'t running.'}` : 'Checking…'}</div></div>${icon('monitor', 20)}</div>` : ''}
     <div class="setting"><div><div class="setting-title">Terms of use</div><div class="setting-desc">Agreed to version ${esc(a.terms.agreed_version)} on ${esc(fmt(a.terms.agreed_at.slice(0, 10), { day: 'numeric', month: 'short', year: 'numeric' }))}. Saved only on this PC.</div></div>
       <div class="row-gap">${btn('ai-view-terms', 'View', 'shield', 'btn-ghost btn-sm keep-label')}${btn('ai-withdraw', 'Turn off', 'power', 'btn-ghost btn-sm keep-label')}</div></div>
-    <div class="setting"><div><div class="setting-title">Remove all AI data</div><div class="setting-desc">Deletes your saved API keys and AI settings, including your agreement. Your planner data isn't touched.</div></div>
+    <div class="setting"><div><div class="setting-title">Remove all AI data</div><div class="setting-desc">Deletes your saved API keys, chats, linked code folders (not the folders themselves), suggested changes and their backups, and your AI settings and agreement. Your notes and planner data aren't touched.</div></div>
       ${btn('ai-remove-all', 'Remove', 'trash', 'btn-danger-ghost btn-sm keep-label')}</div>`;
 }
 
@@ -952,14 +953,20 @@ async function aiLoadSystem() {
 // ── Study assistant chat (preview) ────────────────────────────────
 // Replies stream from /api/ai/chat. They're rendered by chatMarkdown(), which escapes everything first,
 // so model output can never add HTML or scripts to the page. Only YouTube search links become links.
-const CHAT_MODES = { explain: 'Explain', practise: 'Practise' };
+const CHAT_MODES = { explain: 'Explain', practise: 'Practise', quiz: 'Quiz me', check: 'Check my attempt' };
+const CHAT_MODE_HELP = {
+  explain: 'Explain gives clear explanations and checks you understood.',
+  practise: 'Practise gives you questions like the ones you\'ll face, one at a time.',
+  quiz: 'Quiz me asks a few questions on a topic, one at a time, marks each answer and tells you what to revise.',
+  check: 'Check my attempt gives feedback on your own working, without rewriting it for you.',
+};
 const CHAT_FORMATS = { auto: 'Any format', notes: 'Notes', diagram: 'Diagram', both: 'Notes and diagram', maths: 'Maths', code: 'Code' };
 const FORMAT_ASK = { notes: 'as notes', diagram: 'as a diagram', both: 'as notes with a diagram', maths: 'with the maths written out', code: 'as code' };
 const CHAT_IDEAS = ['Explain recursion with a simple example', 'Give me a practice question on Big-O',
   'What is the difference between a stack and a queue?', 'Help me plan revision for a mid-semester exam'];
 
 function chatState() {
-  if (!state.chat) state.chat = { mode: 'explain', format: 'auto', messages: [], tokens: 0, streaming: false, taskId: null, controller: null };
+  if (!state.chat) state.chat = { mode: 'explain', format: 'auto', session: {}, messages: [], tokens: 0, streaming: false, taskId: null, controller: null };
   return state.chat;
 }
 
@@ -1193,8 +1200,10 @@ function chatMessage(m, i) {
     ${(m.cards || []).map((card, n) => chatCard(card, i, n)).join('')}
     ${m.error ? `<div class="chat-error">${icon('alert', 15)}${esc(m.error)}</div>` : ''}
     ${m.stopped ? '<div class="small muted">Stopped.</div>' : ''}
+    ${last && c.mode === 'quiz' && !c.code ? quizChoices(m.content) : ''}
     ${!live && m.content ? `<div class="chat-tools">
       <button class="btn btn-ghost btn-sm keep-label" data-action="chat-save-note" data-i="${i}">${icon('subjects', 14)}Save as note</button>
+      ${c.code ? '' : `<button class="btn btn-ghost btn-sm keep-label" data-action="chat-videos" data-i="${i}" title="YouTube searches for this topic">${icon('external', 14)}Videos</button>`}
       <button class="btn btn-ghost btn-sm keep-label" data-action="chat-copy" data-i="${i}">${icon('copy', 14)}Copy</button>
       <a class="btn btn-ghost btn-sm keep-label" href="${esc(chatReportUrl(i))}" target="_blank" rel="noopener">${icon('flag', 14)}Report</a>
       ${last ? `<select class="select select-sm chat-reformat" aria-label="Show this again in another format"><option value="">Show as…</option>
@@ -1221,7 +1230,7 @@ function chatShell(inPanel) {
         : 'Assignment: the assistant points at the problem and asks guiding questions, so the work stays yours.'}
         Paste an error and click Explain the error, or ask anything about the open file.</p></div>` : `<div class="chat-empty">
       ${icon('spark', 26)}<h3>${task ? 'What would you like help with?' : 'Ask about anything in your units'}</h3>
-      <p class="muted small">${c.mode === 'explain' ? 'Explain gives clear explanations and checks you understood.' : 'Practise gives you questions like the ones you\'ll face, one at a time.'}</p>
+      <p class="muted small">${CHAT_MODE_HELP[c.mode] || CHAT_MODE_HELP.explain}</p>
       ${task ? '' : `<div class="chat-ideas">${CHAT_IDEAS.map(x => `<button class="chip" data-action="chat-idea">${esc(x)}</button>`).join('')}</div>`}
     </div>`) : '';
   const cloud = folder && a.provider && a.provider !== 'ollama'
@@ -1339,7 +1348,7 @@ async function chatSend(text, extra = {}) {
     const payload = folderId
       ? { mode: 'code', format: c.format || 'auto', messages: history,
           code: { folder_id: folderId, files: (codeState().files || []).map(f => f.path), ...extra } }
-      : { mode: c.mode, format: c.format || 'auto', messages: history, ...(c.taskId ? { task_id: c.taskId } : {}) };
+      : { mode: c.mode, format: c.format || 'auto', messages: history, ...(c.taskId ? { task_id: c.taskId } : {}), ...(extra.action ? { action: extra.action } : {}) };
     await streamChat(payload, c.controller.signal, ev => {
       if (!current()) return false;
       if (ev.type === 'files') { asked.files = ev.files; asked.leftOut = ev.left_out; chatRefresh(); return true; }
@@ -1368,6 +1377,7 @@ async function chatSend(text, extra = {}) {
   c.run = null;
   if (tasksChanged) await reloadTasks();
   chatRefresh();
+  chatSave();
 }
 
 async function reloadTasks() {
@@ -1436,10 +1446,105 @@ function chatCard(card, i, n) {
       </div></div>`;
 }
 
-function chatReset(taskId = null, code = null) {
+let chatOpening = 0;                             // the latest chat asked for: a slower, older one is ignored
+
+/** A fresh chat. Any chat still being opened is cancelled (New chat, another task, Remove all AI data),
+ *  except when chatOpen itself resets on the way to showing the chat it opened (fromOpen). */
+function chatReset(taskId = null, code = null, fromOpen = false) {
+  if (!fromOpen) chatOpening++;
   const c = chatState();
   c.controller?.abort();                       // stop any reply still streaming for the old chat
-  Object.assign(c, { messages: [], tokens: 0, taskId, code, streaming: false, controller: null, run: null });
+  // A new session: saves still queued for the chat that was showing can't touch this one (chatSave)
+  Object.assign(c, { id: null, session: {}, messages: [], tokens: 0, taskId, code, streaming: false, controller: null, run: null });
+}
+
+// ── Saved chats: kept after each reply, listed under Recent chats, and opened again ──
+async function loadChats() {
+  try { state.chats = await api('/api/ai/chats?limit=30'); } catch (_) { state.chats = state.chats || []; }
+  renderNav();
+}
+
+function recentChats() {
+  const chats = (state.chats || []).filter(ch => ch.kind === 'code' ? codeOn() : aiOn()).slice(0, 5);
+  if (!chats.length) return '';
+  const open = chatState().id;
+  return `<div class="nav-chats" aria-label="Recent chats">${chats.map(ch =>
+    `<button class="nav-chat ${ch.id === open ? 'on' : ''}" data-action="chat-open" data-id="${ch.id}" title="${esc(ch.title)}">${icon(ch.kind === 'code' ? 'code' : 'spark', 13)}<span>${esc(ch.title || 'Chat')}</span></button>`).join('')}
+    <button class="nav-chat more" data-action="chats-all">All chats…</button></div>`;
+}
+
+/** Save the chat as it is now (after a reply, or when a card changes). One save at a time, newest wins. */
+const CHAT_SAVE_MAX = 400;                       // MAX_MESSAGES in ai/chats.py
+
+function chatSave() {
+  if (chatSave.blocked) return Promise.resolve();  // Remove all AI data is running
+  const c = chatState();
+  // The newest 400 (the server's limit): a very long chat keeps saving, without its oldest messages
+  const messages = c.messages.filter(m => m.content || m.cards?.length || m.error).slice(-CHAT_SAVE_MAX).map(m => ({
+    role: m.role, content: m.content || '',
+    meta: Object.fromEntries(Object.entries({ cards: m.cards?.map(({ busy, ...card }) => card), files: m.files,
+      leftOut: m.leftOut, error: m.error, stopped: m.stopped }).filter(([, v]) => v !== undefined && v !== null && v !== false)),
+  }));
+  if (!messages.some(m => m.role === 'user')) return Promise.resolve();
+  const body = { kind: c.code ? 'code' : 'study', mode: c.code ? 'code' : c.mode, format: c.format || 'auto',
+    task_id: c.taskId || null, folder_id: c.code || null, tokens: c.tokens || 0, messages };
+  const chat = c, session = c.session;
+  chatSave.queue = (chatSave.queue || Promise.resolve()).then(async () => {
+    if (chat.session !== session) return;                // reset, or another chat opened, since this was asked for
+    try {
+      const saved = chat.id ? await api(`/api/ai/chats/${chat.id}`, { method: 'PUT', body })
+        : await api('/api/ai/chats', { method: 'POST', body });
+      if (!chat.id && chat.session === session) chat.id = saved.id;
+      loadChats();
+    } catch (e) {
+      // Deleted elsewhere: the next save makes a new one (only for this session: another chat may be open now)
+      if (/deleted/.test(e.message) && chat.session === session) chat.id = null;
+    }
+  });
+  return chatSave.queue;
+}
+
+async function chatOpen(id) {
+  const asked = ++chatOpening, stale = () => asked !== chatOpening;
+  let ch;
+  try { ch = await api(`/api/ai/chats/${id}`); } catch (e) { if (!stale()) { toast(e.message, 'error'); loadChats(); } return; }
+  if (stale()) return;
+  if (ch.kind === 'code') {
+    const k = codeState();
+    if (!k.folders) await codeLoad();
+    if (stale()) return;
+    if (!ch.folder_id || !k.folders.some(f => f.id === ch.folder_id)) { toast('That chat\'s folder isn\'t linked any more.', 'error'); return; }
+    if (k.folderId !== ch.folder_id) codeSelectFolder(ch.folder_id, true);
+    chatReset(null, ch.folder_id, true);
+  } else {
+    chatReset(ch.task_id, null, true);
+  }
+  const c = chatState();
+  Object.assign(c, { id: ch.id, tokens: ch.tokens, format: ch.format || 'auto',
+    mode: ch.kind === 'study' && CHAT_MODES[ch.mode] ? ch.mode : c.mode,
+    messages: ch.messages.map(m => ({ role: m.role, content: m.content, ...m.meta })) });
+  closeDrawer();
+  const target = ch.kind === 'code' ? '#/code' : '#/study';
+  if (location.hash !== target) location.hash = target; else render();
+}
+
+function chatList() {
+  const chats = state.chats || [];
+  const when = s => fmt(s.slice(0, 10), { day: 'numeric', month: 'short' });
+  const body = chats.length ? `<div class="chat-list">${chats.map(ch => `<div class="chat-list-row">
+      <button class="chat-list-open" data-action="chat-open" data-id="${ch.id}">${icon(ch.kind === 'code' ? 'code' : 'spark', 15)}
+        <span><b>${esc(ch.title || 'Chat')}</b><span class="muted small">${esc([ch.kind === 'code' ? ch.folder_name || 'Code workspace' : CHAT_MODES[ch.mode] || 'Study', when(ch.updated_at), `${ch.count} messages`].join(' · '))}</span></span></button>
+      <button class="icon-btn" data-action="chat-delete" data-id="${ch.id}" aria-label="Delete ${esc(ch.title)}" title="Delete">${icon('trash', 16)}</button></div>`).join('')}</div>`
+    : emptyState('spark', 'No saved chats yet', 'Chats are kept here after each reply.');
+  openDrawer('Chats', body, '<span class="spacer"></span><button class="btn btn-ghost" type="button" data-action="close-drawer">Close</button>', 'chats');
+}
+
+/** A quiz's multiple-choice options (A) … D) on their own lines) as answer buttons. */
+function quizChoices(text) {
+  const letters = [...new Set([...text.matchAll(/^\s*\**\(?([A-D])[).]\**\s+\S/gm)].map(m => m[1]))];
+  if (letters.length < 2) return '';
+  return `<div class="quiz-choices" role="group" aria-label="Answer">${letters.map(l =>
+    `<button class="btn btn-ghost btn-sm" data-action="chat-answer" data-v="${l}">${l}</button>`).join('')}</div>`;
 }
 
 // ── Code workspace: a linked folder's tree, a file viewer, and the files sent with each question ──
@@ -1492,11 +1597,11 @@ async function codeLoadTree() {
   }
 }
 
-function codeSelectFolder(id) {
+function codeSelectFolder(id, fromOpen = false) {
   const k = codeState();
   Object.assign(k, { folderId: id, tree: null, treeError: '', expanded: new Set(), open: null, files: [], pinned: [], removed: [], marks: {},
     commands: null, cmd: '', cmdEdited: false, customRun: false });
-  chatReset(null, id);
+  chatReset(null, id, fromOpen);
   codeLoadTree();
 }
 
@@ -1809,6 +1914,7 @@ async function codeChangeAction(el, what) {
   }
   card.busy = false;
   chatRefresh();
+  chatSave();
 }
 
 /** Line numbers an error points at, per file: Python, Java, gcc/clang, node, C# and the like. */
@@ -2285,6 +2391,7 @@ const ACTIONS = {
     } catch (e) { toast(e.message, 'error'); }
     card.busy = false;
     chatRefresh();
+    chatSave();
   },
   async 'chat-confirm'(el) {
     const card = chatState().messages[Number(el.dataset.i)]?.cards?.[Number(el.dataset.c)];
@@ -2300,6 +2407,7 @@ const ACTIONS = {
     } catch (e) { toast(e.message, 'error'); }
     card.busy = false;
     chatRefresh();
+    chatSave();
   },
   'open-note'(el) { openNote(Number(el.dataset.id)); },
   'edit-note'(el) { editNote(Number(el.dataset.id)); },
@@ -2330,6 +2438,19 @@ const ACTIONS = {
     if (!t?.text) return;
     editNote(null, { title: t.topic.slice(0, 200), body: t.text, subject_id: t.subjectId, source: 'topic' });
   },
+  'chat-open'(el) { chatOpen(Number(el.dataset.id)); },
+  'chats-all'() { loadChats().then(chatList); },
+  async 'chat-delete'(el) {
+    const id = Number(el.dataset.id), ch = (state.chats || []).find(x => x.id === id);
+    if (!(await confirmDialog('Delete this chat?', `“${ch?.title || 'Chat'}” is removed from EasyUniTrack. This can't be undone.`, 'Delete'))) return;
+    try { await api(`/api/ai/chats/${id}`, { method: 'DELETE' }); } catch (e) { toast(e.message, 'error'); return; }
+    if (chatState().id === id) chatState().id = null;     // the open chat carries on, saved as a new one
+    await loadChats();
+    if (state.drawer === 'chats') chatList();
+    toast('Chat deleted');
+  },
+  'chat-answer'(el) { chatSend(el.dataset.v); },
+  'chat-videos'() { chatSend('Find videos on this.', { action: 'videos' }); },
   'chat-new'() {
     chatReset(null, route() === 'code' ? codeState().folderId : null);   // a new chat stays in the same folder
     chatRefresh();
@@ -2419,11 +2540,12 @@ const ACTIONS = {
       card.busy = false;
       if (started) card.status = 'ran';
       chatRefresh();
+      chatSave();
     });
   },
   'run-suggest-cancel'(el) {
     const card = chatState().messages[Number(el.dataset.i)]?.cards?.[Number(el.dataset.c)];
-    if (card) { card.status = 'cancelled'; chatRefresh(); }
+    if (card) { card.status = 'cancelled'; chatRefresh(); chatSave(); }
   },
   async 'code-copy'(el) {
     try { await navigator.clipboard.writeText($('code', el.closest('.code-wrap')).textContent); toast('Copied'); }
@@ -2504,13 +2626,16 @@ const ACTIONS = {
     catch (e) { toast(e.message, 'error'); }
   },
   async 'ai-remove-all'() {
-    if (!(await confirmDialog('Remove all AI data?', 'Deletes your saved API keys and AI settings, including your agreement to the terms. Your planner data isn\'t touched.', 'Remove'))) return;
+    if (!(await confirmDialog('Remove all AI data?', 'Deletes your saved API keys, chats, linked code folders (the folders themselves aren\'t touched), suggested changes and their backups, and your AI settings and agreement. Your notes and planner data stay.', 'Remove'))) return;
+    chatSave.blocked = true;                      // no save may land after the chats are removed
     try {
+      await chatSave.queue;
       state.ai = await api('/api/ai/all', { method: 'DELETE' });
       state.aiTest = null; state.aiModels = []; state.aiSystem = null;
+      state.chats = []; state.code = null; chatReset();                    // chats and folder links are gone too
       toast('AI data removed');
       stillRender();
-    } catch (e) { toast(e.message, 'error'); }
+    } catch (e) { toast(e.message, 'error'); } finally { chatSave.blocked = false; }
   },
   'new-task': el => openTask(null, el.dataset.due ? { due_date: el.dataset.due } : {}),
   'open-task': el => openTask(Number(el.dataset.id)),

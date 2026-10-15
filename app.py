@@ -25,6 +25,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
+import ai.chats as chats
 import ai.code_routes as code_routes
 import ai.routes as ai_routes
 import reminders
@@ -292,6 +293,29 @@ def init_db():
                 applied_hash TEXT,
                 created_at TEXT DEFAULT (datetime('now','localtime'))
             );
+
+            -- Saved chats (study assistant and code workspace) and their messages, with cards in meta
+            CREATE TABLE IF NOT EXISTS conversations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL DEFAULT '',
+                kind TEXT NOT NULL DEFAULT 'study',          -- study or code
+                mode TEXT NOT NULL DEFAULT 'explain',
+                format TEXT NOT NULL DEFAULT 'auto',
+                task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
+                folder_id INTEGER REFERENCES code_folders(id) ON DELETE SET NULL,
+                tokens INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                updated_at TEXT DEFAULT (datetime('now','localtime'))
+            );
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+                position INTEGER NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL DEFAULT '',
+                meta TEXT NOT NULL DEFAULT '{}'
+            );
+            CREATE INDEX IF NOT EXISTS ix_messages_chat ON messages(conversation_id, position);
 
             CREATE TABLE IF NOT EXISTS ai_actions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1391,8 +1415,10 @@ WINDOW = {"show": None, "pick_folder": None}
 
 code_context = code_routes.register(app, db, lambda: _get_setting(ai_routes.SETTING_KEY, ai_routes.AISettings),
                                     DB_PATH.parent, WINDOW)
+remove_ai_data = chats.register(app, db, lambda: _get_setting(ai_routes.SETTING_KEY, ai_routes.AISettings),
+                                DB_PATH.parent)
 ai_routes.register(app, _get_setting, _put_setting, lambda: AI_TRANSPORT["value"], _task_context,
-                   TaskStore(), ActionLog(), code_context)
+                   TaskStore(), ActionLog(), code_context, remove_ai_data)
 
 
 class MoneySettings(BaseModel):
@@ -1594,8 +1620,8 @@ def update_install():
 # ═══════════════════════════════════════════════════════════════════════════
 
 # Parents before children, so a restore can insert in this order
-BACKUP_TABLES = ("categories", "subjects", "units", "tasks", "notes", "code_folders", "job_applications",
-                 "transactions", "budgets", "settings")
+BACKUP_TABLES = ("categories", "subjects", "units", "tasks", "notes", "code_folders", "conversations", "messages",
+                 "job_applications", "transactions", "budgets", "settings")
 COUNTED_TABLES = ("tasks", "subjects", "job_applications", "transactions", "budgets")
 BACKUP_DIR = DB_PATH.parent / "backups"
 KEEP_AUTO_BACKUPS = 10
