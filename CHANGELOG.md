@@ -37,6 +37,10 @@ The first beta of version 4. Installed copies don't update to betas: download it
 
 ### Changed
 
+- A calmer, plainer look. The new default theme, Plain, uses neutral greys and one quiet accent colour, with your computer's own font. There are no gradients or glows, and cards, buttons and headings are flatter and smaller. The colourful themes are still in Settings, also calmer than before. If you changed the look before, you keep yours
+- The chat has one message box with attach and send inside it, and the tools under replies are small icons
+- The code workspace looks like a code editor: dark colours with familiar syntax highlighting, the open file as a tab, and run output like a terminal. In a narrow window the code and chat stay in view, with a Files button for the file list
+- Tables in the assistant's replies (like Trace's step-by-step table) are shown as tables
 - The privacy policy now covers the optional AI features: what's stored on your PC, what's sent to the AI provider you choose and when, and how to remove it. The AI terms of use are also published as TERMS.md
 - Messages you send in a chat keep their spacing, so a pasted error or code keeps its indentation
 
