@@ -265,8 +265,9 @@ def register(app, get_setting, put_setting, transport_hook=lambda: None, task_co
             raise HTTPException(400, "The last message must be yours.")
         attached = ""
         if c.attachment:
-            # Never cut silently: the page lets the student choose pages that fit (Ollama: in its context now)
-            limit = attach_budget(s, False)["chars"]
+            # Never cut silently: the page lets the student choose pages that fit, but a reopened chat's file was
+            # chosen for the context then. Ollama's model is loaded to learn it (this question would load it anyway)
+            limit = attach_budget(s, True)["chars"]
             if len(c.attachment.text) > limit:
                 who = {"ollama": "Ollama", "custom": "this provider"}.get(s.provider) or PRESETS[s.provider]["name"]
                 raise HTTPException(413, f"That's more of the file than {who} can read with one "
