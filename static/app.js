@@ -1578,6 +1578,8 @@ function chatSave() {
         chat.id = null;
         try {
           const saved = await api('/api/ai/chats', { method: 'POST', body });
+          // If another chat was opened meanwhile, this conversation is still kept, as its own chat under Recent
+          // chats: it's the student's, with the reply this save is for. It just isn't the one on screen any more
           if (chat.session === session) chat.id = saved.id;
           loadChats();
         } catch (_) { /* the next save tries again */ }
