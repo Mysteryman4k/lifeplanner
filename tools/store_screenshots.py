@@ -94,6 +94,91 @@ def seed(api):
     api("put", "/api/settings/startup", {"intro": False})
 
 
+STUDY_REPLY = r"""## Dijkstra's algorithm
+
+Dijkstra finds the shortest path from one start vertex to every other vertex, as long as no edge weight is negative.
+
+**The idea:** keep a tentative distance for each vertex, settle the closest unsettled vertex next, and *relax* its edges:
+
+$$d(v) \leftarrow \min\big(d(v),\; d(u) + w(u, v)\big)$$
+
+```mermaid
+flowchart LR
+  A["A (0)"] -- 4 --> B["B (3)"]
+  A -- 1 --> C["C (1)"]
+  C -- 2 --> B
+  B -- 5 --> D["D (8)"]
+  C -- 8 --> D
+```
+
+{walk}
+
+With a binary heap it runs in $O((V + E)\log V)$.
+
+**Quick check:** if the edge C to B had weight 5 instead, what would B's shortest distance be?""".format(
+    walk="Starting at **A**: C is closest (1), so it's settled first. Through C, B costs $1 + 2 = 3$, which beats 4. "
+         "Then B is settled, and D costs $3 + 5 = 8$.")
+
+CODE_FILE = """def shortest_paths(graph, start):
+    \"\"\"Dijkstra: the shortest distance from start to every vertex.\"\"\"
+    import heapq
+    dist = {start: 0}
+    queue = [(0, start)]
+    done = set()
+    while queue:
+        d, node = heapq.heappop(queue)
+        if node in done:
+            continue
+        done.add(node)
+        for neighbour, weight in graph[node]:
+            if d + weight < dist.get(neighbour, float("inf")):
+                dist[neighbour] = d + weight
+                heapq.heappush(queue, (dist[neighbour], neighbour))
+    return dist
+
+
+graph = {"A": [("B", 4), ("C", 1)], "B": [("D", 5)], "C": [("B", 2), ("D", 8)], "D": [("E", 2)]}
+print(shortest_paths(graph, "A"))
+"""
+
+CODE_ERROR = """Traceback (most recent call last):
+  File "dijkstra.py", line 20, in <module>
+    print(shortest_paths(graph, "A"))
+  File "dijkstra.py", line 12, in shortest_paths
+    for neighbour, weight in graph[node]:
+KeyError: 'E'"""
+
+CODE_REPLY = "\n\n".join([
+    "**What it means:** `KeyError: 'E'` says the program looked up `'E'` in the `graph` dictionary, and there's no "
+    "key `'E'`.",
+    "**Where:** `dijkstra.py`, line 12: `for neighbour, weight in graph[node]:`",
+    "**Why there:** `E` only appears as a neighbour of `D` (line 19), so it never got its own entry. When `E` comes off "
+    "the queue, looking up its edges fails.",
+    "**A question to guide you:** what should `graph[node]` give for a vertex with no outgoing edges, and how could you "
+    "get that without an error? Look at what `dict.get` does with a second argument.",
+])
+
+
+def seed_ai(api, folder: Path):
+    """The optional AI features, with sample chats (no AI provider is contacted: the replies are written here)."""
+    terms = api("get", "/api/ai/terms")
+    api("post", "/api/ai/terms/agree", {"version": terms["version"], "ticks": {k: True for k in terms["ticks"]}})
+    api("put", "/api/ai/settings", {"provider": "ollama", "model": "qwen2.5:7b", "code_enabled": True})
+    study = api("post", "/api/ai/chats", {"mode": "explain", "tokens": 1840, "messages": [
+        {"role": "user", "content": "Can you explain Dijkstra's algorithm with a small example?"},
+        {"role": "assistant", "content": STUDY_REPLY}]})
+    (folder / "dijkstra.py").write_text(CODE_FILE, encoding="utf-8")
+    (folder / "README.md").write_text("# Lab 9: shortest paths\n", encoding="utf-8")
+    subjects = {s["name"]: s["id"] for s in api("get", "/api/subjects")}
+    linked = api("post", "/api/code/folders", {"path": str(folder), "mode": "assignment",
+                                               "subject_id": subjects.get("Data Structures")})
+    code = api("post", "/api/ai/chats", {"kind": "code", "mode": "code", "folder_id": linked["id"], "tokens": 2310,
+                                         "messages": [{"role": "user", "content": CODE_ERROR,
+                                                       "meta": {"files": ["dijkstra.py"]}},
+                                                      {"role": "assistant", "content": CODE_REPLY}]})
+    return study["id"], code["id"]
+
+
 def main():
     import httpx
     import uvicorn
@@ -136,6 +221,33 @@ def main():
             page.screenshot(path=str(OUT / f"{name}.png"))
             page.close()
             print(f"saved docs/screenshots/{name}.png")
+        # The AI features are off by default, so they're only set up for their own screenshots
+        lab = Path(tempfile.mkdtemp(prefix="easyunitrack-screenshots-")) / "graph-lab"
+        lab.mkdir()
+        study_chat, code_chat = seed_ai(api, lab)
+        api("put", "/api/settings/appearance", {"theme": "sunset", "font": "rounded", "mode": "light"})
+        page = browser.new_page(viewport={"width": WIDTH, "height": HEIGHT}, device_scale_factor=SCALE,
+                                color_scheme="light", timezone_id="Australia/Melbourne")
+        page.goto(f"{base}/#/study")
+        page.wait_for_selector("#content .chat")
+        page.evaluate(f"chatOpen({study_chat})")
+        page.wait_for_selector(".chat-msg.ai .katex")
+        page.wait_for_selector(".chat-diagram .diagram-svg svg", timeout=30000)   # drawn after the reply
+        page.evaluate("document.querySelector('#chatLog').scrollTop = 0")
+        page.wait_for_timeout(800)
+        page.screenshot(path=str(OUT / "7-study.png"))
+        print("saved docs/screenshots/7-study.png")
+        page.goto(f"{base}/#/code")
+        page.wait_for_selector(".code-tree .tree-row >> text=dijkstra.py")
+        page.evaluate(f"chatOpen({code_chat})")
+        page.wait_for_selector(".chat-msg.ai >> text=A question to guide you")
+        page.evaluate("codeOpen('dijkstra.py').then(() => { codeMarkErrors(chatState().messages[0].content); codeRender(); })")
+        page.wait_for_selector(".code-mark")
+        page.evaluate("document.querySelector('#chatLog').scrollTop = 0")   # the error, then the start of the reply
+        page.wait_for_timeout(800)
+        page.screenshot(path=str(OUT / "8-code.png"))
+        print("saved docs/screenshots/8-code.png")
+        page.close()
         browser.close()
     server.should_exit = True
 

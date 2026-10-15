@@ -864,3 +864,4 @@ fieldset.field { border: 0; padding: 0; margin: 0; min-width: 0; }
 .linked-folder > .ic { flex: none; color: var(--accent-text); }
 .linked-folder .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .linked-folder .icon-btn { margin-left: auto; }
+.chat-plain { white-space: pre-wrap; }                    /* your own message, spaced as you typed or pasted it */

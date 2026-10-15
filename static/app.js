@@ -1189,10 +1189,14 @@ new MutationObserver(() => {
   enhanceRich.queued = requestAnimationFrame(() => { enhanceRich.queued = 0; enhanceRich(); });
 }).observe(document.body, { childList: true, subtree: true });
 
-function chatReportUrl(i) {
-  const c = chatState(), m = c.messages[i];
-  const body = `**What was wrong with this response?**\n\n(describe it here)\n\n---\nModel: ${state.ai?.model || '?'} (${state.ai?.provider || '?'}), mode: ${c.mode}, EasyUniTrack ${state.info.version || ''}\n\n` +
-    `Response (remove anything private before sending):\n\n> ${m.content.slice(0, 1500).replace(/\n/g, '\n> ')}`;
+/** A new GitHub issue for reporting a reply. Nothing from the chat goes in the address (GitHub would receive it as
+ *  the page opens): clicking Report copies the reply, for the student to paste in if they choose (see the click
+ *  listener below). Only the model, mode and version are filled in. */
+function chatReportUrl() {
+  const c = chatState();
+  const body = `**What was wrong with this response?**\n\n(describe it here)\n\n**The response**\n\n` +
+    `(Report copied it for you: paste it here if you'd like to include it, and remove anything private.)\n\n---\n` +
+    `Model: ${state.ai?.model || '?'} (${state.ai?.provider || '?'}), mode: ${c.code ? 'code' : c.mode}, EasyUniTrack ${state.info.version || ''}`;
   return `https://github.com/Mysteryman4k/lifeplanner/issues/new?labels=ai-response&title=${encodeURIComponent('Report an AI response')}&body=${encodeURIComponent(body)}`;
 }
 
@@ -1201,7 +1205,8 @@ function chatMessage(m, i) {
     const sent = m.files ? `<div class="chat-sent">${m.files.length ? `Sent with this: ${m.files.map(p =>
         `<button class="link-btn" data-action="code-open" data-path="${esc(p)}">${esc(p)}</button>`).join(', ')}` : 'No files were sent with this.'}
       ${(m.leftOut || []).map(x => `<span class="muted" title="${esc(x.why)}">· not sent: ${esc(x.path)}</span>`).join(' ')}</div>` : '';
-    const body = m.content.includes('```') ? `<div class="chat-text">${chatMarkdown(m.content)}</div>` : esc(m.content).replace(/\n/g, '<br>');
+    // Plain text keeps its spacing, so a pasted traceback or code keeps its indentation
+    const body = m.content.includes('```') ? `<div class="chat-text">${chatMarkdown(m.content)}</div>` : `<span class="chat-plain">${esc(m.content)}</span>`;
     return `<div class="chat-msg me">${body}</div>${sent}`;
   }
   const c = chatState();
@@ -1217,7 +1222,7 @@ function chatMessage(m, i) {
       <button class="btn btn-ghost btn-sm keep-label" data-action="chat-save-note" data-i="${i}">${icon('subjects', 14)}Save as note</button>
       ${c.code ? '' : `<button class="btn btn-ghost btn-sm keep-label" data-action="chat-videos" data-i="${i}" title="YouTube searches for this topic">${icon('external', 14)}Videos</button>`}
       <button class="btn btn-ghost btn-sm keep-label" data-action="chat-copy" data-i="${i}">${icon('copy', 14)}Copy</button>
-      <a class="btn btn-ghost btn-sm keep-label" href="${esc(chatReportUrl(i))}" target="_blank" rel="noopener">${icon('flag', 14)}Report</a>
+      <a class="btn btn-ghost btn-sm keep-label chat-report" data-i="${i}" href="${esc(chatReportUrl())}" target="_blank" rel="noopener" title="Report this reply on GitHub. The reply is copied for you to paste in.">${icon('flag', 14)}Report</a>
       ${last ? `<select class="select select-sm chat-reformat" aria-label="Show this again in another format"><option value="">Show as…</option>
         ${Object.entries(FORMAT_ASK).map(([k]) => `<option value="${k}">${CHAT_FORMATS[k]}</option>`).join('')}</select>` : ''}</div>` : ''}
   </div>`;
@@ -3125,6 +3130,16 @@ document.addEventListener('click', e => {
   if (!el || !ACTIONS[el.dataset.action]) return;
   e.preventDefault();
   ACTIONS[el.dataset.action](el, e);
+});
+
+// Report: the GitHub page opens as a normal link, and the reply is copied for the student to paste in
+document.addEventListener('click', e => {
+  const a = e.target.closest('a.chat-report');
+  const m = a && chatState().messages[Number(a.dataset.i)];
+  if (!m) return;
+  navigator.clipboard.writeText(m.content)
+    .then(() => toast('The reply is copied: paste it into the report if you like, and remove anything private'))
+    .catch(() => toast('Copy the reply into the report yourself if you like (Copy under the reply).'));
 });
 
 document.addEventListener('keydown', e => {

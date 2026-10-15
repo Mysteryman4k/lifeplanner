@@ -42,7 +42,10 @@
   </Applications>
 
   <Capabilities>
-    <!-- Needed because the app is a normal desktop program (Python plus a local web server) inside the package -->
+    <!-- Shown on the Store listing: the optional AI features reach the cloud AI provider the student chooses -->
+    <Capability Name="internetClient" />
+    <!-- Needed because the app is a normal desktop program (Python plus a local web server) inside the package,
+         and it starts the student's own compilers and programs when they click Run in the code workspace -->
     <rescap:Capability Name="runFullTrust" />
   </Capabilities>
 </Package>

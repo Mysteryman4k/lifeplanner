@@ -90,9 +90,34 @@ def test_not_a_sign_in_launch_outside_the_store(monkeypatch):
     assert store.launched_at_sign_in() is False
 
 
-@pytest.mark.parametrize("version,expected", [("3.5.2", "3.5.2.0"), ("4.0.0-beta.1", "4.0.0.0")])
+@pytest.mark.parametrize("version,expected", [
+    ("3.5.2", "3.5.2.0"), ("4.0.0", "4.0.0.0"),
+    # A pre-release for a Store flight sits just below its release: Partner Center refuses a repeated version,
+    # and testers only move on to a higher one. The label and number are in the third part
+    ("4.0.0-beta.1", "3.9999.2001.0"), ("4.0.0-beta.12", "3.9999.2012.0"), ("4.0.0-rc.1", "3.9999.3001.0"),
+    ("4.0.0-alpha.3", "3.9999.1003.0"), ("4.1.0-rc.2", "4.0.63002.0"),
+])
 def test_package_version(version, expected):
     assert load_builder().package_version(version) == expected
+
+
+def test_pre_release_package_versions_sort_between_the_releases():
+    b = load_builder()
+    order = ["3.6.1", "3.99.0", "4.0.0-alpha.1", "4.0.0-beta.1", "4.0.0-beta.2", "4.0.0-beta.999", "4.0.0-rc.1",
+             "4.0.0-rc.2", "4.0.0", "4.0.5", "4.1.0-beta.1", "4.1.0-rc.1", "4.1.0", "5.0.0-beta.1", "5.0.0"]
+    numbers = [tuple(int(x) for x in b.package_version(v).split(".")) for v in order]
+    assert numbers == sorted(numbers) and len(set(numbers)) == len(numbers)       # beta then rc: never the same
+    assert all(0 <= n <= 65535 for v in numbers for n in v)
+
+
+@pytest.mark.parametrize("version", [
+    "4.0.0-beta", "4.0.0-preview.1", "4.0.1-beta.1", "4.0.0-beta.0", "4.0.0-beta.1000", "four",
+    "4.0.0-beta.01", "04.0.0", "4.0.0-beta.١",           # one spelling per version: no leading zeros, ASCII digits
+    "0.5.0", "1.0.0-beta.1", "0.1.0-beta.1", "0.0.0-beta.1",  # the Store needs the first number to be at least 1
+])
+def test_versions_the_store_cant_take(version):
+    with pytest.raises(SystemExit):
+        load_builder().package_version(version)
 
 
 class _WindowCreated(Exception):

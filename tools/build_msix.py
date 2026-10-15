@@ -29,12 +29,41 @@ ASSETS = {"StoreLogo": (50, 50), "Square44x44Logo": (44, 44), "Square71x71Logo":
           "Square150x150Logo": (150, 150), "Wide310x150Logo": (310, 150)}
 
 
+PRE_RELEASES = {"alpha": 1, "beta": 2, "rc": 3}    # in the order they come before a release
+
+
 def package_version(version: str) -> str:
-    """MSIX versions are four numbers. The Store reserves the last one, so it must be 0."""
-    m = re.match(r"^(\d+)\.(\d+)\.(\d+)", version.strip())
+    """MSIX versions are four numbers. The Store reserves the last one, so it must be 0.
+
+    A pre-release (for a Store package flight) gets a number just below its release, because Partner Center
+    refuses a second package with the same version, and flight testers only move on to a higher one. Its label
+    and number go in the third part, so alpha < beta < rc < the release:
+    4.0.0-beta.1 -> 3.9999.2001.0, 4.0.0-rc.1 -> 3.9999.3001.0, then 4.0.0 -> 4.0.0.0;
+    4.1.0-beta.2 -> 4.0.62002.0, then 4.1.0 -> 4.1.0.0."""
+    # Plain ASCII digits without leading zeros, so two spellings (beta.1, beta.01) can't make one package version
+    num = r"(0|[1-9][0-9]*)"
+    m = re.match(rf"^{num}\.{num}\.{num}(?:-(alpha|beta|rc)\.([1-9][0-9]*))?$", version.strip())
     if not m:
+        if re.match(r"^[0-9]+\.[0-9]+\.[0-9]+-", version.strip()):
+            sys.exit(f"Name the pre-release alpha, beta or rc with a number (no leading zeros), for example "
+                     f"{version.split('-')[0]}-beta.1, to build it for the Store.")
         sys.exit(f"Can't turn '{version}' into a package version.")
-    return ".".join(m.groups()) + ".0"
+    major, minor, patch = (int(x) for x in m.groups()[:3])
+    if not m.group(4):
+        result = f"{major}.{minor}.{patch}.0"
+    else:
+        rank, pre = PRE_RELEASES[m.group(4)], int(m.group(5))
+        if pre > 999:
+            sys.exit("A pre-release for the Store needs a number from 1 to 999, for example 4.0.0-beta.1.")
+        if patch:
+            sys.exit("Store flights are for new major or minor versions (4.0.0-beta.1, 4.1.0-beta.1), not patches.")
+        if minor:
+            result = f"{major}.{minor - 1}.{60000 + rank * 1000 + pre}.0"   # above any real patch of the minor before
+        else:
+            result = f"{major - 1}.9999.{rank * 1000 + pre}.0"              # above any real minor of the major before
+    if int(result.split(".")[0]) < 1:                 # the Store needs the first number to be at least 1
+        sys.exit(f"{version} would be package version {result}, but the Store needs the first number to be at least 1.")
+    return result
 
 
 def render_manifest(identity_name: str, publisher: str, publisher_display_name: str, version: str) -> str:

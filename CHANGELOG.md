@@ -6,6 +6,10 @@ PATCH for fixes. Pushing a tag like `v3.2.0` publishes that version's section as
 
 ## [Unreleased]
 
+## [4.0.0-beta.1] - 2026-10-15
+
+The first beta of version 4. Installed copies don't update to betas: download it from this page if you'd like to try it. Your data is backed up automatically before version 4 first opens it.
+
 ### Added (preview, off by default)
 
 - Settings has a new Study assistant section (preview). Turning it on shows what the AI features can and can't do, then the terms of use, which need three ticks to agree. Until then nothing about AI appears anywhere in the app
@@ -30,6 +34,11 @@ PATCH for fixes. Pushing a tag like `v3.2.0` publishes that version's section as
 - Link a code folder from a subject: each subject shows its code folders (when the code workspace is on), with a button to link one. Settings lists every linked folder, with Unlink
 - Remove all AI data now also removes chats, linked code folders (not the folders themselves) and suggested changes with their backups. Notes stay
 - Before a new version changes your data for the first time, EasyUniTrack keeps a copy of it in the backups folder
+
+### Changed
+
+- The privacy policy now covers the optional AI features: what's stored on your PC, what's sent to the AI provider you choose and when, and how to remove it. The AI terms of use are also published as TERMS.md
+- Messages you send in a chat keep their spacing, so a pasted error or code keeps its indentation
 
 ### Security
 
