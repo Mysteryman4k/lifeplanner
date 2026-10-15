@@ -1207,3 +1207,116 @@ def test_saved_chats_quiz_and_videos(server, page):
         page.evaluate("chatReset()")
         page.request.post(f"{server}/api/ai/terms/withdraw", headers=tok)
         A.fake_net.pop("POST localhost/v1/chat/completions", None)
+
+
+@pytest.mark.ui
+def test_attached_files(server, page):
+    """A PDF is attached with the paperclip: only the pages that fit Ollama's context go (and the page says so), the
+    range can be changed, Summarise sends the chosen pages, the file stays with the saved chat, and files can be
+    dropped on the chat. Unreadable files are explained."""
+    import json
+    import os
+
+    import app as A
+    from test_attachments import make_pdf
+    tok = {A.TOKEN_HEADER: A.SESSION_TOKEN}
+    terms = page.request.get(f"{server}/api/ai/terms").json()
+    page.request.post(f"{server}/api/ai/terms/agree", headers=tok,
+                      data={"version": terms["version"], "ticks": {k: True for k in terms["ticks"]}})
+    page.request.put(f"{server}/api/ai/settings", headers=tok, data={"provider": "ollama", "model": "qwen2.5:7b"})
+    nl = chr(10)
+
+    def say(text):
+        return "data: " + json.dumps({"choices": [{"delta": {"content": text}}]}) + nl + nl
+    # Ollama reads 4,096 tokens at once here: about 6,500 characters, so two of the four pages fit
+    A.fake_net["GET localhost/api/ps"] = (200, {"models": [{"name": "qwen2.5:7b", "context_length": 4096}]})
+    A.fake_net["POST localhost/v1/chat/completions"] = (200, [say("Pages 3 and 4 cover heaps."), say("Heaps again."),
+                                                              say("Notes on heaps.")])
+    pdf = make_pdf([f"Page {n} topic {name} " + "word " * 500 for n, name in
+                    enumerate(["stacks", "queues", "heaps", "tries"], 1)])
+
+    def last_request():
+        return json.loads([r for r in A.fake_net_seen if r.url.path.endswith("/chat/completions")][-1].content)
+    page.errors.clear()                                         # only this test's
+    try:
+        page.goto(f"{server}/#/study")
+        page.reload()
+        page.click("[data-action=chat-new]")
+        page.fill("#chatInput", "What is on page 3?")
+        page.set_input_files("#chatFile", files=[{"name": "Week 3.pdf", "mimeType": "application/pdf", "buffer": pdf}])
+        page.wait_for_selector(".chat-file-head >> text=Week 3.pdf")
+        chip = page.locator(".chat-file")
+        assert "Pages 1–2" in chip.inner_text() and "too long for one question" in chip.inner_text()
+        assert "raise Context length in Ollama's settings (it's 4,096 tokens now)" in chip.inner_text()
+        assert page.input_value("#chatInput") == "What is on page 3?"              # what was typed is kept
+        # More than fits: a warning, and Send waits
+        page.select_option("[data-file-range=to]", label="Page 4")
+        page.wait_for_selector(".chat-file.over >> text=more than Ollama can read with one question")
+        assert page.locator("#chatForm [type=submit]").is_disabled()
+        # Starting from page 3 takes as many pages as fit from there
+        page.select_option("[data-file-range=from]", label="Page 3")
+        page.wait_for_selector(".chat-file:not(.over) >> text=Pages 3–4")
+        assert page.input_value("[data-file-range=to]") == "3" and not page.locator("#chatForm [type=submit]").is_disabled()
+        if os.environ.get("EUT_SHOTS"):
+            page.screenshot(path=os.path.join(os.environ["EUT_SHOTS"], "stage11-attach.png"))
+        page.fill("#chatInput", "")
+        page.click("[data-action=chat-file-ask][data-kind=summary]")
+        page.wait_for_selector(".chat-msg.ai >> text=Pages 3 and 4 cover heaps.")
+        system = last_request()["messages"][0]["content"]
+        assert "attached a file: Week 3.pdf (Pages 3–4)" in system and "[Page 3]" in system and "[Page 1]" not in system
+        assert last_request()["messages"][-1]["content"].startswith("Summarise the attached file")
+        for _ in range(100):                                    # saved with the chat
+            chats = page.request.get(f"{server}/api/ai/chats").json()
+            if chats and chats[0]["attachment_name"] == "Week 3.pdf":
+                break
+            page.wait_for_timeout(100)
+        else:
+            pytest.fail("The chat wasn't saved with its file")
+
+        # Reopened later, the file's chosen pages still go with each question
+        page.reload()
+        page.click(".nav-chat >> text=Summarise the attached file")
+        page.wait_for_selector(".chat-file >> text=Pages 3–4")
+        assert page.locator("[data-file-range]").count() == 0                     # the other pages weren't kept
+        page.click("[data-action=chat-file-ask][data-kind=quiz]")
+        page.wait_for_selector(".chat-msg.ai >> text=Heaps again.")
+        assert page.locator("[data-action=chat-mode].on").inner_text() == "Quiz me"
+        assert "[Page 4]" in last_request()["messages"][0]["content"]
+        page.click("[data-action=chat-file-ask][data-kind=notes]")
+        page.wait_for_selector(".chat-msg.ai >> text=Notes on heaps.")
+        assert "Mode: Notes" in last_request()["messages"][0]["content"]
+        assert page.locator("[data-action=chat-mode].on").inner_text() == "Quiz me"   # notes are written once
+        chat_id = page.evaluate("chatState().id")
+        page.click("[data-action=chat-file-remove]")
+        assert page.locator(".chat-file").count() == 0
+        for _ in range(100):
+            if page.request.get(f"{server}/api/ai/chats/{chat_id}").json()["attachment"] is None:
+                break
+            page.wait_for_timeout(100)
+        else:
+            pytest.fail("Removing the file didn't save")
+
+        # A file dropped on the chat is attached; an old Word file is explained
+        page.evaluate("""() => {
+            const dt = new DataTransfer();
+            dt.items.add(new File(['Queues are first in, first out.'], 'queues.txt', { type: 'text/plain' }));
+            const drop = new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true });
+            document.querySelector('#chatLog').dispatchEvent(drop);
+        }""")
+        page.wait_for_selector(".chat-file-head >> text=queues.txt")
+        assert page.locator("[data-file-range]").count() == 0                     # one section: nothing to choose
+        assert not page.errors, page.errors
+        page.set_input_files("#chatFile", files=[{"name": "old.doc", "mimeType": "application/msword", "buffer": b"x"}])
+        page.wait_for_selector(".toast >> text=Save it as PDF, .docx or .pptx")
+        assert page.locator(".chat-file >> text=queues.txt").count() == 1          # the attached file stays
+        page.click("[data-action=chat-new]")
+        assert page.locator(".chat-file").count() == 0
+        assert [e for e in page.errors if "status of 400" not in e] == []         # only the refused .doc file
+        page.errors.clear()
+    finally:
+        page.evaluate("chatReset()")
+        for ch in page.request.get(f"{server}/api/ai/chats").json():
+            page.request.delete(f"{server}/api/ai/chats/{ch['id']}", headers=tok)
+        page.request.post(f"{server}/api/ai/terms/withdraw", headers=tok)
+        A.fake_net.pop("POST localhost/v1/chat/completions", None)
+        A.fake_net.pop("GET localhost/api/ps", None)

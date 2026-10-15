@@ -81,13 +81,14 @@ setCurrency('USD');   // replaced by the saved/suggested currency once settings 
 // Written into the page by the app; the local server refuses changes without it (see app.py)
 const APP_TOKEN = document.querySelector('meta[name="app-token"]')?.content || '';
 
-async function api(path, { method = 'GET', body } = {}) {
+async function api(path, { method = 'GET', body, raw } = {}) {
   const headers = { 'X-EasyUniTrack-Token': APP_TOKEN };
   if (body) headers['Content-Type'] = 'application/json';
+  if (raw) headers['Content-Type'] = 'application/octet-stream';        // a file, sent as it is
   const res = await fetch(path, {
     method,
     headers,
-    body: body ? JSON.stringify(body) : undefined,
+    body: raw || (body ? JSON.stringify(body) : undefined),
   });
   if (!res.ok) {
     let msg = 'Something went wrong';
@@ -966,7 +967,7 @@ const CHAT_IDEAS = ['Explain recursion with a simple example', 'Give me a practi
   'What is the difference between a stack and a queue?', 'Help me plan revision for a mid-semester exam'];
 
 function chatState() {
-  if (!state.chat) state.chat = { mode: 'explain', format: 'auto', session: {}, messages: [], tokens: 0, streaming: false, taskId: null, controller: null };
+  if (!state.chat) state.chat = { mode: 'explain', format: 'auto', session: {}, messages: [], tokens: 0, streaming: false, taskId: null, controller: null, file: null, attaching: null };
   return state.chat;
 }
 
@@ -1196,7 +1197,7 @@ function chatMessage(m, i) {
   const live = c.streaming && i === c.messages.length - 1;
   const last = !live && i === c.messages.length - 1 && !c.streaming;
   return `<div class="chat-msg ai ${live ? 'live' : ''}" data-i="${i}">
-    <div class="chat-text">${m.content ? chatMarkdown(m.content) : (live ? '<span class="chat-typing" aria-label="Thinking"><i></i><i></i><i></i></span>' : '')}</div>
+    <div class="chat-text">${m.content ? chatMarkdown(m.content) : (live ? `<span class="chat-typing" aria-label="Thinking"><i></i><i></i><i></i></span>${c.file ? '<span class="muted small"> Reading the file…</span>' : ''}` : '')}</div>
     ${(m.cards || []).map((card, n) => chatCard(card, i, n)).join('')}
     ${m.error ? `<div class="chat-error">${icon('alert', 15)}${esc(m.error)}</div>` : ''}
     ${m.stopped ? '<div class="small muted">Stopped.</div>' : ''}
@@ -1249,11 +1250,14 @@ function chatShell(inPanel) {
       ${task ? `<div class="chat-attached">${icon('tasks', 15)}<div><b>${esc(task.title)}</b><span class="muted small">${[task.subject_name, task.due_date ? 'due ' + fmt(task.due_date, { weekday: 'short', day: 'numeric', month: 'short' }) : ''].filter(Boolean).map(esc).join(' · ')}</span></div></div>` : ''}
       <div class="chat-log" id="chatLog" aria-live="polite">${intro}${c.messages.map(chatMessage).join('')}</div>
       ${folder ? codeSendList() + cloud : ''}
+      ${chatFileChip()}
       <form class="chat-composer" id="chatForm">
-        <textarea class="textarea" id="chatInput" rows="2" maxlength="20000" placeholder="${folder ? 'Ask about this code, or paste an error message' : task ? 'Ask about this task' : 'Ask a question, or paste something to work through'}" aria-label="Message" ${c.streaming ? 'disabled' : ''}></textarea>
+        <button class="icon-btn chat-attach" type="button" data-action="chat-attach" aria-label="Attach a file" title="Attach a PDF, PowerPoint (.pptx), Word (.docx) or text file. You can also drop one here." ${c.streaming || c.attaching ? 'disabled' : ''}>${icon('paperclip', 18)}</button>
+        <input type="file" id="chatFile" accept="${FILE_TYPES}" hidden>
+        <textarea class="textarea" id="chatInput" rows="2" maxlength="20000" placeholder="${folder ? 'Ask about this code, or paste an error message' : task ? 'Ask about this task' : c.file ? 'Ask about the attached file' : 'Ask a question, or paste something to work through'}" aria-label="Message" ${c.streaming ? 'disabled' : ''}></textarea>
         ${c.streaming
           ? `<button class="btn btn-ghost" type="button" data-action="chat-stop">${icon('x', 16)}Stop</button>`
-          : `<button class="btn btn-primary" type="submit" aria-label="Send">${icon('up', 17)}Send</button>`}
+          : `<button class="btn btn-primary" type="submit" aria-label="Send" ${chatFileBlocked() ? 'disabled' : ''}>${icon('up', 17)}Send</button>`}
       </form>
       <div class="chat-foot">Preview. The assistant can be wrong. Check important answers against your unit material.</div>
     </div>`;
@@ -1267,10 +1271,13 @@ function chatAfterRender() {
   if (!chatState().streaming) setTimeout(() => $('#chatInput', chatRoot() || document)?.focus(), 30);
 }
 
-function chatRefresh() {
+function chatRefresh({ keepDraft = false } = {}) {
   const root = chatRoot();
   if (!root) return;
+  const draft = keepDraft ? $('#chatInput', root)?.value : '';      // attaching a file keeps what was typed
   root.outerHTML = chatShell(root.classList.contains('in-panel'));
+  const box = draft && $('#chatInput', chatRoot());
+  if (box && !box.disabled) box.value = draft;
   chatAfterRender();
 }
 
@@ -1321,7 +1328,8 @@ async function streamChat(payload, signal, onEvent) {
 async function chatSend(text, extra = {}) {
   const c = chatState();
   text = text.trim();
-  if (!text || c.streaming) return;
+  if (!text || c.streaming || c.attaching) return;
+  if (chatFileBlocked()) { toast('Choose fewer pages or slides of the attached file first.', 'error'); return; }
   const folderId = c.code;
   const run = {};                              // this send; a reset (New chat, another folder or task) replaces it
   const current = () => c.run === run;
@@ -1345,10 +1353,11 @@ async function chatSend(text, extra = {}) {
   let history = c.messages.slice(0, -1).filter(m => m.content && !m.error).map(m => ({ role: m.role, content: m.content })).slice(-20);
   while (history.length && history[0].role !== 'user') history = history.slice(1);   // same window as the server
   try {
+    const file = c.file ? { attachment: { name: c.file.name, included: chatFileIncluded(c.file), text: chatFileText(c.file) } } : {};
     const payload = folderId
-      ? { mode: 'code', format: c.format || 'auto', messages: history,
+      ? { mode: 'code', format: c.format || 'auto', messages: history, ...file,
           code: { folder_id: folderId, files: (codeState().files || []).map(f => f.path), ...extra } }
-      : { mode: c.mode, format: c.format || 'auto', messages: history, ...(c.taskId ? { task_id: c.taskId } : {}), ...(extra.action ? { action: extra.action } : {}) };
+      : { mode: extra.mode || c.mode, format: c.format || 'auto', messages: history, ...file, ...(c.taskId ? { task_id: c.taskId } : {}), ...(extra.action ? { action: extra.action } : {}) };
     await streamChat(payload, c.controller.signal, ev => {
       if (!current()) return false;
       if (ev.type === 'files') { asked.files = ev.files; asked.leftOut = ev.left_out; chatRefresh(); return true; }
@@ -1455,7 +1464,7 @@ function chatReset(taskId = null, code = null, fromOpen = false) {
   const c = chatState();
   c.controller?.abort();                       // stop any reply still streaming for the old chat
   // A new session: saves still queued for the chat that was showing can't touch this one (chatSave)
-  Object.assign(c, { id: null, session: {}, messages: [], tokens: 0, taskId, code, streaming: false, controller: null, run: null });
+  Object.assign(c, { id: null, session: {}, messages: [], tokens: 0, taskId, code, streaming: false, controller: null, run: null, file: null, attaching: null });
 }
 
 // ── Saved chats: kept after each reply, listed under Recent chats, and opened again ──
@@ -1486,8 +1495,10 @@ function chatSave() {
       leftOut: m.leftOut, error: m.error, stopped: m.stopped }).filter(([, v]) => v !== undefined && v !== null && v !== false)),
   }));
   if (!messages.some(m => m.role === 'user')) return Promise.resolve();
+  const fileText = c.file ? chatFileText(c.file) : '';
   const body = { kind: c.code ? 'code' : 'study', mode: c.code ? 'code' : c.mode, format: c.format || 'auto',
-    task_id: c.taskId || null, folder_id: c.code || null, tokens: c.tokens || 0, messages };
+    task_id: c.taskId || null, folder_id: c.code || null, tokens: c.tokens || 0, messages,
+    attachment: fileText ? { name: c.file.name, kind: c.file.kind || '', included: chatFileIncluded(c.file), text: fileText, chars: fileText.length } : null };
   const chat = c, session = c.session;
   chatSave.queue = (chatSave.queue || Promise.resolve()).then(async () => {
     if (chat.session !== session) return;                // reset, or another chat opened, since this was asked for
@@ -1522,6 +1533,8 @@ async function chatOpen(id) {
   const c = chatState();
   Object.assign(c, { id: ch.id, tokens: ch.tokens, format: ch.format || 'auto',
     mode: ch.kind === 'study' && CHAT_MODES[ch.mode] ? ch.mode : c.mode,
+    // The file's text that went with its questions carries on (its other pages aren't kept: attach it again for those)
+    file: ch.attachment ? { name: ch.attachment.name, kind: ch.attachment.kind, included: ch.attachment.included, text: ch.attachment.text } : null,
     messages: ch.messages.map(m => ({ role: m.role, content: m.content, ...m.meta })) });
   closeDrawer();
   const target = ch.kind === 'code' ? '#/code' : '#/study';
@@ -1533,7 +1546,7 @@ function chatList() {
   const when = s => fmt(s.slice(0, 10), { day: 'numeric', month: 'short' });
   const body = chats.length ? `<div class="chat-list">${chats.map(ch => `<div class="chat-list-row">
       <button class="chat-list-open" data-action="chat-open" data-id="${ch.id}">${icon(ch.kind === 'code' ? 'code' : 'spark', 15)}
-        <span><b>${esc(ch.title || 'Chat')}</b><span class="muted small">${esc([ch.kind === 'code' ? ch.folder_name || 'Code workspace' : CHAT_MODES[ch.mode] || 'Study', when(ch.updated_at), `${ch.count} messages`].join(' · '))}</span></span></button>
+        <span><b>${esc(ch.title || 'Chat')}</b><span class="muted small">${esc([ch.kind === 'code' ? ch.folder_name || 'Code workspace' : CHAT_MODES[ch.mode] || 'Study', when(ch.updated_at), `${ch.count} messages`, ch.attachment_name].filter(Boolean).join(' · '))}</span></span></button>
       <button class="icon-btn" data-action="chat-delete" data-id="${ch.id}" aria-label="Delete ${esc(ch.title)}" title="Delete">${icon('trash', 16)}</button></div>`).join('')}</div>`
     : emptyState('spark', 'No saved chats yet', 'Chats are kept here after each reply.');
   openDrawer('Chats', body, '<span class="spacer"></span><button class="btn btn-ghost" type="button" data-action="close-drawer">Close</button>', 'chats');
@@ -1545,6 +1558,104 @@ function quizChoices(text) {
   if (letters.length < 2) return '';
   return `<div class="quiz-choices" role="group" aria-label="Answer">${letters.map(l =>
     `<button class="btn btn-ghost btn-sm" data-action="chat-answer" data-v="${l}">${l}</button>`).join('')}</div>`;
+}
+
+// ── Attached files: a PDF, PowerPoint, Word or text file is read on this PC (ai/files.py), and the text of the
+// pages, slides or sections chosen goes with each question ──
+const FILE_TYPES = '.pdf,.pptx,.docx,.txt,.md,.markdown';
+const FILE_MAX = 30 * 1024 * 1024;               // MAX_UPLOAD in ai/files.py
+const CHARS_PER_TOKEN = 3.7;                     // for the estimate shown (English prose)
+const FILE_ASKS = {
+  summary: 'Summarise the attached file: the main ideas in order, with the page, slide or section for each.',
+  notes: 'Write study notes on the attached file.',
+  quiz: 'Quiz me on the attached file.',
+};
+
+/** The text that goes with each question: the chosen parts, each under its label ([Page 3] ...). A reopened
+ *  chat has only the text that was chosen then. */
+function chatFileText(f) {
+  if (!f.parts) return f.text || '';
+  return f.parts.slice(f.from, f.to + 1).map(p => `[${p.label}]\n${p.text}`).join('\n\n');
+}
+
+/** Which parts are included, in words: "the whole file", "Page 4" or "Pages 4–12". */
+function chatFileIncluded(f) {
+  if (!f.parts) return f.included || '';
+  if (f.to < f.from) return '';
+  if (f.from === 0 && f.to === f.parts.length - 1) return 'the whole file';
+  const [word, a] = f.parts[f.from].label.split(' '), b = f.parts[f.to].label.split(' ')[1];
+  return f.from === f.to ? `${word} ${a}` : `${word}s ${a}–${b}`;
+}
+
+/** The last part that fits the provider's budget, going on from part `from` (from - 1 if not even that one fits). */
+function chatFileFit(f, from = 0) {
+  let to = from - 1, size = -2;
+  for (let i = from; i < f.parts.length; i++) {
+    size += f.parts[i].label.length + 3 + f.parts[i].text.length + 2;
+    if (size > f.budget.chars) break;
+    to = i;
+  }
+  return to;
+}
+
+/** True when the chosen parts can't be sent: none fit, or more than the provider reads with one question. */
+function chatFileBlocked() {
+  const f = chatState().file;
+  if (!f) return false;
+  const n = chatFileText(f).length;
+  return !n || (f.budget && n > f.budget.chars);
+}
+
+async function chatAttach(file) {
+  const c = chatState(), session = c.session;
+  if (!file || c.streaming || c.attaching) return;
+  if (file.size > FILE_MAX) { toast('That file is over 30 MB. Attach a smaller file, or just the part you need.', 'error'); return; }
+  c.attaching = file.name;
+  chatRefresh({ keepDraft: true });
+  try {
+    const doc = await api(`/api/ai/attach?name=${encodeURIComponent(file.name)}`, { method: 'POST', raw: file });
+    if (c.session !== session) return;            // a new chat was started meanwhile
+    const f = { ...doc, from: 0, to: doc.parts.length - 1 };
+    f.to = Math.min(f.to, chatFileFit(f));        // too long for one question: start with the parts that fit, and say so
+    f.trimmed = f.to < doc.parts.length - 1;
+    c.file = f;
+  } catch (e) {
+    if (c.session === session) toast(e.message, 'error');
+  } finally {
+    if (c.session === session) { c.attaching = null; chatRefresh({ keepDraft: true }); }
+  }
+}
+
+function chatFileChip() {
+  const c = chatState(), f = c.file, a = state.ai || {};
+  if (c.attaching) return `<div class="chat-file">${icon('paperclip', 15)}<span class="muted small">Reading ${esc(c.attaching)}…</span></div>`;
+  if (!f) return '';
+  const text = chatFileText(f), n = text.length, b = f.budget;
+  const local = a.provider === 'ollama', who = local ? 'Ollama' : a.provider === 'custom' ? 'this provider' : a.providers?.[a.provider]?.name || 'the assistant';
+  const unit = { PDF: 'pages', PowerPoint: 'slides' }[f.kind] || 'sections';
+  const notes = [];
+  const raise = local && b?.context ? ` To read more at once, raise Context length in Ollama's settings (it's ${b.context.toLocaleString()} tokens now), then attach the file again.` : '';
+  if (!n && f.parts) notes.push(['warn', `Even ${f.parts[f.from].label} is more than ${who} can read with one question.${raise}`]);
+  else if (b && n > b.chars) notes.push(['warn', `That's more than ${who} can read with one question (about ${b.chars.toLocaleString()} characters). Choose fewer ${unit}.${raise}`]);
+  else if (f.trimmed && f.parts && !(f.from === 0 && f.to === f.parts.length - 1)) notes.push(['info', `The whole file is too long for one question, so ${chatFileIncluded(f)} go with it. Choose other ${unit} to ask about the rest.${raise}`]);
+  if (local && b?.slow_over && n > b.slow_over && n <= b.chars) notes.push(['info', 'A local model takes a while to read this much: the reply can take a few minutes to start on a PC without a graphics card.']);
+  const range = f.parts && f.parts.length > 1 ? `<span class="chat-file-range">
+      <select class="select select-sm" data-file-range="from" aria-label="First of the ${unit} to send">${f.parts.map((p, i) => opt(i, p.label, f.from)).join('')}</select>
+      <span class="muted small">to</span>
+      <select class="select select-sm" data-file-range="to" aria-label="Last of the ${unit} to send">${f.parts.map((p, i) => opt(i, p.label, f.to)).join('')}</select></span>` : '';
+  const tokens = Math.max(100, Math.round(n / CHARS_PER_TOKEN / 100) * 100);
+  const sendable = n && !(b && n > b.chars);
+  return `<div class="chat-file ${sendable ? '' : 'over'}">
+      <div class="chat-file-head">${icon('paperclip', 15)}<b title="${esc(f.name)}">${esc(f.name)}</b>
+        <span class="muted small">${esc([f.kind, chatFileIncluded(f), n ? `about ${tokens.toLocaleString()} tokens with each question` : ''].filter(Boolean).join(' · '))}</span>
+        ${range}
+        <button class="icon-btn" type="button" data-action="chat-file-remove" aria-label="Remove the attached file" title="Remove" ${c.streaming ? 'disabled' : ''}>${icon('x', 15)}</button></div>
+      ${notes.map(([kind, t]) => `<div class="chat-file-note ${kind}">${icon(kind === 'warn' ? 'alert' : 'clock', 13)}<span>${esc(t)}</span></div>`).join('')}
+      ${!c.code && sendable ? `<div class="chat-quick" role="group" aria-label="Use the file">
+        <button class="chip" data-action="chat-file-ask" data-kind="summary" ${c.streaming ? 'disabled' : ''}>Summarise</button>
+        <button class="chip" data-action="chat-file-ask" data-kind="notes" ${c.streaming ? 'disabled' : ''}>Write notes on this</button>
+        <button class="chip" data-action="chat-file-ask" data-kind="quiz" ${c.streaming ? 'disabled' : ''}>Quiz me on this</button></div>` : ''}
+    </div>`;
 }
 
 // ── Code workspace: a linked folder's tree, a file viewer, and the files sent with each question ──
@@ -2456,6 +2567,23 @@ const ACTIONS = {
     chatRefresh();
   },
   'chat-mode'(el) { if (!chatState().streaming) { chatState().mode = el.dataset.mode; chatRefresh(); } },
+  'chat-attach'() {
+    const input = $('#chatFile', chatRoot() || document);
+    if (input) { input.value = ''; input.click(); }
+  },
+  'chat-file-remove'() {
+    const c = chatState();
+    if (c.streaming) return;
+    c.file = null;
+    chatRefresh({ keepDraft: true });
+    chatSave();                                   // the saved chat no longer carries it either
+  },
+  'chat-file-ask'(el) {
+    const c = chatState(), kind = el.dataset.kind;
+    if (c.streaming) return;
+    if (kind === 'quiz') c.mode = 'quiz';         // Quiz me carries on as a quiz; notes are written once
+    chatSend(FILE_ASKS[kind], kind === 'notes' ? { mode: 'notes' } : {});
+  },
   'chat-idea'(el) { chatSend(el.textContent); },
   'code-link'() { codeLinkForm(); },
   async 'code-change-apply'(el) { await codeChangeAction(el, 'apply'); },
@@ -2884,6 +3012,16 @@ document.addEventListener('keydown', e => {
   }
 });
 
+// A file dropped on the chat is attached (anywhere else, dropping does nothing rather than open the file)
+document.addEventListener('dragover', e => {
+  if (e.dataTransfer?.types?.includes('Files')) { e.preventDefault(); e.dataTransfer.dropEffect = e.target.closest?.('.chat') ? 'copy' : 'none'; }
+});
+document.addEventListener('drop', e => {
+  if (!e.dataTransfer?.files?.length) return;
+  e.preventDefault();
+  if (e.target.closest?.('.chat')) chatAttach(e.dataTransfer.files[0]);
+});
+
 // In the code workspace, files named in the message (an error you paste, say) join the list as you type
 let codeTyping = 0;
 document.addEventListener('input', e => {
@@ -2894,6 +3032,15 @@ document.addEventListener('input', e => {
 
 document.addEventListener('change', async e => {
   if (e.target.id === 'chatFormat') { chatState().format = e.target.value; return; }
+  if (e.target.id === 'chatFile') { if (e.target.files[0]) chatAttach(e.target.files[0]); return; }
+  if (e.target.dataset.fileRange) {                        // the pages, slides or sections to send
+    const f = chatState().file, i = Number(e.target.value);
+    if (!f?.parts) return;
+    if (e.target.dataset.fileRange === 'from') { f.from = i; f.to = Math.max(i, chatFileFit(f, i)); }   // as many as fit from there
+    else { f.to = i; f.from = Math.min(f.from, i); }
+    chatRefresh({ keepDraft: true });
+    return;
+  }
   if (e.target.id === 'codeFolder') { codeSelectFolder(Number(e.target.value)); return; }
   if (e.target.id === 'runKeep') { codeState().keep = e.target.checked; codeRunRefresh(); return; }
   if (e.target.id === 'runLimit') { codeState().limit = Number(e.target.value); return; }

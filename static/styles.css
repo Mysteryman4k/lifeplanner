@@ -836,3 +836,17 @@ fieldset.field { border: 0; padding: 0; margin: 0; min-width: 0; }
 .chat-list-open .ic { flex: none; margin-top: 2px; color: var(--accent-text); }
 .quiz-choices { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
 .quiz-choices .btn { min-width: 44px; justify-content: center; font-weight: 700; }
+
+/* ── Attached files (stage 11) ──────────── */
+.chat-composer .chat-attach { align-self: center; flex: none; }
+.chat-file { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border: 1px solid var(--accent-line); background: var(--accent-soft); border-radius: var(--r-sm); }
+.chat-file.over { border-color: var(--warn); background: var(--warn-soft); }
+.chat-file-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.chat-file-head > .ic { flex: none; color: var(--accent-text); }
+.chat-file-head b { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-file-head .icon-btn { margin-left: auto; }
+.chat-file-range { display: inline-flex; align-items: center; gap: 6px; }
+.chat-file-range .select { max-width: 120px; }
+.chat-file-note { display: flex; gap: 6px; align-items: flex-start; font-size: 12.5px; color: var(--ink-2); }
+.chat-file-note .ic { flex: none; margin-top: 2px; }
+.chat-file-note.warn { color: var(--warn); font-weight: 650; }

@@ -7,10 +7,11 @@ window's session token (app.py, protect_local_server).
 from datetime import datetime
 from typing import Literal, Optional
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Query, Request
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
-from . import keys, prompts, system, terms
+from . import files, keys, prompts, system, terms
 from .tools import TaskTools
 from .providers import PRESETS, get_provider, suggest_model
 
@@ -64,6 +65,13 @@ class CodeIn(BaseModel):
     diff: str = Field(default="", max_length=40000)            # for Explain my change (/api/code/folders/{id}/diff)
 
 
+class AttachmentIn(BaseModel):
+    """An attached file's text (from /api/ai/attach), or the pages or slides of it the student chose."""
+    name: str = Field(min_length=1, max_length=200)
+    included: str = Field(default="", max_length=200)          # e.g. "pages 3-10 of 40"
+    text: str = Field(min_length=1, max_length=files.CLOUD_CHARS + 20_000)   # the part labels add a little
+
+
 class ChatIn(BaseModel):
     mode: Literal["explain", "practise", "quiz", "check", "notes", "code"] = "explain"
     format: Literal["auto", "notes", "diagram", "both", "maths", "code"] = "auto"
@@ -71,6 +79,7 @@ class ChatIn(BaseModel):
     task_id: Optional[int] = None
     code: Optional[CodeIn] = None                             # the code workspace: its folder and files
     action: Optional[Literal["videos"]] = None                 # a study reply's own action (Videos)
+    attachment: Optional[AttachmentIn] = None                  # an attached file, sent with each question
 
 
 class ConfirmIn(BaseModel):
@@ -202,6 +211,40 @@ def register(app, get_setting, put_setting, transport_hook=lambda: None, task_co
         return {"ok": r.ok, "message": r.message, "models": r.models, "tools": r.tools,
                 "cloud_models": r.cloud_models, "suggested": suggested}
 
+    def attach_budget(s: AISettings, load: bool) -> dict:
+        """How much of a file can go with one question for the chosen provider and model."""
+        context = None
+        if s.provider == "ollama" and s.model:
+            context = get_provider("ollama", transport=transport_hook()).context_length(s.model, load=load)
+        return files.budget(s.provider, context)
+
+    @app.post("/api/ai/attach")
+    async def attach(request: Request, name: str = Query(min_length=1, max_length=260)):
+        """Read an attached file (the raw file is the request body) and return its text in parts (pages,
+        slides or sections), with how much of it can go with one question. Nothing is kept: the page holds
+        the text and sends the parts the student chose with each question."""
+        s = require_agreement()
+        if not (s.assistant_enabled or s.code_enabled):
+            raise HTTPException(403, "Turn on the Study assistant in Settings first.")
+        too_big = HTTPException(413, "That file is over 30 MB. Attach a smaller file, or just the part you need.")
+        length = request.headers.get("content-length", "")
+        if length.isdigit() and int(length) > files.MAX_UPLOAD:
+            raise too_big
+        data = bytearray()
+        async for chunk in request.stream():
+            data += chunk
+            if len(data) > files.MAX_UPLOAD:
+                raise too_big
+        try:
+            doc = await run_in_threadpool(files.extract, name, bytes(data))
+        except files.FileError as e:
+            raise HTTPException(400, str(e)) from None
+        except Exception as e:                           # a file built in a way the readers don't expect
+            print(f"Couldn't read an attached file: {e!r}", flush=True)
+            raise HTTPException(400, "That file couldn't be read. It may be damaged.") from None
+        doc["budget"] = await run_in_threadpool(attach_budget, s, True)
+        return doc
+
     @app.post("/api/ai/chat")
     def chat(c: ChatIn):
         """Stream a reply as server-sent events: {"type": "text"|"usage"|"error"|"done", ...}."""
@@ -220,6 +263,16 @@ def register(app, get_setting, put_setting, transport_hook=lambda: None, task_co
             raise HTTPException(400, "Choose an AI provider and model in Settings first.")
         if c.messages[-1].role != "user":
             raise HTTPException(400, "The last message must be yours.")
+        attached = ""
+        if c.attachment:
+            # Never cut silently: the page lets the student choose pages that fit (Ollama: in its context now)
+            limit = attach_budget(s, False)["chars"]
+            if len(c.attachment.text) > limit:
+                who = {"ollama": "Ollama", "custom": "this provider"}.get(s.provider) or PRESETS[s.provider]["name"]
+                raise HTTPException(413, f"That's more of the file than {who} can read with one "
+                                         f"question (about {limit:,} characters). Choose fewer pages or slides.")
+            attached = prompts.attachment_block(" ".join(c.attachment.name.split()), " ".join(c.attachment.included.split()),
+                                                c.attachment.text)
         history = [m.model_dump() for m in c.messages[-MAX_HISTORY:]]       # keeps cost and length down
         while history and history[0]["role"] != "user":
             history.pop(0)
@@ -241,9 +294,12 @@ def register(app, get_setting, put_setting, transport_hook=lambda: None, task_co
             tools = TaskTools(task_store, action_log) if use_tools else None
         if tools:
             system_text += "\n\n" + tools.addendum()
+        if attached:                                     # last: every instruction comes before the file's text
+            system_text += "\n\n" + attached
 
         def events():
-            messages, state = list(history), {"changes": 0, "ask_first": False}
+            # With a file attached, task changes wait for a yes: the file could contain text aimed at the assistant
+            messages, state = list(history), {"changes": 0, "ask_first": bool(attached)}
             if code:                                     # what was sent, so the student can see it
                 sent = {"type": "files", "files": code["sent"], "left_out": code["left_out"]}
                 yield f"data: {json.dumps(sent)}\n\n"

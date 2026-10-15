@@ -36,7 +36,7 @@ a = Analysis(
     datas=[('static', 'static'), ('VERSION', '.')],
     hiddenimports=['uvicorn.loops.auto', 'uvicorn.protocols.http.auto', 'uvicorn.lifespan.on', 'updater', 'reminders', 'system_integration', 'store',
                    'ai', 'ai.routes', 'ai.terms', 'ai.keys', 'ai.system', 'ai.providers', 'ai.providers.base',
-                   'ai.providers.anthropic', 'ai.providers.openai_compat', 'ai.providers.ollama',
+                   'ai.providers.anthropic', 'ai.providers.openai_compat', 'ai.providers.ollama', 'ai.files', 'pypdf',
                    'keyring.backends.Windows'],
     hookspath=[],
     runtime_hooks=[],

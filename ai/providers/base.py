@@ -62,6 +62,8 @@ class Result:
 
 
 class Provider:
+    read_timeout = 120.0                     # seconds to wait for the next part of a streamed reply
+
     def __init__(self, provider_id: str, base_url: str, *, key: str = None, transport=None):
         self.id = provider_id
         self.base_url = base_url
@@ -76,6 +78,10 @@ class Provider:
     def supports_tools(self, model: str):
         """True/False if the provider can tell, None if unknown. Cloud providers support tools."""
         return True
+
+    def context_length(self, model: str, load: bool = False):
+        """Tokens the model reads at once, when it's limited by a setting on this PC (Ollama); None otherwise."""
+        return None
 
     # ── shared ──
     def client(self) -> httpx.Client:
@@ -122,7 +128,7 @@ class Provider:
                                 "(plain http:// is only allowed for services running on this PC).")
         try:
             with self.client() as c, c.stream("POST", self.base_url + path, headers=headers, json=json,
-                                               timeout=httpx.Timeout(120.0, connect=6.0)) as r:
+                                               timeout=httpx.Timeout(self.read_timeout, connect=6.0)) as r:
                 if r.status_code >= 400:
                     r.read()
                     self.raise_for_status(r.status_code, name)
@@ -152,7 +158,7 @@ class Provider:
     def get(self, path: str, headers: dict = None) -> dict:
         return self.request("GET", path, headers=headers)
 
-    def request(self, method: str, path: str, headers: dict = None, json=None) -> dict:
+    def request(self, method: str, path: str, headers: dict = None, json=None, timeout=None) -> dict:
         name = self.display_name()
         if not self.base_url:
             raise ProviderError("Enter the service's base URL first.")
@@ -161,7 +167,7 @@ class Provider:
                                 "(plain http:// is only allowed for services running on this PC).")
         try:
             with self.client() as c:
-                r = c.request(method, self.base_url + path, headers=headers or {}, json=json)
+                r = c.request(method, self.base_url + path, headers=headers or {}, json=json, timeout=timeout or TIMEOUT)
         except httpx.ConnectError:
             raise ProviderError(self.unreachable_message()) from None
         except httpx.TimeoutException:

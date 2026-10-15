@@ -15,6 +15,11 @@ class FakeProvider(Provider):
     def supports_tools(self, model: str):
         return self.tools
 
+    context = None                       # tests set a context length, as Ollama reports one
+
+    def context_length(self, model: str, load: bool = False):
+        return self.context
+
     def stream_chat(self, model: str, system: str, messages: list, tools: list = None):
         """Without a script: a fixed greeting. With self.script (a list of rounds): each round is a list of
         events, and a {"type": "tool_calls", "calls": [...]} event asks to use tools."""
