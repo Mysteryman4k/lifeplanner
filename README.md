@@ -28,7 +28,7 @@ EasyUniTrack was called Trackademic before version 3.6.0. Updating keeps all you
 
 ## Optional AI features (preview, version 4)
 
-Off until you turn them on in Settings and agree to the [terms of use](TERMS.md). You bring the AI: your own Anthropic, OpenAI or DeepSeek account (billed by that provider), or a free local model with [Ollama](https://ollama.com), so nothing leaves your PC.
+Off until you turn them on in Settings and agree to the [terms of use](TERMS.md). You bring the AI: your own Anthropic, OpenAI or DeepSeek account (billed by that provider), or a free model running on your PC with [Ollama](https://ollama.com), so nothing leaves your PC (Ollama's cloud models run on Ollama's servers instead, and EasyUniTrack labels them).
 
 - **Study assistant**: Explain, Practise, Quiz me and Check my attempt modes, with maths, diagrams and code; attach lecture slides, readings or notes (PDF, PowerPoint, Word); save replies as notes; YouTube searches for a topic
 - **Code workspace**: link a project folder (Assignment mode gives hints first; Personal project fixes freely). Explain the error, Debug, Trace, Big-O, Visualise, tests, Explain my change and practice problems; suggested changes you review, apply and undo; and run your Python, Java, C/C++, C#, Go, Rust or JavaScript projects
@@ -41,7 +41,7 @@ AI replies can be wrong, and you're responsible for following your university's 
 
 ## Privacy
 
-EasyUniTrack has no accounts, ads or tracking. Your planner stays on your computer; the optional AI features send what you ask to the AI provider you choose (with Ollama, nothing leaves your PC). See the [privacy policy](PRIVACY.md).
+EasyUniTrack has no accounts, ads or tracking. Your planner stays on your computer; the optional AI features send what you ask to the AI provider you choose (with a model running on your PC in Ollama, nothing leaves your PC). See the [privacy policy](PRIVACY.md).
 
 ## Install (Windows)
 

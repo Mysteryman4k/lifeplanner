@@ -23,13 +23,13 @@ Make it yours with 6 colour themes, 5 text styles and light or dark mode. Get a 
 
 Your data is yours: download a backup file whenever you like, restore it in a couple of clicks, and EasyUniTrack also keeps a daily backup copy for you.
 
-New in version 4 (preview, off until you turn it on): an AI study assistant and code workspace, using generative AI. Ask about your units and get explanations with maths and diagrams, practice questions and quizzes. Attach lecture slides, readings or notes (PDF, PowerPoint, Word), and get feedback on your own working without it being written for you. In the code workspace, link a project folder: the assistant explains errors, traces code, works out Big-O and suggests fixes you review and apply yourself, and you can run your code from the app. You bring the AI: connect your own account with Anthropic, OpenAI or DeepSeek (usage is billed to you by that provider), or use a free local model with Ollama so nothing leaves your PC. AI replies can be wrong, so check them against your unit material, and follow your university's rules on using AI.
+New in version 4 (preview, off until you turn it on): an AI study assistant and code workspace, using generative AI. Ask about your units and get explanations with maths and diagrams, practice questions and quizzes. Attach lecture slides, readings or notes (PDF, PowerPoint, Word), and get feedback on your own working without it being written for you. In the code workspace, link a project folder: the assistant explains errors, traces code, works out Big-O and suggests fixes you review and apply yourself, and you can run your code from the app. You bring the AI: connect your own account with Anthropic, OpenAI or DeepSeek (usage is billed to you by that provider), or use a free model running on your PC with Ollama, so nothing leaves your PC (Ollama's cloud models are labelled, because they don't). AI replies can be wrong, so check them against your unit material, and follow your university's rules on using AI.
 
 Tip: before uninstalling, use Settings > Your data > Download backup to keep a copy of your information.
 
 ## What's new in this version
 
-Version 4.0: an optional AI study assistant and code workspace (preview, using generative AI), off until you turn it on in Settings. Bring your own AI provider, or use a free local model with Ollama.
+Version 4.0: an optional AI study assistant and code workspace (preview, using generative AI), off until you turn it on in Settings. Bring your own AI provider, or use a free model running on your PC with Ollama.
 
 ## Product features (one per line, up to 20)
 
@@ -50,7 +50,7 @@ Version 4.0: an optional AI study assistant and code workspace (preview, using g
 - Attach lecture slides, readings or notes (PDF, PowerPoint, Word) and ask about them
 - Code workspace (preview): explain errors, trace code, Big-O, tests, and fixes you review before applying
 - Run your Python, Java, C/C++, C#, Go, Rust or JavaScript projects from the app
-- Bring your own AI provider, or use a free local model with Ollama so nothing leaves your PC
+- Bring your own AI provider, or use a free model running on your PC with Ollama, so nothing leaves your PC
 
 ## Short description
 
@@ -87,7 +87,7 @@ Upload in this order. Captions are optional.
 - AI replies can be wrong, sometimes confidently. Check them against your unit material, and test any code yourself.
 - You're responsible for following your university's rules on using AI. The assistant is designed to help you learn: in assignment folders it gives hints first, not finished answers.
 - Cloud AI providers need your own account, are billed by the provider, and often require you to be 18 or older. Set a spending limit with your provider.
-- With a cloud provider, your messages, the parts of files you attach and the code you share go to that provider. With a local model in Ollama, nothing leaves your PC. Local models need a capable PC and can be slow on long files.
+- With a cloud provider, your messages, the parts of files you attach and the code you share go to that provider. With a model running on your PC in Ollama, nothing leaves your PC (Ollama's cloud models are labelled, because they run on Ollama's servers). Local models need a capable PC and can be slow on long files.
 - Scanned PDFs (pictures of pages) can't be read yet. Old .doc and .ppt files need saving as .docx or .pptx first.
 - Running code works like running it in a terminal, with your permissions. Only run code you trust.
 
@@ -112,7 +112,7 @@ Version 4 contains live generative AI (the optional study assistant and code wor
 - **Disclose it in the metadata:** the description's "New in version 4" paragraph, the features list, the "Good to know" list and the What's new text all say the AI uses generative AI and is optional.
 - **Note it during submission:** in Partner Center, tick or answer the question about live generative AI content (where it appears depends on Partner Center's layout at the time) and describe it as: "Optional study assistant and code helper. Off by default; the user connects their own AI provider (Anthropic, OpenAI, DeepSeek, a custom OpenAI-compatible service) or a local model in Ollama. Replies are generated by that model in response to the user's questions."
 - **Keep the output within Store policies:** the assistant's instructions (`ai/prompts.py`) tell it to keep everything suitable for a general student audience, with no sexual, hateful, harassing or graphic violent content, and no instructions that could cause serious harm. The providers' own safety systems also apply.
-- **Let users report it:** every reply has a Report button, which opens a GitHub issue to us with the reply filled in. Watch for issues labelled ai-response and act on them.
+- **Let users report it:** every reply has a Report button, which opens a GitHub issue to us and copies the reply for the user to paste in. Watch for issues labelled ai-response and act on them.
 
 ## Notes for certification (Submission options)
 

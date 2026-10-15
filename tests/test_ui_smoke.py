@@ -1397,12 +1397,21 @@ def test_long_chats_keep_chats_and_linked_folders(server, page, tmp_path_factory
         page.wait_for_selector(".chat-summary >> text=Earlier messages are summarised for the assistant")
         page.click(".chat-summary > summary")
         page.wait_for_selector(".chat-summary[open] >> text=The student revised stacks and heaps.")
-        # Every reply can be reported (Microsoft Store Policies 11.16): a GitHub issue with the reply filled in
+        # Every reply can be reported (Microsoft Store Policies 11.16): a GitHub issue opens, with nothing from the
+        # chat in its address (GitHub would receive it as the page opens), and the reply is copied to paste in
         report = page.locator(".chat-msg.ai").last.locator("a", has_text="Report")
         href = report.get_attribute("href")
         assert href.startswith("https://github.com/Mysteryman4k/lifeplanner/issues/new?labels=ai-response&")
-        assert "Answer%2015." in href and report.get_attribute("target") == "_blank"
+        assert "Answer" not in href and "Question" not in href and report.get_attribute("target") == "_blank"
         assert page.locator(".chat-msg.ai a", has_text="Report").count() == page.locator(".chat-msg.ai").count()
+        page.context.grant_permissions(["clipboard-read", "clipboard-write"], origin=server)
+        page.context.route("https://github.com/**", lambda route: route.abort())     # no real request from tests
+        with page.expect_popup() as popup:
+            report.click()
+        popup.value.close()
+        page.wait_for_selector("#toast.show >> text=The reply is copied")
+        assert page.evaluate("navigator.clipboard.readText()") == "Answer 15."
+        page.context.unroute("https://github.com/**")
         chat_id = None
         for _ in range(100):                                                    # saved with the chat
             chat_id = page.evaluate("chatState().id")

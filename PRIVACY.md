@@ -10,7 +10,7 @@ EasyUniTrack doesn't collect, sell or share your information. PandaDev Studio ha
 
 Your planner stays on your computer. The only exceptions are the update check in the GitHub version, explained under [Internet use](#internet-use), and the optional AI features.
 
-The AI features (the study assistant and the code workspace) are off until you turn them on. When you use them with a cloud AI provider you've chosen, the messages and material you send go to that provider, as explained under [The AI features](#the-ai-features-optional). With a local model in Ollama, they stay on your computer.
+The AI features (the study assistant and the code workspace) are off until you turn them on. When you use them with a cloud AI provider you've chosen, the messages and material you send go to that provider, as explained under [The AI features](#the-ai-features-optional). With a model running on your computer in Ollama, they stay on your computer; Ollama's cloud models are the exception.
 
 ## What the app stores, and where
 
@@ -60,7 +60,7 @@ The app shows how many tokens each chat has used. **Test connection** uses your 
 
 **Running code.** The code workspace can run programs you choose, on your computer, with your permissions, only when you click Run. Their output is shown in the app and isn't saved or sent anywhere unless you include it in a question.
 
-**Reporting a reply.** **Report** under a reply opens a new GitHub issue in your web browser, with the reply's text filled in. You can edit or remove anything before you choose to submit it, and nothing is sent unless you do.
+**Reporting a reply.** **Report** under a reply opens a new GitHub issue in your web browser and copies the reply, so you can paste it in if you choose. The page address only includes the provider, model, mode and EasyUniTrack version, never anything from your chat, so nothing from the chat reaches GitHub unless you paste it and submit the issue.
 
 ## Internet use
 
