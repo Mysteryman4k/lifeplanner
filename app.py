@@ -630,7 +630,7 @@ def spawn_next_occurrence(conn, task: dict):
 # ═══════════════════════════════════════════════════════════════════════════
 
 # ── Start-up diagnostics: when the window actually showed the app (used by the log and CI) ──
-STARTUP = {"server_started": time.time(), "client_ready": None, "app_js_loads": []}
+STARTUP = {"server_started": time.time(), "client_ready": None, "app_js_loads": [], "window": None}
 
 
 @app.post("/api/diag/client-ready")
@@ -651,7 +651,8 @@ def get_startup_status():
             # version, the window ran a cached copy of the old screens (the 3.5.0 update bug).
             "app_js_versions": sorted(set(loads)),
             "screens_current": f"{APP_VERSION}" in loads,
-            "readers": ai_files.readers()}                    # PDF reading for attached files is in the build
+            "readers": ai_files.readers(),                    # PDF reading for attached files is in the build
+            "window": STARTUP["window"]}       # "browser" when its own window couldn't start (desktop.py sets it)
 
 
 @app.get("/api/info")

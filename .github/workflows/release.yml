@@ -53,6 +53,10 @@ jobs:
 
       - name: Start-up test - launch the built app and check it gets past the intro
         run: python tools/smoke_desktop.py --max-seconds 45 dist/EasyUniTrack/EasyUniTrack.exe
+      - name: Start-up test as downloaded (every file marked, as when the portable zip is unzipped)
+        run: |
+          python tools/mark_downloaded.py dist/EasyUniTrack dist-downloaded/EasyUniTrack
+          python tools/smoke_desktop.py --max-seconds 45 dist-downloaded/EasyUniTrack/EasyUniTrack.exe
 
       - name: Build the installer
         run: iscc /DAppVersion=${{ steps.version.outputs.version }} installer\easyunitrack.iss

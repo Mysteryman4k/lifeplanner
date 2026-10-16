@@ -6,6 +6,12 @@ PATCH for fixes. Pushing a tag like `v3.2.0` publishes that version's section as
 
 ## [Unreleased]
 
+## [4.0.0-beta.2] - 2026-10-16
+
+### Fixed
+
+- The portable version (the zip) didn't start in 4.0.0-beta.1: Windows marks files unzipped from a download, and the part that draws the window refused to load them. It starts now. If the window still can't open for some other reason, EasyUniTrack opens in your browser instead of closing with an error. The installer wasn't affected
+
 ## [4.0.0-beta.1] - 2026-10-15
 
 The first beta of version 4. Installed copies don't update to betas: download it from this page if you'd like to try it. Your data is backed up automatically before version 4 first opens it.

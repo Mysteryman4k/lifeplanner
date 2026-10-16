@@ -82,7 +82,10 @@ def run_once(cmd, port: int, max_seconds: float, intro: bool, second_copy: bool 
             print(f"✓ App on screen after {elapsed:.1f}s (version {last['version']}, "
                   f"{last['seconds_to_ready']}s after the server started)")
             slow = elapsed > 10
-            if expect_version and last["version"] != expect_version:
+            if last.get("window") == "browser":                 # key only exists from 4.0.0-beta.2
+                print("✗ Its window couldn't start, so it opened in the browser instead")
+                ok = False
+            elif expect_version and last["version"] != expect_version:
                 print(f"✗ Expected version {expect_version} but {last['version']} started")
                 ok = False
             elif last.get("screens_current") is False:        # key only exists from 3.5.2

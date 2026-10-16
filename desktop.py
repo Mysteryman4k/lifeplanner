@@ -134,6 +134,23 @@ def run_in_browser(url: str):
         pass
 
 
+def fall_back_to_browser(url: str, why: str):
+    """The window couldn't start, so open EasyUniTrack in the default browser rather than crash.
+
+    The start-up diagnostics record it, so CI's start-up test fails: the app must open in its own window."""
+    import webbrowser
+
+    import app as backend
+    backend.STARTUP["window"] = "browser"
+    backend.WINDOW["show"] = lambda: webbrowser.open(url)     # opening EasyUniTrack again opens the tab again
+    backend.WINDOW["pick_folder"] = None                      # no window for the folder picker: paths are typed
+    log(f"ERROR: {why}; opening EasyUniTrack in the browser instead")
+    if not wait_until_ready(url):
+        log("ERROR: the local server didn't start within 30 seconds either, so EasyUniTrack can't open")
+        sys.exit(1)
+    run_in_browser(url)
+
+
 def bring_window_forward(window):
     """Restore and raise the window (used when EasyUniTrack is opened again while running)."""
     try:
@@ -200,11 +217,8 @@ def main():
 
     try:
         import webview
-    except Exception:
-        if not wait_until_ready(url):
-            print("Error: the local server didn't start.", file=sys.stderr)
-            sys.exit(1)
-        run_in_browser(url)
+    except Exception as e:
+        fall_back_to_browser(url, f"the window isn't available ({e!r})")
         return
 
     from app import STATIC, get_appearance, get_startup_settings
@@ -255,9 +269,18 @@ def main():
         except Exception as e:                      # never die silently: the splash falls back by itself
             log(f"ERROR during start-up hand-off: {e!r}")
 
+    shown = threading.Event()
+    window.events.shown += shown.set
     log("showing splash")
-    # EasyUniTrack's own browser cache, next to its data (not the shared %APPDATA%\pywebview folder)
-    webview.start(hand_over, window, private_mode=False, storage_path=str(DB_PATH.parent / "webview"))
+    try:
+        # EasyUniTrack's own browser cache, next to its data (not the shared %APPDATA%\pywebview folder)
+        webview.start(hand_over, window, private_mode=False, storage_path=str(DB_PATH.parent / "webview"))
+    except Exception as e:
+        if shown.is_set():                  # it had opened, so don't open a second copy in the browser as well
+            log(f"ERROR: the window stopped unexpectedly: {e!r}")
+            sys.exit(1)
+        fall_back_to_browser(url, f"the window couldn't start ({e!r})")     # use the browser rather than crash
+        return
     log("window closed")
 
 
