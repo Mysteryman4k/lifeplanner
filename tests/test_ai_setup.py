@@ -279,7 +279,8 @@ def test_this_pc_check(c, A):
 
 
 @pytest.mark.parametrize("ram,words", [(4, "very slow"), (8, "small local models"),
-                                       (32, "medium local models"), (0, "Couldn't check")])
+                                       (16, "medium local models"), (32, "medium local models"),
+                                       (32, "such as gpt-oss:20b"), (0, "Couldn't check")])
 def test_local_model_advice(ram, words):
     from ai.system import local_model_advice
     assert words in local_model_advice(ram)

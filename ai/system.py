@@ -30,8 +30,14 @@ def local_model_advice(ram_gb: float) -> str:
     if ram_gb < 16:
         return (f"{ram_gb:g} GB of RAM. This PC can run small local models (about 2 to 5 GB). Expect replies "
                 "to take 10 to 30 seconds.")
-    return (f"{ram_gb:g} GB of RAM. This PC can run medium local models (about 5 to 10 GB). Replies are "
-            "slower than cloud providers, and fastest with a supported graphics card.")
+    if ram_gb < 24:
+        return (f"{ram_gb:g} GB of RAM. This PC can run medium local models (about 5 to 10 GB). Replies are "
+                "slower than cloud providers, and fastest with a supported graphics card.")
+    # Mixture-of-experts models read only part of themselves for each word, so a 13 GB one replies about as
+    # fast as a 5 GB one: gpt-oss:20b wrote about 11 tokens a second on a 6-core, 32 GB laptop without a graphics card
+    return (f"{ram_gb:g} GB of RAM. This PC can run medium local models (about 5 to 10 GB), and larger ones built "
+            "to run fast, such as gpt-oss:20b (about 13 GB). Replies are slower than cloud providers, and fastest "
+            "with a supported graphics card.")
 
 
 def ollama_status(transport=None) -> dict:

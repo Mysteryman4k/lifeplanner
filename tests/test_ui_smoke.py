@@ -543,6 +543,24 @@ def test_reply_formatting_rules(server, page):
     assert md("* * *") == "<hr>" and md("-- not a rule") == "<p>-- not a rule</p>"
     assert md("- a" + nl + "- b") == "<ul><li>a</li><li>b</li></ul>"
     assert "&lt;img" in md("<img src=x onerror=alert(1)>")
+    # What real local models write (gemma4, gpt-oss): every heading level, quotes, steps with sub-points and gaps
+    assert md("#### Step 2a" + nl + "##### Detail") == "<h6>Step 2a</h6><h6>Detail</h6>"
+    assert md("> **Tip:**" + nl + "> - visit left first" + nl + "> - then the root") == \
+        "<blockquote><p><strong>Tip:</strong></p><ul><li>visit left first</li><li>then the root</li></ul></blockquote>"
+    assert md("1. Sort" + nl + "   - stable" + nl + "   Uses O(n) space" + nl + nl + "2. Pick the middle") == \
+        "<ol><li>Sort<ul><li>stable</li></ul><p>Uses O(n) space</p></li><li>Pick the middle</li></ol>"
+    assert md("1. Read" + nl + "Then this paragraph." + nl + "2. Write") == \
+        '<ol><li>Read</li></ol><p>Then this paragraph.</p><ol start="2"><li>Write</li></ol>'      # numbering goes on
+    steps = md("1. Run it:" + nl + "   ```python" + nl + "   print(1)" + nl + "   ```" + nl + "2. Check the output")
+    assert steps.startswith("<ol><li>Run it:<pre") and steps.endswith("</pre></li><li>Check the output</li></ol>")
+    assert md("**Mean of every element *except* the first.**") == \
+        "<p><strong>Mean of every element <em>except</em> the first.</strong></p>"
+    assert md("&gt; not a quote: a > b") == "<p>&amp;gt; not a quote: a &gt; b</p>"
+    assert md("| Day | Plan |" + nl + "|---|---|" + nl + "| Mon | read<br>notes |") == (
+        '<div class="chat-table-wrap"><table class="chat-table"><thead><tr><th>Day</th><th>Plan</th></tr></thead>'
+        "<tbody><tr><td>Mon</td><td>read<br>notes</td></tr></tbody></table></div>")
+    assert md("<u>Review</u> x<sup>2</sup> H<sub>2</sub>O <b>no</b> <br onclick=x>") == \
+        "<p><u>Review</u> x<sup>2</sup> H<sub>2</sub>O &lt;b&gt;no&lt;/b&gt; &lt;br onclick=x&gt;</p>"      # only bare tags
 
 
 def test_closing_write_notes_stops_the_request(server, page):
@@ -657,6 +675,8 @@ def test_maths_code_and_diagrams_in_replies(server, page):
         f + "mermaid", "sequenceDiagram", "  Student->>App: Ask", "  App-->>Student: Answer", f,
         f + "mermaid", "flowchart LR", "  A --> [[[", f,
         f + "mermaid", "graph TD", "    A[Stack: []] --> B(Push 5);", "    B --> C[Stack: [5]];", "    C --> D{Top: 5}", f,
+        f + "mermaid", "sequenceDiagram", "  Client->>Server: SYN", "  Server-->>Client: SYN-ACK; ready #9829;",
+        "  Client->>Server: ACK;", f,
         f + "mermaid", "flowchart LR", '  A["<img src=x onerror=window.pwned=1>"] --> B',
         '  click A href "javascript:window.pwned=1"', f,
         r'<img src=x onerror="window.pwned=1"> and $\href{javascript:window.pwned=1}{x}$',
@@ -675,7 +695,7 @@ def test_maths_code_and_diagrams_in_replies(server, page):
     page.keyboard.press("Enter")
     page.wait_for_selector(".chat-msg.ai .chat-tools")
     page.wait_for_selector(".chat-msg.ai .diagram-svg svg")
-    page.wait_for_function("document.querySelectorAll('.chat-msg.ai .chat-diagram:not(.drawing)').length === 5")
+    page.wait_for_function("document.querySelectorAll('.chat-msg.ai .chat-diagram:not(.drawing)').length === 6")
     msg = page.locator(".chat-msg.ai").first
 
     asked = json.loads([r for r in A.fake_net_seen if r.url.path.endswith("/chat/completions")][-1].content)
@@ -684,8 +704,11 @@ def test_maths_code_and_diagrams_in_replies(server, page):
     assert "It costs $5 and $10 at the shop." in msg.inner_text()            # prices aren't maths
     assert msg.locator(".code-head", has_text="python").count() == 1
     assert msg.locator("pre code .hljs-keyword", has_text="def").count() == 1
-    assert msg.locator(".diagram-svg svg").count() == 4                       # the injection attempt draws as text
+    assert msg.locator(".diagram-svg svg").count() == 5                       # the injection attempt draws as text
     assert msg.locator(".diagram-src summary", has_text="labels put in quotes").count() == 1   # A[Stack: [5]] repaired
+    tidied = msg.locator(".chat-diagram", has=page.locator(".diagram-src summary", has_text="semicolons in its text escaped"))
+    assert tidied.count() == 1 and "SYN-ACK; ready" in tidied.locator(".diagram-svg").inner_text()   # drawn as ;
+    assert tidied.locator(".diagram-src code").text_content().endswith("Client: SYN-ACK#59; ready #9829;\n  Client->>Server: ACK")
     broken = msg.locator(".chat-diagram", has_text="couldn't be drawn")
     assert broken.count() == 1 and broken.locator("[data-action=diagram-retry]").count() == 1
     assert page.evaluate("window.pwned") is None
@@ -697,7 +720,7 @@ def test_maths_code_and_diagrams_in_replies(server, page):
             page.screenshot(path=os.path.join(os.environ["EUT_SHOTS"], f"stage5-{name}.png"))
         page.emulate_media(color_scheme="dark")
         page.evaluate("chatRefresh()")
-        page.wait_for_function("document.querySelectorAll('.chat-msg.ai .chat-diagram:not(.drawing)').length === 5")
+        page.wait_for_function("document.querySelectorAll('.chat-msg.ai .chat-diagram:not(.drawing)').length === 6")
         page.wait_for_timeout(300)
         page.evaluate("document.querySelector('#chatLog').scrollTop = 120")
         page.screenshot(path=os.path.join(os.environ["EUT_SHOTS"], "stage5-dark.png"))
@@ -729,7 +752,7 @@ def test_maths_code_and_diagrams_in_replies(server, page):
     page.wait_for_selector("#toast.show >> text=Note saved")
     page.evaluate("openNote(state.notes[0].id)")
     page.wait_for_selector("#drawer .note-body .diagram-svg svg")
-    page.wait_for_function("document.querySelectorAll('#drawer .chat-diagram:not(.drawing)').length === 5")
+    page.wait_for_function("document.querySelectorAll('#drawer .chat-diagram:not(.drawing)').length === 6")
     assert page.locator("#drawer .katex-display").count() == 1
     assert page.locator("#drawer [data-action=diagram-retry]").count() == 0
     page.evaluate("closeDrawer()")

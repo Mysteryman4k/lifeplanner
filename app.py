@@ -1361,9 +1361,19 @@ class TaskStore:
                              [row["id"]] + [row[c] for c in cols])
 
     def subject_id(self, name: str):
+        """A subject by name, ignoring case. Students (and models) often use just the unit code or part of the
+        name ("COMP2001" for "COMP2001 Data Structures"), so whole words that match only one subject count too."""
+        wanted = " ".join(name.lower().split())
+        if not wanted:
+            return None
         with db() as conn:
-            row = conn.execute("SELECT id FROM subjects WHERE lower(name)=lower(?)", (name.strip(),)).fetchone()
-        return row["id"] if row else None
+            rows = [(r["id"], " ".join(r["name"].lower().split())) for r in conn.execute("SELECT id, name FROM subjects")]
+        exact = [sid for sid, n in rows if n == wanted]
+        if exact:
+            return exact[0]
+        words = re.compile(rf"(?<!\w){re.escape(wanted)}(?!\w)")
+        partial = [sid for sid, n in rows if words.search(n)]
+        return partial[0] if len(partial) == 1 else None
 
     def subject_names(self) -> list:
         with db() as conn:

@@ -171,3 +171,13 @@ def test_a_service_that_never_ends_a_line_gets_a_plain_error(c, A):
     A.AI_TRANSPORT["value"] = httpx.MockTransport(lambda req: httpx.Response(200, stream=Endless()))
     ev = events(c.post("/api/ai/chat", json={"messages": [{"role": "user", "content": "hi"}]}))
     assert any(e["type"] == "error" and "too long" in e["message"] for e in ev) and ev[-1]["type"] == "done"
+
+
+def test_a_model_ollama_doesnt_have_says_how_to_get_it(c, A):
+    ready(c, "ollama", "qwen3.5:9b")
+    A.net.routes["POST localhost/v1/chat/completions"] = (404, {"error": {"message": "model 'qwen3.5:9b' not found"}})
+    ev = events(c.post("/api/ai/chat", json={"messages": [{"role": "user", "content": "hi"}]}))
+    err = next(e for e in ev if e["type"] == "error")["message"]
+    assert err == ("Ollama doesn't have qwen3.5:9b on this PC. Choose a model you have in Settings, or download it "
+                   "in a terminal with: ollama pull qwen3.5:9b")
+    assert ev[-1]["type"] == "done"

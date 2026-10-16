@@ -6,6 +6,19 @@ PATCH for fixes. Pushing a tag like `v3.2.0` publishes that version's section as
 
 ## [Unreleased]
 
+### Fixed
+
+- Asking the study assistant to add a task "for COMP2001" now finds the subject "COMP2001 Data Structures": a unit code, or words from a subject's name that match only one subject, are enough. The assistant is also told your subjects' names, so it uses them
+- Replies show every heading size, quotes, numbered steps that carry on after a sub-point, paragraph or code block, and bold text with italics inside it. Before, a "####" heading or a quote's ">" could show as typed, and steps could restart at 1
+- A sequence diagram with a ";" in a message (like "SYN-ACK; connection open") now draws: semicolons are escaped automatically, as brackets in flowchart labels already were. The assistant is also asked to draw diagrams in the app's format rather than as ASCII art
+- If Ollama doesn't have the model chosen in Settings, the message names it and says how to download it, instead of asking you to check a base URL
+- The assistant is told it doesn't know your tasks until it looks them up, so it no longer lists made-up tasks. It's also told today's weekday, for requests like "due next Friday", and dates written with typographic dashes are understood
+- A few simple HTML tags some models write (line breaks in tables, underline, superscript and subscript) show as formatting rather than as tags
+
+### Changed
+
+- The "This PC" check mentions larger, fast models like gpt-oss:20b on PCs with 24 GB of memory or more
+
 ## [4.0.0-beta.2] - 2026-10-16
 
 ### Fixed

@@ -20,6 +20,17 @@ class OllamaProvider(OpenAICompatProvider):
         return ("Ollama isn't running on this PC. Start it from the Start menu, or install it from "
                 "ollama.com/download.")
 
+    def stream_chat(self, model: str, system: str, messages: list, tools: list = None):
+        self.chat_model = model                   # named in the message if Ollama doesn't have it
+        yield from super().stream_chat(model, system, messages, tools)
+
+    def raise_for_status(self, status: int, name: str):
+        model = getattr(self, "chat_model", "")
+        if status == 404 and model:               # Ollama answers 404 for a model that isn't downloaded
+            raise ProviderError(f"Ollama doesn't have {model} on this PC. Choose a model you have in Settings, or "
+                                f"download it in a terminal with: ollama pull {model}")
+        super().raise_for_status(status, name)
+
     def _native(self, method: str, path: str, json=None, timeout=None) -> dict:
         saved, self.base_url = self.base_url, self.native
         try:
