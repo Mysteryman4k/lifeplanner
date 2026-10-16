@@ -13,8 +13,10 @@ import desktop  # noqa: E402
 
 
 def test_the_exe_config_allows_the_apps_own_downloaded_dlls():
-    config = (ROOT / "EasyUniTrack.exe.config").read_text(encoding="utf-8")
-    assert '<loadFromRemoteSources enabled="true" />' in config
+    import xml.etree.ElementTree as ET
+    config = ET.parse(ROOT / "EasyUniTrack.exe.config").getroot()      # must be valid XML, or .NET ignores it
+    assert config.tag == "configuration"
+    assert config.find("runtime/loadFromRemoteSources").get("enabled") == "true"
     spec = (ROOT / "EasyUniTrack.spec").read_text(encoding="utf-8")
     assert "name='EasyUniTrack'," in spec                      # .NET reads <exe name>.config, so the names match
     # copied next to the exe (not into _internal, where .NET doesn't look)
