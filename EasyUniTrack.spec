@@ -6,6 +6,7 @@
 # Your data is stored separately in %APPDATA%\EasyUniTrack, so it's kept across updates.
 
 import os
+import shutil
 import sys
 
 # Windows "Properties > Details" info, generated from the VERSION file
@@ -33,7 +34,7 @@ a = Analysis(
     ['desktop.py'],
     pathex=[],
     binaries=[],
-    datas=[('static', 'static'), ('VERSION', '.'), ('EasyUniTrack.dotnet.config', '.')],
+    datas=[('static', 'static'), ('VERSION', '.')],
     hiddenimports=['uvicorn.loops.auto', 'uvicorn.protocols.http.auto', 'uvicorn.lifespan.on', 'updater', 'reminders', 'system_integration', 'store',
                    'ai', 'ai.routes', 'ai.terms', 'ai.keys', 'ai.system', 'ai.providers', 'ai.providers.base',
                    'ai.providers.anthropic', 'ai.providers.openai_compat', 'ai.providers.ollama', 'ai.files', 'pypdf',
@@ -67,3 +68,6 @@ coll = COLLECT(
     upx=False,
     name='EasyUniTrack',
 )
+
+# Next to the exe, where .NET Framework reads it: lets the window start from the unzipped portable version
+shutil.copy2('EasyUniTrack.exe.config', os.path.join(DISTPATH, 'EasyUniTrack', 'EasyUniTrack.exe.config'))

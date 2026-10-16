@@ -142,11 +142,12 @@ def fall_back_to_browser(url: str, why: str):
 
     import app as backend
     backend.STARTUP["window"] = "browser"
+    backend.WINDOW["show"] = lambda: webbrowser.open(url)     # opening EasyUniTrack again opens the tab again
+    backend.WINDOW["pick_folder"] = None                      # no window for the folder picker: paths are typed
     log(f"ERROR: {why}; opening EasyUniTrack in the browser instead")
     if not wait_until_ready(url):
         log("ERROR: the local server didn't start within 30 seconds either, so EasyUniTrack can't open")
         sys.exit(1)
-    backend.WINDOW["show"] = lambda: webbrowser.open(url)     # opening EasyUniTrack again opens the tab again
     run_in_browser(url)
 
 
@@ -176,34 +177,6 @@ def set_windows_app_id():
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
     except Exception as e:
         log(f"couldn't set the app id: {e!r}")
-
-
-DOTNET_CONFIG = "EasyUniTrack.dotnet.config"
-
-
-def prepare_dotnet(windows: bool = None, frozen: bool = None, bundle=None):
-    """Load .NET for the window before pywebview does, allowing EasyUniTrack's own downloaded DLLs.
-
-    The window uses .NET through pythonnet. Every file unzipped from the downloaded portable zip carries Windows'
-    "from the internet" mark, and .NET Framework refuses to load a marked DLL unless the app's configuration
-    allows it (loadFromRemoteSources). Without this the portable 4.0.0-beta.1 crashed at start. The installer's
-    files aren't marked, so it only matters for the zip. Any problem here is logged, not fatal: pywebview then
-    loads .NET itself as before."""
-    if windows is None:
-        windows = os.name == "nt"
-    if frozen is None:
-        frozen = bool(getattr(sys, "frozen", False))
-    if not (windows and frozen):
-        return
-    config = Path(bundle or getattr(sys, "_MEIPASS", Path(sys.executable).parent)) / DOTNET_CONFIG
-    if not config.is_file():
-        log(f"{DOTNET_CONFIG} is missing, so .NET starts with its defaults")
-        return
-    try:
-        import pythonnet
-        pythonnet.load("netfx", domain="EasyUniTrack", config_file=str(config))
-    except Exception as e:
-        log(f"couldn't prepare .NET for the window: {e!r}")
 
 
 def main():
@@ -242,7 +215,6 @@ def main():
     threading.Thread(target=backend.start_up_jobs, name="start-up-jobs", daemon=True).start()
     backend.start_reminders()
 
-    prepare_dotnet()
     try:
         import webview
     except Exception as e:
