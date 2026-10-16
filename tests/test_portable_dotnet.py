@@ -64,3 +64,30 @@ def test_mark_downloaded_marks_every_file(tmp_path):
     subprocess.run([sys.executable, str(ROOT / "tools" / "mark_downloaded.py"), str(src), str(tmp_path / "out")], check=True)
     for f in ("a.exe", "_internal/b.dll"):
         assert "ZoneId=3" in open(f"{tmp_path / 'out' / f}:Zone.Identifier", encoding="ascii").read()
+
+
+def test_the_browser_fallback_is_recorded_so_the_start_up_test_fails(monkeypatch):
+    import app
+    opened = []
+    monkeypatch.setattr(desktop, "wait_until_ready", lambda url: True)
+    monkeypatch.setattr(desktop, "run_in_browser", opened.append)
+    monkeypatch.setitem(app.STARTUP, "window", None)
+    monkeypatch.setitem(app.WINDOW, "show", None)
+    assert app.get_startup_status()["window"] is None
+    desktop.fall_back_to_browser("http://127.0.0.1:1/", "the window couldn't start (test)")
+    assert opened == ["http://127.0.0.1:1/"]
+    assert app.get_startup_status()["window"] == "browser"      # tools/smoke_desktop.py fails on this
+    assert app.WINDOW["show"]                                   # opening EasyUniTrack again opens the tab again
+
+
+def test_the_fallback_says_why_it_can_not_open(monkeypatch, capsys):
+    import pytest
+
+    import app
+    monkeypatch.setattr(desktop, "wait_until_ready", lambda url: False)
+    monkeypatch.setattr(desktop, "run_in_browser", lambda url: pytest.fail("opened a browser with no server"))
+    monkeypatch.setitem(app.STARTUP, "window", None)
+    with pytest.raises(SystemExit):
+        desktop.fall_back_to_browser("http://127.0.0.1:1/", "the window couldn't start (test)")
+    out = capsys.readouterr().out
+    assert "the window couldn't start (test)" in out and "didn't start within 30 seconds" in out
