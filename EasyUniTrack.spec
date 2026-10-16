@@ -33,7 +33,7 @@ a = Analysis(
     ['desktop.py'],
     pathex=[],
     binaries=[],
-    datas=[('static', 'static'), ('VERSION', '.')],
+    datas=[('static', 'static'), ('VERSION', '.'), ('EasyUniTrack.dotnet.config', '.')],
     hiddenimports=['uvicorn.loops.auto', 'uvicorn.protocols.http.auto', 'uvicorn.lifespan.on', 'updater', 'reminders', 'system_integration', 'store',
                    'ai', 'ai.routes', 'ai.terms', 'ai.keys', 'ai.system', 'ai.providers', 'ai.providers.base',
                    'ai.providers.anthropic', 'ai.providers.openai_compat', 'ai.providers.ollama', 'ai.files', 'pypdf',

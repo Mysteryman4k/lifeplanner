@@ -162,6 +162,34 @@ def set_windows_app_id():
         log(f"couldn't set the app id: {e!r}")
 
 
+DOTNET_CONFIG = "EasyUniTrack.dotnet.config"
+
+
+def prepare_dotnet(windows: bool = None, frozen: bool = None, bundle=None):
+    """Load .NET for the window before pywebview does, allowing EasyUniTrack's own downloaded DLLs.
+
+    The window uses .NET through pythonnet. Every file unzipped from the downloaded portable zip carries Windows'
+    "from the internet" mark, and .NET Framework refuses to load a marked DLL unless the app's configuration
+    allows it (loadFromRemoteSources). Without this the portable 4.0.0-beta.1 crashed at start. The installer's
+    files aren't marked, so it only matters for the zip. Any problem here is logged, not fatal: pywebview then
+    loads .NET itself as before."""
+    if windows is None:
+        windows = os.name == "nt"
+    if frozen is None:
+        frozen = bool(getattr(sys, "frozen", False))
+    if not (windows and frozen):
+        return
+    config = Path(bundle or getattr(sys, "_MEIPASS", Path(sys.executable).parent)) / DOTNET_CONFIG
+    if not config.is_file():
+        log(f"{DOTNET_CONFIG} is missing, so .NET starts with its defaults")
+        return
+    try:
+        import pythonnet
+        pythonnet.load("netfx", domain="EasyUniTrack", config_file=str(config))
+    except Exception as e:
+        log(f"couldn't prepare .NET for the window: {e!r}")
+
+
 def main():
     _redirect_output_when_windowed()
     set_windows_app_id()
@@ -198,6 +226,7 @@ def main():
     threading.Thread(target=backend.start_up_jobs, name="start-up-jobs", daemon=True).start()
     backend.start_reminders()
 
+    prepare_dotnet()
     try:
         import webview
     except Exception:
@@ -256,8 +285,15 @@ def main():
             log(f"ERROR during start-up hand-off: {e!r}")
 
     log("showing splash")
-    # EasyUniTrack's own browser cache, next to its data (not the shared %APPDATA%\pywebview folder)
-    webview.start(hand_over, window, private_mode=False, storage_path=str(DB_PATH.parent / "webview"))
+    try:
+        # EasyUniTrack's own browser cache, next to its data (not the shared %APPDATA%\pywebview folder)
+        webview.start(hand_over, window, private_mode=False, storage_path=str(DB_PATH.parent / "webview"))
+    except Exception as e:                  # the window couldn't start at all: use the browser rather than crash
+        log(f"ERROR: the window couldn't start ({e!r}); opening EasyUniTrack in the browser instead")
+        if not wait_until_ready(url):
+            sys.exit(1)
+        run_in_browser(url)
+        return
     log("window closed")
 
 
