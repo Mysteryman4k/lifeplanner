@@ -558,6 +558,8 @@ def test_reply_formatting_rules(server, page):
     assert md("&gt; not a quote: a > b") == "<p>&amp;gt; not a quote: a &gt; b</p>"
     assert md("> First part" + nl + "> continued here" + nl + ">" + nl + "> New paragraph") == \
         "<blockquote><p>First part<br>continued here</p><p>New paragraph</p></blockquote>"     # lines join, a gap splits
+    assert md("> First" + nl + "> ---" + nl + "> Second" + nl + "> ***") == \
+        "<blockquote><p>First</p><hr><p>Second</p><hr></blockquote>"                          # a rule stays a rule
     assert md("1. Inspect" + nl + "   > Check the input" + nl + "2. Continue") == \
         "<ol><li>Inspect<blockquote><p>Check the input</p></blockquote></li><li>Continue</li></ol>"
     assert md("| Day | Plan |" + nl + "|---|---|" + nl + "| Mon | read<br>notes |") == (
