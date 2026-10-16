@@ -1031,9 +1031,14 @@ function markdownLines(lines, inline, blocks) {
       continue;
     }
     if (/^\s*&gt;/.test(line)) {                   // a quote (> is escaped by now): its lines without the >
-      closeLists();
-      const inner = [];
-      for (; i < lines.length && /^\s*&gt;/.test(lines[i]); i++) inner.push(lines[i].replace(/^\s*&gt;\s?/, ''));
+      const indent = line.match(/^\s*/)[0].replace(/\t/g, '    ').length;
+      closeLists(lists.length && indent > lists[0].indent ? indent - 1 : -1);   // indented under an item: stays in it
+      const inner = [], prose = s => s.trim() && !/^\s*([-*+]|\d+[.)])\s|^#{1,6}\s|^\s*&gt;|\u0000|\|/.test(s);
+      for (; i < lines.length && /^\s*&gt;/.test(lines[i]); i++) {
+        const text = lines[i].replace(/^\s*&gt;\s?/, ''), prev = inner[inner.length - 1];
+        if (prose(text) && prev !== undefined && prose(prev)) inner[inner.length - 1] = `${prev}<br>${text.trim()}`;  // one paragraph
+        else inner.push(text);
+      }
       i--;
       out.push(`<blockquote>${markdownLines(inner, inline, blocks)}</blockquote>`);
       continue;

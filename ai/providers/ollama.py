@@ -24,12 +24,14 @@ class OllamaProvider(OpenAICompatProvider):
         self.chat_model = model                   # named in the message if Ollama doesn't have it
         yield from super().stream_chat(model, system, messages, tools)
 
-    def raise_for_status(self, status: int, name: str):
+    def raise_for_status(self, status: int, name: str, body: str = ""):
         model = getattr(self, "chat_model", "")
-        if status == 404 and model:               # Ollama answers 404 for a model that isn't downloaded
+        # A model that isn't downloaded: 404 with {"error": {"message": "model 'x' not found"}}. A wrong address is
+        # a 404 too ("404 page not found"), and keeps the message about checking the address
+        if status == 404 and model and "not found" in body and "model" in body.lower():
             raise ProviderError(f"Ollama doesn't have {model} on this PC. Choose a model you have in Settings, or "
                                 f"download it in a terminal with: ollama pull {model}")
-        super().raise_for_status(status, name)
+        super().raise_for_status(status, name, body)
 
     def _native(self, method: str, path: str, json=None, timeout=None) -> dict:
         saved, self.base_url = self.base_url, self.native

@@ -131,7 +131,7 @@ class Provider:
                                                timeout=httpx.Timeout(self.read_timeout, connect=6.0)) as r:
                 if r.status_code >= 400:
                     r.read()
-                    self.raise_for_status(r.status_code, name)
+                    self.raise_for_status(r.status_code, name, r.text[:2000])
                 for line in bounded_lines(r.iter_bytes(), name):
                     if line.startswith("data:"):
                         data = line[5:].strip()
@@ -144,7 +144,8 @@ class Provider:
         except httpx.HTTPError as e:
             raise ProviderError(f"The connection to {name} dropped ({e.__class__.__name__}). Try again.") from None
 
-    def raise_for_status(self, status: int, name: str):
+    def raise_for_status(self, status: int, name: str, body: str = ""):
+        """A plain message for an error status. body: the start of the reply, for providers that tell causes apart."""
         if status in (401, 403):
             raise ProviderError("That key wasn't accepted. Check it was copied in full, and that it's still active.")
         if status == 404:
@@ -175,7 +176,7 @@ class Provider:
         except httpx.HTTPError as e:
             raise ProviderError(f"Couldn't reach {name}: {e.__class__.__name__}.") from None
         if r.status_code >= 400:
-            self.raise_for_status(r.status_code, name)
+            self.raise_for_status(r.status_code, name, r.text[:2000])
         try:
             return r.json()
         except ValueError:

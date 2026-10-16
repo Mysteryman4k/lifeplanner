@@ -556,6 +556,10 @@ def test_reply_formatting_rules(server, page):
     assert md("**Mean of every element *except* the first.**") == \
         "<p><strong>Mean of every element <em>except</em> the first.</strong></p>"
     assert md("&gt; not a quote: a > b") == "<p>&amp;gt; not a quote: a &gt; b</p>"
+    assert md("> First part" + nl + "> continued here" + nl + ">" + nl + "> New paragraph") == \
+        "<blockquote><p>First part<br>continued here</p><p>New paragraph</p></blockquote>"     # lines join, a gap splits
+    assert md("1. Inspect" + nl + "   > Check the input" + nl + "2. Continue") == \
+        "<ol><li>Inspect<blockquote><p>Check the input</p></blockquote></li><li>Continue</li></ol>"
     assert md("| Day | Plan |" + nl + "|---|---|" + nl + "| Mon | read<br>notes |") == (
         '<div class="chat-table-wrap"><table class="chat-table"><thead><tr><th>Day</th><th>Plan</th></tr></thead>'
         "<tbody><tr><td>Mon</td><td>read<br>notes</td></tr></tbody></table></div>")

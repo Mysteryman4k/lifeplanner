@@ -181,3 +181,12 @@ def test_a_model_ollama_doesnt_have_says_how_to_get_it(c, A):
     assert err == ("Ollama doesn't have qwen3.5:9b on this PC. Choose a model you have in Settings, or download it "
                    "in a terminal with: ollama pull qwen3.5:9b")
     assert ev[-1]["type"] == "done"
+
+
+def test_a_wrong_ollama_address_keeps_the_address_message(c, A):
+    """A 404 that isn't Ollama's "model not found" (e.g. a wrong base path) mustn't send the student to ollama pull."""
+    ready(c, "ollama", "gemma4:e4b")
+    A.net.routes["POST localhost/v1/chat/completions"] = (404, "404 page not found")
+    ev = events(c.post("/api/ai/chat", json={"messages": [{"role": "user", "content": "hi"}]}))
+    err = next(e for e in ev if e["type"] == "error")["message"]
+    assert "doesn't recognise that address or model" in err and "ollama pull" not in err

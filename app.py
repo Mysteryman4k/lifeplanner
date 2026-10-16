@@ -1363,16 +1363,20 @@ class TaskStore:
     def subject_id(self, name: str):
         """A subject by name, ignoring case. Students (and models) often use just the unit code or part of the
         name ("COMP2001" for "COMP2001 Data Structures"), so whole words that match only one subject count too."""
-        wanted = " ".join(name.lower().split())
+        said = " ".join(name.split())
+        wanted = said.lower()
         if not wanted:
             return None
         with db() as conn:
-            rows = [(r["id"], " ".join(r["name"].lower().split())) for r in conn.execute("SELECT id, name FROM subjects")]
-        exact = [sid for sid, n in rows if n == wanted]
-        if exact:
-            return exact[0]
+            rows = [(r["id"], " ".join(r["name"].split())) for r in conn.execute("SELECT id, name FROM subjects")]
+        for match in ([sid for sid, n in rows if n == said],                 # as written, then ignoring case:
+                      [sid for sid, n in rows if n.lower() == wanted]):      # "Physics" and "physics" can both exist
+            if len(match) == 1:
+                return match[0]
+            if match:
+                return None                                                  # more than one: the model is shown both
         words = re.compile(rf"(?<!\w){re.escape(wanted)}(?!\w)")
-        partial = [sid for sid, n in rows if words.search(n)]
+        partial = [sid for sid, n in rows if words.search(n.lower())]
         return partial[0] if len(partial) == 1 else None
 
     def subject_names(self) -> list:

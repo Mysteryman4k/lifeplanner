@@ -309,3 +309,15 @@ def test_a_date_with_typographic_dashes_is_understood(c, fake, due):
     fake.script = [[calls(("add_task", {"title": "Revise heaps", "due_date": due}))], [{"type": "text", "text": "ok"}]]
     assert any(e["type"] == "action" for e in chat(c))
     assert tasks(c)["Revise heaps"]["due_date"] == "2026-11-03"
+
+
+def test_subjects_that_differ_only_in_case(c, fake):
+    ready(c)
+    upper = c.post("/api/subjects", json={"name": "Physics", "color": "#3B6EA8"}).json()
+    c.post("/api/subjects", json={"name": "physics", "color": "#3B6EA8"})
+    fake.script = [[calls(("add_task", {"title": "Prac", "subject": "Physics"}),
+                          ("add_task", {"title": "Exam", "subject": "PHYSICS"}))], [{"type": "text", "text": "ok"}]]
+    chat(c)
+    assert tasks(c)["Prac"]["subject_id"] == upper["id"]           # exactly as written
+    assert "Exam" not in tasks(c)                                   # either one: the model is shown both names
+    assert "isn't one of the student's subjects" in json.dumps(fake.rounds[1]["messages"])
