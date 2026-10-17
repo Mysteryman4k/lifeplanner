@@ -83,6 +83,12 @@ class Provider:
         """Tokens the model reads at once, when it's limited by a setting on this PC (Ollama); None otherwise."""
         return None
 
+    think = False                            # set for each question: the chat's Think toggle
+
+    def thinking_levels(self, model: str) -> list:
+        """How the model can think before replying, where the app controls it (Ollama); [] otherwise."""
+        return []
+
     # ── shared ──
     def client(self) -> httpx.Client:
         return httpx.Client(timeout=TIMEOUT, transport=self._transport, follow_redirects=False,

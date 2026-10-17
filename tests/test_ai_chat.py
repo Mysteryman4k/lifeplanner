@@ -190,3 +190,52 @@ def test_a_wrong_ollama_address_keeps_the_address_message(c, A):
     ev = events(c.post("/api/ai/chat", json={"messages": [{"role": "user", "content": "hi"}]}))
     err = next(e for e in ev if e["type"] == "error")["message"]
     assert "doesn't recognise that address or model" in err and "ollama pull" not in err
+
+
+# ── Think: quick replies by default; a local model thinks first only when the student turns Think on ──
+
+def ollama_thinking(A, thinking, seen):
+    """Ollama with a model whose /api/show reports `thinking` (None: says nothing); chat bodies go to `seen`."""
+    def handler(req):
+        if req.url.path == "/api/show":
+            return httpx.Response(200, json={"capabilities": ["completion", "tools"] + (["thinking"] if thinking else []),
+                                             **({"thinking": thinking} if thinking else {})})
+        seen.append(json.loads(req.content))
+        return httpx.Response(200, text=sse({"choices": [{"delta": {"content": "ok"}}]}))
+    A.AI_TRANSPORT["value"] = httpx.MockTransport(handler)
+
+
+@pytest.mark.parametrize("thinking,quick", [
+    ({"values": [False, True], "default": True}, {"reasoning_effort": "none"}),             # gemma4, qwen3.5
+    ({"values": ["low", "medium", "high"], "default": "medium"}, {"reasoning_effort": "low"}),   # gpt-oss: can't be off
+    (None, {}),                                                                              # not a thinking model
+])
+def test_quick_replies_unless_think_is_on(c, A, thinking, quick):
+    ready(c, "ollama", "local-model")
+    seen = []
+    ollama_thinking(A, thinking, seen)
+    ask = {"messages": [{"role": "user", "content": "hi"}]}
+    events(c.post("/api/ai/chat", json=ask))                                   # the setting: off by default
+    events(c.post("/api/ai/chat", json={**ask, "think": True}))                # Think on: the model's own default
+    c.put("/api/ai/settings", json={"think": True})
+    events(c.post("/api/ai/chat", json=ask))                                   # no flag sent: the saved toggle
+    events(c.post("/api/ai/chat", json={**ask, "think": False}))
+    efforts = [{k: v for k, v in body.items() if k == "reasoning_effort"} for body in seen]
+    assert efforts == [quick, {}, {}, quick]
+    older = [{"role": "user", "content": "a"}, {"role": "assistant", "content": "b"}]
+    assert c.post("/api/ai/summarise", json={"messages": older}).status_code == 200
+    assert {k: v for k, v in seen[-1].items() if k == "reasoning_effort"} == quick                   # summaries stay quick
+
+
+def test_the_think_toggle_shows_only_where_it_does_something(c, A):
+    agree(c)
+    ollama_thinking(A, {"values": [False, True], "default": True}, [])
+    s = c.put("/api/ai/settings", json={"provider": "ollama", "model": "gemma4:e4b"}).json()
+    assert s["can_think"] is True and s["think"] is False                      # quick replies by default
+    assert c.put("/api/ai/settings", json={"think": True}).json()["think"] is True
+    assert c.get("/api/ai/state").json()["think"] is True                      # kept for the next chat
+    ollama_thinking(A, None, [])
+    assert c.get("/api/ai/state").json()["can_think"] is False                 # a model that doesn't think
+    A.AI_TRANSPORT["value"] = httpx.MockTransport(lambda req: (_ for _ in ()).throw(httpx.ConnectError("down", request=req)))
+    assert c.get("/api/ai/state").json()["can_think"] is False                 # Ollama not running
+    assert c.put("/api/ai/settings", json={"provider": "anthropic", "model": "claude-haiku-5-5"}).json()["can_think"] is False

@@ -1576,3 +1576,57 @@ def test_design_refresh_details(server, page, tmp_path_factory):
             page.request.delete(f"{server}/api/code/folders/{folder['id']}", headers=tok)
         page.request.put(f"{server}/api/ai/settings", headers=tok, data={"code_enabled": False})
         page.request.post(f"{server}/api/ai/terms/withdraw", headers=tok)
+
+
+def test_think_toggle_in_the_chat(server, page):
+    """Quick replies by default. Think, next to the paperclip, lets a local model think first, and is kept."""
+    import json
+
+    import app as A
+    tok = {A.TOKEN_HEADER: A.SESSION_TOKEN}
+    terms = page.request.get(f"{server}/api/ai/terms").json()
+    page.request.post(f"{server}/api/ai/terms/agree", headers=tok,
+                      data={"version": terms["version"], "ticks": {k: True for k in terms["ticks"]}})
+    page.request.put(f"{server}/api/ai/settings", headers=tok, data={"provider": "ollama", "model": "gemma4:e4b", "think": False})
+    nl = chr(10)
+    say = lambda text: "data: " + json.dumps({"choices": [{"delta": {"content": text}}]}) + nl + nl  # noqa: E731
+    before = A.fake_net.get("POST localhost/api/show")
+    A.fake_net["POST localhost/api/show"] = (200, {"capabilities": ["completion", "tools", "thinking"],
+                                                   "thinking": {"values": [False, True], "default": True}})
+    A.fake_net["POST localhost/v1/chat/completions"] = (200, [say("Quick answer."), say("Thought it through.")])
+
+    def last_request():
+        return [json.loads(r.content) for r in A.fake_net_seen if r.url.path.endswith("/chat/completions")][-1]
+    try:
+        page.goto(f"{server}/#/study")
+        page.reload()
+        page.wait_for_selector("#chatInput")
+        page.evaluate("chatReset(); chatRefresh()")
+        toggle = page.locator(".composer [data-action=chat-think]")
+        assert toggle.get_attribute("aria-pressed") == "false" and "Quick replies" in toggle.get_attribute("title")
+        page.fill("#chatInput", "What is a heap?")
+        page.keyboard.press("Enter")
+        page.locator(".chat-msg.ai", has_text="Quick answer.").wait_for()
+        assert last_request()["reasoning_effort"] == "none"                       # quick: thinking off
+
+        with page.expect_response(lambda r: r.url.endswith("/api/ai/settings") and r.request.method == "PUT"):
+            toggle.click()
+        assert page.locator(".composer [data-action=chat-think]").get_attribute("aria-pressed") == "true"
+        assert page.request.get(f"{server}/api/ai/state").json()["think"] is True  # saved for the next chat
+        page.fill("#chatInput", "Now prove it")
+        page.keyboard.press("Enter")
+        page.locator(".chat-msg.ai", has_text="Thought it through.").wait_for()
+        assert "reasoning_effort" not in last_request()                            # the model's own default
+
+        page.reload()
+        page.wait_for_selector(".composer [data-action=chat-think][aria-pressed=true]")   # still on after a reload
+        A.fake_net["POST localhost/api/show"] = (200, {"capabilities": ["completion", "tools"]})
+        page.reload()
+        page.wait_for_selector("#chatInput")
+        assert page.locator("[data-action=chat-think]").count() == 0             # a model that doesn't think: no toggle
+    finally:
+        if before is None:
+            A.fake_net.pop("POST localhost/api/show", None)
+        else:
+            A.fake_net["POST localhost/api/show"] = before
+        page.request.put(f"{server}/api/ai/settings", headers=tok, data={"think": False})

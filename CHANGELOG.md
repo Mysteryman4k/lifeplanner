@@ -6,6 +6,10 @@ PATCH for fixes. Pushing a tag like `v3.2.0` publishes that version's section as
 
 ## [Unreleased]
 
+### Added
+
+- Quick replies from local models: models in Ollama that think before answering (like gemma4 and gpt-oss) now answer straight away, which on a PC without a graphics card cuts the wait for the first word from up to a minute to a few seconds. A Think button next to the paperclip in the chat lets the model think first when you want it to (slower, and can help with hard maths and debugging). It's remembered for your next chats, and only shows for models that can think
+
 ### Fixed
 
 - Asking the study assistant to add a task "for COMP2001" now finds the subject "COMP2001 Data Structures": a unit code, or words from a subject's name that match only one subject, are enough. The assistant is also told your subjects' names, so it uses them

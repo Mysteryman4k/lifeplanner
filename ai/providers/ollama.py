@@ -20,6 +20,37 @@ class OllamaProvider(OpenAICompatProvider):
         return ("Ollama isn't running on this PC. Start it from the Start menu, or install it from "
                 "ollama.com/download.")
 
+    # Thinking models (gemma4, qwen3.5, gpt-oss...) think before every reply by default, which on a PC without a
+    # graphics card means 20 to 60 seconds before the first word. Replies are quick unless the student turns on
+    # Think in the chat: then the model's own default applies
+    def show(self, model: str) -> dict:
+        """Ollama's details for the model (capabilities, thinking levels), asked once per provider object."""
+        shown = self.__dict__.setdefault("_shown", {})
+        if model not in shown:
+            shown[model] = self._native("POST", "/api/show", json={"model": model})
+        return shown[model]
+
+    def thinking_levels(self, model: str) -> list:
+        """How the model can think: [False, True] (off or on) or ["low", "medium", "high"]; [] if it doesn't,
+        or this Ollama doesn't say."""
+        try:
+            thinking = self.show(model).get("thinking")
+        except ProviderError:
+            return []
+        values = thinking.get("values") if isinstance(thinking, dict) else None
+        return list(values) if isinstance(values, list) else []
+
+    def request_options(self, model: str) -> dict:
+        """A quick reply: thinking off, or the least of it when it can't be turned off (gpt-oss: low)."""
+        if self.think:
+            return {}
+        levels = self.thinking_levels(model)
+        if any(v is False for v in levels):
+            return {"reasoning_effort": "none"}
+        named = [v for v in levels if isinstance(v, str)]
+        least = next((v for v in ("minimal", "low") if v in named), named[0] if named else None)
+        return {"reasoning_effort": least} if least else {}
+
     def stream_chat(self, model: str, system: str, messages: list, tools: list = None):
         self.chat_model = model                   # named in the message if Ollama doesn't have it
         yield from super().stream_chat(model, system, messages, tools)
@@ -55,7 +86,7 @@ class OllamaProvider(OpenAICompatProvider):
     def supports_tools(self, model: str):
         """Newer Ollama versions report each model's capabilities."""
         try:
-            caps = self._native("POST", "/api/show", json={"model": model}).get("capabilities")
+            caps = self.show(model).get("capabilities")
         except ProviderError:
             return None
         return None if caps is None else "tools" in caps

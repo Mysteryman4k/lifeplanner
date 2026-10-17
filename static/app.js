@@ -1288,7 +1288,8 @@ function chatMessage(m, i) {
   const live = c.streaming && i === c.messages.length - 1;
   const last = !live && i === c.messages.length - 1 && !c.streaming;
   return `<div class="chat-msg ai ${live ? 'live' : ''} ${last ? 'last' : ''}" data-i="${i}">
-    <div class="chat-text">${m.content ? chatMarkdown(m.content) : (live ? `<span class="chat-typing" aria-label="Thinking"><i></i><i></i><i></i></span>${c.file ? '<span class="muted small"> Reading the file…</span>' : ''}` : '')}</div>
+    <div class="chat-text">${m.content ? chatMarkdown(m.content) : (live ? `<span class="chat-typing" aria-label="Thinking"><i></i><i></i><i></i></span>${c.file ? '<span class="muted small"> Reading the file…</span>'
+      : m.think ? '<span class="muted small"> Thinking first…</span>' : ''}` : '')}</div>
     ${(m.cards || []).map((card, n) => chatCard(card, i, n)).join('')}
     ${m.error ? `<div class="chat-error">${icon('alert', 15)}${esc(m.error)}</div>` : ''}
     ${m.stopped ? '<div class="small muted">Stopped.</div>' : ''}
@@ -1349,6 +1350,9 @@ function chatShell(inPanel) {
         <div class="composer-bar">
           <button class="icon-btn sm chat-attach" type="button" data-action="chat-attach" aria-label="Attach a file" title="Attach a PDF, PowerPoint (.pptx), Word (.docx) or text file. You can also drop one here." ${c.streaming || c.attaching ? 'disabled' : ''}>${icon('paperclip', 16)}</button>
           <input type="file" id="chatFile" accept="${FILE_TYPES}" hidden>
+          ${a.can_think ? `<button class="think-toggle ${a.think ? 'on' : ''}" type="button" data-action="chat-think" aria-pressed="${a.think ? 'true' : 'false'}"
+            title="${a.think ? 'Think first is on: the model thinks before it answers. Slower, and can help with hard maths and debugging. Click for quick replies.'
+              : 'Quick replies. Click to let the model think before it answers: slower, and can help with hard maths and debugging.'}" ${c.streaming ? 'disabled' : ''}>${icon('bulb', 14)}Think</button>` : ''}
           <span class="composer-hint">Enter to send · Shift+Enter for a new line</span>
           ${c.streaming
             ? `<button class="send-btn stop" type="button" data-action="chat-stop" aria-label="Stop" title="Stop">${icon('stop', 15)}</button>`
@@ -1438,7 +1442,8 @@ async function chatSend(text, extra = {}) {
     if (c.streaming || c.code !== folderId || !current()) return;
     codeMarkErrors(text);
   }
-  c.messages.push({ role: 'user', content: text }, { role: 'assistant', content: '' });
+  const think = !!(state.ai?.can_think && state.ai?.think);        // the Think toggle; quick replies otherwise
+  c.messages.push({ role: 'user', content: text }, { role: 'assistant', content: '', ...(think ? { think } : {}) });
   const asked = c.messages[c.messages.length - 2];
   c.streaming = true;
   c.controller = new AbortController();
@@ -1459,9 +1464,9 @@ async function chatSend(text, extra = {}) {
     const file = c.file ? { attachment: { name: c.file.name, included: chatFileIncluded(c.file), text: chatFileText(c.file) } } : {};
     if (c.summary && convo.some(m => m.summarised)) file.summary = c.summary;   // in place of the summarised ones
     const payload = folderId
-      ? { mode: 'code', format: c.format || 'auto', messages: history, ...file,
+      ? { mode: 'code', format: c.format || 'auto', messages: history, think, ...file,
           code: { folder_id: folderId, files: (codeState().files || []).map(f => f.path), ...extra } }
-      : { mode: extra.mode || c.mode, format: c.format || 'auto', messages: history, ...file, ...(c.taskId ? { task_id: c.taskId } : {}), ...(extra.action ? { action: extra.action } : {}) };
+      : { mode: extra.mode || c.mode, format: c.format || 'auto', messages: history, think, ...file, ...(c.taskId ? { task_id: c.taskId } : {}), ...(extra.action ? { action: extra.action } : {}) };
     await streamChat(payload, c.controller.signal, ev => {
       if (!current()) return false;
       if (ev.type === 'files') { asked.files = ev.files; asked.leftOut = ev.left_out; chatRefresh(); return true; }
@@ -2777,6 +2782,14 @@ const ACTIONS = {
     renderNav();                                    // Recent chats no longer marks the old one as open
   },
   'chat-mode'(el) { if (!chatState().streaming) { chatState().mode = el.dataset.mode; chatRefresh(); } },
+  async 'chat-think'() {                          // kept as a setting, so the next chat starts the same way
+    if (chatState().streaming || !state.ai) return;
+    const on = !state.ai.think;
+    state.ai = { ...state.ai, think: on };
+    chatRefresh({ keepDraft: true });
+    try { await aiSettings({ think: on }); }
+    catch (e) { state.ai = { ...state.ai, think: !on }; chatRefresh({ keepDraft: true }); toast(e.message, 'error'); }
+  },
   'chat-attach'() {
     const input = $('#chatFile', chatRoot() || document);
     if (input) { input.value = ''; input.click(); }
