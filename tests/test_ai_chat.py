@@ -239,3 +239,34 @@ def test_the_think_toggle_shows_only_where_it_does_something(c, A):
     A.AI_TRANSPORT["value"] = httpx.MockTransport(lambda req: (_ for _ in ()).throw(httpx.ConnectError("down", request=req)))
     assert c.get("/api/ai/state").json()["can_think"] is False                 # Ollama not running
     assert c.put("/api/ai/settings", json={"provider": "anthropic", "model": "claude-haiku-5-5"}).json()["can_think"] is False
+
+
+def test_model_details_are_kept_so_a_stuck_ollama_cant_hold_up_settings(c, A):
+    """The AI state asks Ollama about the model (for Think). Answers are kept for a minute and a failure for a few
+    seconds, with a short timeout, so an Ollama that accepts connections but never answers can't stall each refresh."""
+    from ai.providers.ollama import OllamaProvider
+    agree(c)
+    asked = []
+
+    def stuck(req):
+        asked.append(req.url.path)
+        raise httpx.ReadTimeout("no answer", request=req)
+    A.AI_TRANSPORT["value"] = httpx.MockTransport(stuck)
+    c.put("/api/ai/settings", json={"provider": "ollama", "model": "gemma4:e4b"})
+    for _ in range(3):
+        assert c.get("/api/ai/state").json()["can_think"] is False
+    assert asked == ["/api/show"] and OllamaProvider.SHOW_TIMEOUT.read <= 5
+
+    seen = []
+    ollama_thinking(A, {"values": [False, True], "default": True}, seen)
+    shows, ollama = [], A.AI_TRANSPORT["value"].handler
+
+    def counting(req):
+        if req.url.path == "/api/show":
+            shows.append(req)
+        return ollama(req)
+    A.AI_TRANSPORT["value"] = httpx.MockTransport(counting)
+    for _ in range(3):
+        assert c.get("/api/ai/state").json()["can_think"] is True
+    events(c.post("/api/ai/chat", json={"messages": [{"role": "user", "content": "hi"}]}))
+    assert len(shows) == 1 and seen[-1]["reasoning_effort"] == "none"          # asked once, used by the chat too

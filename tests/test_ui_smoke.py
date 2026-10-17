@@ -1583,6 +1583,8 @@ def test_think_toggle_in_the_chat(server, page):
     import json
 
     import app as A
+    from ai.providers.ollama import OllamaProvider
+    OllamaProvider.SHOWN.clear()                         # model details are kept for a minute: start fresh
     tok = {A.TOKEN_HEADER: A.SESSION_TOKEN}
     terms = page.request.get(f"{server}/api/ai/terms").json()
     page.request.post(f"{server}/api/ai/terms/agree", headers=tok,
@@ -1594,6 +1596,7 @@ def test_think_toggle_in_the_chat(server, page):
     A.fake_net["POST localhost/api/show"] = (200, {"capabilities": ["completion", "tools", "thinking"],
                                                    "thinking": {"values": [False, True], "default": True}})
     A.fake_net["POST localhost/v1/chat/completions"] = (200, [say("Quick answer."), say("Thought it through.")])
+    OllamaProvider.SHOWN.clear()                         # the settings call above asked before this model could think
 
     def last_request():
         return [json.loads(r.content) for r in A.fake_net_seen if r.url.path.endswith("/chat/completions")][-1]
@@ -1620,7 +1623,15 @@ def test_think_toggle_in_the_chat(server, page):
 
         page.reload()
         page.wait_for_selector(".composer [data-action=chat-think][aria-pressed=true]")   # still on after a reload
+
+        saves = []
+        page.on("request", lambda r: saves.append(r) if r.method == "PUT" and r.url.endswith("/api/ai/settings") else None)
+        page.evaluate("Promise.all([ACTIONS['chat-think'](), ACTIONS['chat-think']()])")    # a double click
+        page.wait_for_selector(".composer [data-action=chat-think][aria-pressed=false]:not([disabled])")
+        assert len(saves) == 1 and page.request.get(f"{server}/api/ai/state").json()["think"] is False
+
         A.fake_net["POST localhost/api/show"] = (200, {"capabilities": ["completion", "tools"]})
+        OllamaProvider.SHOWN.clear()
         page.reload()
         page.wait_for_selector("#chatInput")
         assert page.locator("[data-action=chat-think]").count() == 0             # a model that doesn't think: no toggle
@@ -1629,4 +1640,5 @@ def test_think_toggle_in_the_chat(server, page):
             A.fake_net.pop("POST localhost/api/show", None)
         else:
             A.fake_net["POST localhost/api/show"] = before
+        OllamaProvider.SHOWN.clear()
         page.request.put(f"{server}/api/ai/settings", headers=tok, data={"think": False})

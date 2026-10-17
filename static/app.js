@@ -1352,7 +1352,7 @@ function chatShell(inPanel) {
           <input type="file" id="chatFile" accept="${FILE_TYPES}" hidden>
           ${a.can_think ? `<button class="think-toggle ${a.think ? 'on' : ''}" type="button" data-action="chat-think" aria-pressed="${a.think ? 'true' : 'false'}"
             title="${a.think ? 'Think first is on: the model thinks before it answers. Slower, and can help with hard maths and debugging. Click for quick replies.'
-              : 'Quick replies. Click to let the model think before it answers: slower, and can help with hard maths and debugging.'}" ${c.streaming ? 'disabled' : ''}>${icon('bulb', 14)}Think</button>` : ''}
+              : 'Quick replies. Click to let the model think before it answers: slower, and can help with hard maths and debugging.'}" ${c.streaming || state.thinkSaving ? 'disabled' : ''}>${icon('bulb', 14)}Think</button>` : ''}
           <span class="composer-hint">Enter to send · Shift+Enter for a new line</span>
           ${c.streaming
             ? `<button class="send-btn stop" type="button" data-action="chat-stop" aria-label="Stop" title="Stop">${icon('stop', 15)}</button>`
@@ -2783,12 +2783,14 @@ const ACTIONS = {
   },
   'chat-mode'(el) { if (!chatState().streaming) { chatState().mode = el.dataset.mode; chatRefresh(); } },
   async 'chat-think'() {                          // kept as a setting, so the next chat starts the same way
-    if (chatState().streaming || !state.ai) return;
+    if (chatState().streaming || !state.ai || state.thinkSaving) return;
     const on = !state.ai.think;
     state.ai = { ...state.ai, think: on };
+    state.thinkSaving = true;                     // one save at a time, so the last click is what's kept
     chatRefresh({ keepDraft: true });
     try { await aiSettings({ think: on }); }
-    catch (e) { state.ai = { ...state.ai, think: !on }; chatRefresh({ keepDraft: true }); toast(e.message, 'error'); }
+    catch (e) { state.ai = { ...state.ai, think: !on }; toast(e.message, 'error'); }
+    finally { state.thinkSaving = false; chatRefresh({ keepDraft: true }); }
   },
   'chat-attach'() {
     const input = $('#chatFile', chatRoot() || document);

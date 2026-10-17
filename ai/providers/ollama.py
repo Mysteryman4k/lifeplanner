@@ -1,5 +1,7 @@
 """Ollama on this PC. Chat goes through its OpenAI-compatible API (stage 2); the model list and tool
 support come from Ollama's own API, which knows what's actually installed."""
+import time
+
 import httpx
 
 from .base import ProviderError
@@ -23,12 +25,27 @@ class OllamaProvider(OpenAICompatProvider):
     # Thinking models (gemma4, qwen3.5, gpt-oss...) think before every reply by default, which on a PC without a
     # graphics card means 20 to 60 seconds before the first word. Replies are quick unless the student turns on
     # Think in the chat: then the model's own default applies
+    # A model's details are needed for every question and every refresh of the AI settings (the Think toggle), so
+    # they're kept for a minute per Ollama address. A failed answer is kept for 10 s and the timeout is short, so an
+    # Ollama that accepts connections but doesn't answer can only hold up one request in a while
+    SHOWN: dict = {}
+    SHOW_TTL, SHOW_FAILED_TTL, SHOW_TIMEOUT = 60.0, 10.0, httpx.Timeout(4.0, connect=2.0)
+
     def show(self, model: str) -> dict:
-        """Ollama's details for the model (capabilities, thinking levels), asked once per provider object."""
-        shown = self.__dict__.setdefault("_shown", {})
-        if model not in shown:
-            shown[model] = self._native("POST", "/api/show", json={"model": model})
-        return shown[model]
+        """Ollama's details for the model: capabilities and thinking levels."""
+        key = (self.native, model, self._transport)          # tests give each fake Ollama its own transport
+        hit = OllamaProvider.SHOWN.get(key)
+        if hit and time.monotonic() < hit[0]:
+            if isinstance(hit[1], ProviderError):
+                raise hit[1]
+            return hit[1]
+        try:
+            data = self._native("POST", "/api/show", json={"model": model}, timeout=self.SHOW_TIMEOUT)
+        except ProviderError as e:
+            OllamaProvider.SHOWN[key] = (time.monotonic() + self.SHOW_FAILED_TTL, e)
+            raise
+        OllamaProvider.SHOWN[key] = (time.monotonic() + self.SHOW_TTL, data)
+        return data
 
     def thinking_levels(self, model: str) -> list:
         """How the model can think: [False, True] (off or on) or ["low", "medium", "high"]; [] if it doesn't,
