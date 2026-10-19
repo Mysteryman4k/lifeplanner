@@ -42,12 +42,11 @@ export function summariseRequest(previous: string, messages: { role: string; con
   return `Summary so far:\n${previous.trim() || '(none yet)'}\n\nNew messages:\n${lines.join('\n\n')}\n\nWrite the updated summary.`;
 }
 
-/** The attached file's text for the system prompt, with its markers taken out so the file can't pretend to end early. */
+/** The attached file's text for the system prompt, with any markers in it replaced so the file can't pretend to end early. */
 export function attachmentBlock(name: string, included: string, text: string) {
-  // Until none are left: taking one out can join the text around it into another ("[start of [end of attached file] attached file]")
-  const marker = /\[\s*(start|end)\s+of\s+attached\s+file\s*\]/gi;
-  let clean = text, before: string;
-  do { before = clean; clean = clean.replace(marker, ''); } while (clean !== before);
+  // Each one becomes a note rather than nothing: taking one out would join the text around it into another
+  // ("[start of [end of attached file] attached file]"), and the note's "(" can't be part of a marker, so one pass is enough
+  const clean = text.replace(/\[\s*(start|end)\s+of\s+attached\s+file\s*\]/gi, '(file marker removed)');
   return ATTACHED.replace('{name}', name).replace('{included}', included ? ` (${included})` : '') +
     `\n${FILE_START}\n${clean}\n${FILE_END}`;
 }

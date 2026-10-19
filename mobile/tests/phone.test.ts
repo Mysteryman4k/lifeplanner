@@ -86,6 +86,26 @@ describe('the browser preview\'s saved file', () => {
     expect(saves).toBe(4);
     expect(await db.tx(() => db.run('INSERT INTO t VALUES (NULL, 1)'))).toMatchObject({ changes: 1 });
   });
+
+  it('tries again after a save that failed, even if only reads come next', async () => {
+    const SQL = await (await import('sql.js')).default();
+    const { SqlJsDriver } = await import('../src/db/sqljs');
+    const { Database } = await import('../src/db/db');
+    const saved: Uint8Array[] = [];
+    let fail = false;
+    const db = new Database(await SqlJsDriver.open(SQL, null, async bytes => {
+      if (fail) throw new Error('storage full');
+      saved.push(bytes);
+    }));
+    await db.tx(() => db.exec('CREATE TABLE t (x)'));
+    fail = true;
+    await expect(db.tx(() => db.run('INSERT INTO t VALUES (1)'))).rejects.toThrow('storage full');
+    fail = false;
+    await db.tx(() => db.all('SELECT * FROM t'));
+    expect(saved).toHaveLength(2);
+    const reopened = new SQL.Database(saved[1]);
+    expect(reopened.exec('SELECT x FROM t')[0].values).toEqual([[1]]);            // the row written when saving failed
+  });
 });
 
 describe('backups on the phone', () => {
@@ -189,6 +209,26 @@ describe('streamed requests through the Android plugin', async () => {
     await expect(res.text()).rejects.toThrow(/abort/i);
     listeners.chunk.forEach(f => f({ id: lastId, data: btoa('late') }));
     listeners.end.forEach(f => f({ id: lastId, error: 'network' }));
+    expect(doFetch.buffered()).toBe(0);
+  });
+
+  it('stops a request that was stopped while it was still starting', async () => {
+    const cancelled: string[] = [];
+    let reply!: (head: { status: number; headers: Record<string, string> }) => void;
+    let known = false;                                    // whether the plugin has the request yet
+    const plugin = {
+      async addListener() { return { remove: async () => undefined }; },
+      async cancel({ id }: { id: string }) { if (known) cancelled.push(id); },
+      start: () => new Promise(resolve => { reply = h => { known = true; resolve(h); }; }),
+    };
+    const doFetch = nativeStreamFetch(plugin as any);
+    const ctrl = new AbortController();
+    const pending = doFetch('https://x.test', { signal: ctrl.signal });
+    await new Promise(r => setTimeout(r, 0));
+    ctrl.abort();                                         // the plugin doesn't know the request yet: this cancel misses
+    reply({ status: 200, headers: {} });
+    await expect(pending).rejects.toThrow(/abort/i);
+    expect(cancelled).toHaveLength(1);                   // so it's cancelled again once it does
     expect(doFetch.buffered()).toBe(0);
   });
 

@@ -54,6 +54,14 @@ export function nativeStreamFetch(plugin: StreamFetchPlugin = registerPlugin<Str
       if (signal?.aborted) throw new DOMException('The user aborted a request.', 'AbortError');
       throw new TypeError(`Network request failed (${(e as Error)?.message ?? 'network'})`);
     }
+    if (signal?.aborted) {
+      // Stopped while starting: the cancel then may have come before the plugin knew the request. It does now
+      starting.delete(id);
+      early.delete(id);
+      signal.removeEventListener('abort', onAbort);
+      void plugin.cancel({ id });
+      throw new DOMException('The user aborted a request.', 'AbortError');
+    }
     const body = new ReadableStream<Uint8Array>({
       start(c) {
         starting.delete(id);

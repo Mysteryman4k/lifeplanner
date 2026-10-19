@@ -37,6 +37,7 @@ export class SqlJsDriver implements Driver {
   async rollback() { this.db.exec('ROLLBACK'); }
 
   private savedSchema = -1;
+  private unsaved = false;                               // a save failed after export() had reset total_changes()
 
   async saved() {
     if (!this.onSave) return;
@@ -44,8 +45,10 @@ export class SqlJsDriver implements Driver {
     // count new tables or columns, which change the schema version instead. Neither changed: nothing to save
     const changes = Number(this.db.exec('SELECT total_changes()')[0].values[0][0]);
     const schema = Number(this.db.exec('PRAGMA schema_version')[0].values[0][0]);
-    if (!changes && schema === this.savedSchema) return;
+    if (!changes && !this.unsaved && schema === this.savedSchema) return;
+    this.unsaved = true;
     await this.onSave(this.bytes());
+    this.unsaved = false;
     this.savedSchema = schema;
   }
 
