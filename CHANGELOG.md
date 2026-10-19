@@ -6,6 +6,10 @@ PATCH for fixes. Pushing a tag like `v3.2.0` publishes that version's section as
 
 ## [Unreleased]
 
+## [4.0.0-beta.3] - 2026-10-19
+
+The third beta of version 4. Installed copies don't update to betas: download it from this page if you'd like to try it. Your data is backed up automatically before version 4 first opens it.
+
 ### Added
 
 - Quick replies from local models: models in Ollama that think before answering (like gemma4 and gpt-oss) now answer straight away, which on a PC without a graphics card cuts the wait for the first word from up to a minute to a few seconds. A Think button next to the paperclip in the chat lets the model think first when you want it to (slower, and can help with hard maths and debugging). It's remembered for your next chats, and only shows for models that can think
