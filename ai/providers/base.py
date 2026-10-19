@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 import httpx
 
 TIMEOUT = httpx.Timeout(20.0, connect=6.0)
+CUT_OFF = "The reply stopped at its length limit. Ask the assistant to carry on, or to be shorter."
 CREDENTIAL_HEADERS = {"authorization", "x-api-key"}
 MAX_SSE_LINE = 1024 * 1024        # a streamed line longer than this means a broken service
 LOOPBACK = {"localhost", "127.0.0.1", "::1", "[::1]"}
@@ -155,6 +156,10 @@ class Provider:
         if status in (401, 403):
             raise ProviderError("That key wasn't accepted. Check it was copied in full, and that it's still active.")
         if status == 404:
+            explained = self.service_message(body)
+            if "model" in explained.lower():      # Anthropic: {"error": {"message": "model: claude-x"}}
+                raise ProviderError(f"{name} doesn't recognise the model chosen in Settings ({explained}). "
+                                    "Choose another one in Settings.")
             raise ProviderError(f"{name} doesn't recognise that address or model. Check the base URL and model.")
         if status == 429:
             raise ProviderError(f"{name} says you've hit a rate or spending limit. Wait a little, or check your "

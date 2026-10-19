@@ -133,11 +133,12 @@ def register(app, get_setting, put_setting, transport_hook=lambda: None, task_co
         return s
 
     def can_think(s: AISettings) -> bool:
-        """Whether the chat shows the Think toggle: a local model that can think before replying (Ollama says
-        which). Cloud models answer quickly either way."""
-        if s.provider != "ollama" or not s.model:
+        """Whether the chat shows the Think toggle: a model whose thinking the app can turn up or down. Ollama
+        and Anthropic say which models can (Claude 5 models think by default; quick replies turn it down)."""
+        if s.provider not in ("ollama", "anthropic") or not s.model:
             return False
-        return bool(get_provider("ollama", transport=transport_hook()).thinking_levels(s.model))
+        key = keys.get(s.provider) if s.provider == "anthropic" else None
+        return bool(get_provider(s.provider, key=key, transport=transport_hook()).thinking_levels(s.model))
 
     def public_state(s: AISettings) -> dict:
         ok = agreed(s)

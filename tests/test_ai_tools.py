@@ -244,29 +244,49 @@ def sse(*objs):
     return "".join(f"data: {json.dumps(o)}\n\n" for o in objs)
 
 
+HAIKU_5_5 = {"id": "claude-haiku-5-5", "capabilities": {      # what the Models API says (October 2026)
+    "thinking": {"supported": True, "types": {"enabled": {"supported": False}, "adaptive": {"supported": True},
+                                              "disabled": {"supported": True}, "between_tools": {"supported": False}}},
+    "effort": {"supported": True, "low": {"supported": True}}}}
+
+
 def test_anthropic_tool_use_round_trip(c, A):
+    """Claude 5 models think by default. Quick replies turn it off; a thinking block that does come back with a
+    tool call is passed back complete and unchanged, as the API requires."""
+    from ai.providers.anthropic import AnthropicProvider
+    AnthropicProvider.MODELS.clear()
     ready(c, "anthropic", "claude-haiku-5-5")
     c.put("/api/ai/key", json={"provider": "anthropic", "key": "sk-ant-12345678"})
     bodies = []
     first = sse({"type": "message_start", "message": {"usage": {"input_tokens": 20}}},
-                {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
-                {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Adding it. "}},
-                {"type": "content_block_start", "index": 1, "content_block": {"type": "tool_use", "id": "tu_1", "name": "add_task"}},
-                {"type": "content_block_delta", "index": 1, "delta": {"type": "input_json_delta", "partial_json": '{"title": "Ess'}},
-                {"type": "content_block_delta", "index": 1, "delta": {"type": "input_json_delta", "partial_json": 'ay plan"}'}},
-                {"type": "message_delta", "usage": {"output_tokens": 9}})
+                {"type": "content_block_start", "index": 0, "content_block": {"type": "thinking", "thinking": ""}},
+                {"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": "Add it."}},
+                {"type": "content_block_delta", "index": 0, "delta": {"type": "signature_delta", "signature": "sig=="}},
+                {"type": "content_block_start", "index": 1, "content_block": {"type": "redacted_thinking", "data": "enc"}},
+                {"type": "content_block_start", "index": 2, "content_block": {"type": "text", "text": ""}},
+                {"type": "content_block_delta", "index": 2, "delta": {"type": "text_delta", "text": "Adding it. "}},
+                {"type": "content_block_start", "index": 3, "content_block": {"type": "tool_use", "id": "tu_1", "name": "add_task"}},
+                {"type": "content_block_delta", "index": 3, "delta": {"type": "input_json_delta", "partial_json": '{"title": "Ess'}},
+                {"type": "content_block_delta", "index": 3, "delta": {"type": "input_json_delta", "partial_json": 'ay plan"}'}},
+                {"type": "message_delta", "delta": {"stop_reason": "tool_use"}, "usage": {"output_tokens": 9}})
     second = sse({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Done."}})
 
     def handler(req):
+        if req.url.path == "/v1/models/claude-haiku-5-5":
+            return httpx.Response(200, json=HAIKU_5_5)
         bodies.append(json.loads(req.content))
         return httpx.Response(200, text=first if len(bodies) == 1 else second)
     A.AI_TRANSPORT["value"] = httpx.MockTransport(handler)
     ev = chat(c, "add an essay plan task")
     assert "".join(e.get("text", "") for e in ev) == "Adding it. \n\nDone."      # its own paragraph after the tool call
     assert any(e["type"] == "action" for e in ev) and "Essay plan" in tasks(c)
-    assert bodies[0]["tools"][0]["input_schema"]
+    assert bodies[0]["tools"][0]["input_schema"] and bodies[0]["thinking"] == {"type": "disabled"}   # quick reply
+    assert bodies[0]["max_tokens"] >= 8192
     assistant, results = bodies[1]["messages"][-2:]
-    assert assistant["content"][1] == {"type": "tool_use", "id": "tu_1", "name": "add_task", "input": {"title": "Essay plan"}}
+    assert assistant["content"] == [{"type": "thinking", "thinking": "Add it.", "signature": "sig=="},
+                                    {"type": "redacted_thinking", "data": "enc"},
+                                    {"type": "text", "text": "Adding it. "},
+                                    {"type": "tool_use", "id": "tu_1", "name": "add_task", "input": {"title": "Essay plan"}}]
     assert results["content"][0]["tool_use_id"] == "tu_1" and "Done: Add" in results["content"][0]["content"]
 
 
