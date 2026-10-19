@@ -1,5 +1,7 @@
 """Ollama on this PC. Chat goes through its OpenAI-compatible API (stage 2); the model list and tool
 support come from Ollama's own API, which knows what's actually installed."""
+import time
+
 import httpx
 
 from .base import ProviderError
@@ -19,6 +21,65 @@ class OllamaProvider(OpenAICompatProvider):
     def unreachable_message(self) -> str:
         return ("Ollama isn't running on this PC. Start it from the Start menu, or install it from "
                 "ollama.com/download.")
+
+    # Thinking models (gemma4, qwen3.5, gpt-oss...) think before every reply by default, which on a PC without a
+    # graphics card means 20 to 60 seconds before the first word. Replies are quick unless the student turns on
+    # Think in the chat: then the model's own default applies
+    # A model's details are needed for every question and every refresh of the AI settings (the Think toggle), so
+    # they're kept for a minute per Ollama address. A failed answer is kept for 10 s and the timeout is short, so an
+    # Ollama that accepts connections but doesn't answer can only hold up one request in a while
+    SHOWN: dict = {}
+    SHOW_TTL, SHOW_FAILED_TTL, SHOW_TIMEOUT = 60.0, 10.0, httpx.Timeout(4.0, connect=2.0)
+
+    def show(self, model: str) -> dict:
+        """Ollama's details for the model: capabilities and thinking levels."""
+        key = (self.native, model, self._transport)          # tests give each fake Ollama its own transport
+        hit = OllamaProvider.SHOWN.get(key)
+        if hit and time.monotonic() < hit[0]:
+            if isinstance(hit[1], ProviderError):
+                raise hit[1]
+            return hit[1]
+        try:
+            data = self._native("POST", "/api/show", json={"model": model}, timeout=self.SHOW_TIMEOUT)
+        except ProviderError as e:
+            OllamaProvider.SHOWN[key] = (time.monotonic() + self.SHOW_FAILED_TTL, e)
+            raise
+        OllamaProvider.SHOWN[key] = (time.monotonic() + self.SHOW_TTL, data)
+        return data
+
+    def thinking_levels(self, model: str) -> list:
+        """How the model can think: [False, True] (off or on) or ["low", "medium", "high"]; [] if it doesn't,
+        or this Ollama doesn't say."""
+        try:
+            thinking = self.show(model).get("thinking")
+        except ProviderError:
+            return []
+        values = thinking.get("values") if isinstance(thinking, dict) else None
+        return list(values) if isinstance(values, list) else []
+
+    def request_options(self, model: str) -> dict:
+        """A quick reply: thinking off, or the least of it when it can't be turned off (gpt-oss: low)."""
+        if self.think:
+            return {}
+        levels = self.thinking_levels(model)
+        if any(v is False for v in levels):
+            return {"reasoning_effort": "none"}
+        named = [v for v in levels if isinstance(v, str)]
+        least = next((v for v in ("minimal", "low") if v in named), named[0] if named else None)
+        return {"reasoning_effort": least} if least else {}
+
+    def stream_chat(self, model: str, system: str, messages: list, tools: list = None):
+        self.chat_model = model                   # named in the message if Ollama doesn't have it
+        yield from super().stream_chat(model, system, messages, tools)
+
+    def raise_for_status(self, status: int, name: str, body: str = ""):
+        model = getattr(self, "chat_model", "")
+        # A model that isn't downloaded: 404 with {"error": {"message": "model 'x' not found"}}. A wrong address is
+        # a 404 too ("404 page not found"), and keeps the message about checking the address
+        if status == 404 and model and "not found" in body and "model" in body.lower():
+            raise ProviderError(f"Ollama doesn't have {model} on this PC. Choose a model you have in Settings, or "
+                                f"download it in a terminal with: ollama pull {model}")
+        super().raise_for_status(status, name, body)
 
     def _native(self, method: str, path: str, json=None, timeout=None) -> dict:
         saved, self.base_url = self.base_url, self.native
@@ -42,7 +103,7 @@ class OllamaProvider(OpenAICompatProvider):
     def supports_tools(self, model: str):
         """Newer Ollama versions report each model's capabilities."""
         try:
-            caps = self._native("POST", "/api/show", json={"model": model}).get("capabilities")
+            caps = self.show(model).get("capabilities")
         except ProviderError:
             return None
         return None if caps is None else "tools" in caps

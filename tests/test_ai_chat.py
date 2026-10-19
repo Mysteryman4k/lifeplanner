@@ -171,3 +171,102 @@ def test_a_service_that_never_ends_a_line_gets_a_plain_error(c, A):
     A.AI_TRANSPORT["value"] = httpx.MockTransport(lambda req: httpx.Response(200, stream=Endless()))
     ev = events(c.post("/api/ai/chat", json={"messages": [{"role": "user", "content": "hi"}]}))
     assert any(e["type"] == "error" and "too long" in e["message"] for e in ev) and ev[-1]["type"] == "done"
+
+
+def test_a_model_ollama_doesnt_have_says_how_to_get_it(c, A):
+    ready(c, "ollama", "qwen3.5:9b")
+    A.net.routes["POST localhost/v1/chat/completions"] = (404, {"error": {"message": "model 'qwen3.5:9b' not found"}})
+    ev = events(c.post("/api/ai/chat", json={"messages": [{"role": "user", "content": "hi"}]}))
+    err = next(e for e in ev if e["type"] == "error")["message"]
+    assert err == ("Ollama doesn't have qwen3.5:9b on this PC. Choose a model you have in Settings, or download it "
+                   "in a terminal with: ollama pull qwen3.5:9b")
+    assert ev[-1]["type"] == "done"
+
+
+def test_a_wrong_ollama_address_keeps_the_address_message(c, A):
+    """A 404 that isn't Ollama's "model not found" (e.g. a wrong base path) mustn't send the student to ollama pull."""
+    ready(c, "ollama", "gemma4:e4b")
+    A.net.routes["POST localhost/v1/chat/completions"] = (404, "404 page not found")
+    ev = events(c.post("/api/ai/chat", json={"messages": [{"role": "user", "content": "hi"}]}))
+    err = next(e for e in ev if e["type"] == "error")["message"]
+    assert "doesn't recognise that address or model" in err and "ollama pull" not in err
+
+
+# ── Think: quick replies by default; a local model thinks first only when the student turns Think on ──
+
+def ollama_thinking(A, thinking, seen):
+    """Ollama with a model whose /api/show reports `thinking` (None: says nothing); chat bodies go to `seen`."""
+    def handler(req):
+        if req.url.path == "/api/show":
+            return httpx.Response(200, json={"capabilities": ["completion", "tools"] + (["thinking"] if thinking else []),
+                                             **({"thinking": thinking} if thinking else {})})
+        seen.append(json.loads(req.content))
+        return httpx.Response(200, text=sse({"choices": [{"delta": {"content": "ok"}}]}))
+    A.AI_TRANSPORT["value"] = httpx.MockTransport(handler)
+
+
+@pytest.mark.parametrize("thinking,quick", [
+    ({"values": [False, True], "default": True}, {"reasoning_effort": "none"}),             # gemma4, qwen3.5
+    ({"values": ["low", "medium", "high"], "default": "medium"}, {"reasoning_effort": "low"}),   # gpt-oss: can't be off
+    (None, {}),                                                                              # not a thinking model
+])
+def test_quick_replies_unless_think_is_on(c, A, thinking, quick):
+    ready(c, "ollama", "local-model")
+    seen = []
+    ollama_thinking(A, thinking, seen)
+    ask = {"messages": [{"role": "user", "content": "hi"}]}
+    events(c.post("/api/ai/chat", json=ask))                                   # the setting: off by default
+    events(c.post("/api/ai/chat", json={**ask, "think": True}))                # Think on: the model's own default
+    c.put("/api/ai/settings", json={"think": True})
+    events(c.post("/api/ai/chat", json=ask))                                   # no flag sent: the saved toggle
+    events(c.post("/api/ai/chat", json={**ask, "think": False}))
+    efforts = [{k: v for k, v in body.items() if k == "reasoning_effort"} for body in seen]
+    assert efforts == [quick, {}, {}, quick]
+    older = [{"role": "user", "content": "a"}, {"role": "assistant", "content": "b"}]
+    assert c.post("/api/ai/summarise", json={"messages": older}).status_code == 200
+    assert {k: v for k, v in seen[-1].items() if k == "reasoning_effort"} == quick                   # summaries stay quick
+
+
+def test_the_think_toggle_shows_only_where_it_does_something(c, A):
+    agree(c)
+    ollama_thinking(A, {"values": [False, True], "default": True}, [])
+    s = c.put("/api/ai/settings", json={"provider": "ollama", "model": "gemma4:e4b"}).json()
+    assert s["can_think"] is True and s["think"] is False                      # quick replies by default
+    assert c.put("/api/ai/settings", json={"think": True}).json()["think"] is True
+    assert c.get("/api/ai/state").json()["think"] is True                      # kept for the next chat
+    ollama_thinking(A, None, [])
+    assert c.get("/api/ai/state").json()["can_think"] is False                 # a model that doesn't think
+    A.AI_TRANSPORT["value"] = httpx.MockTransport(lambda req: (_ for _ in ()).throw(httpx.ConnectError("down", request=req)))
+    assert c.get("/api/ai/state").json()["can_think"] is False                 # Ollama not running
+    assert c.put("/api/ai/settings", json={"provider": "anthropic", "model": "claude-haiku-5-5"}).json()["can_think"] is False
+
+
+def test_model_details_are_kept_so_a_stuck_ollama_cant_hold_up_settings(c, A):
+    """The AI state asks Ollama about the model (for Think). Answers are kept for a minute and a failure for a few
+    seconds, with a short timeout, so an Ollama that accepts connections but never answers can't stall each refresh."""
+    from ai.providers.ollama import OllamaProvider
+    agree(c)
+    asked = []
+
+    def stuck(req):
+        asked.append(req.url.path)
+        raise httpx.ReadTimeout("no answer", request=req)
+    A.AI_TRANSPORT["value"] = httpx.MockTransport(stuck)
+    c.put("/api/ai/settings", json={"provider": "ollama", "model": "gemma4:e4b"})
+    for _ in range(3):
+        assert c.get("/api/ai/state").json()["can_think"] is False
+    assert asked == ["/api/show"] and OllamaProvider.SHOW_TIMEOUT.read <= 5
+
+    seen = []
+    ollama_thinking(A, {"values": [False, True], "default": True}, seen)
+    shows, ollama = [], A.AI_TRANSPORT["value"].handler
+
+    def counting(req):
+        if req.url.path == "/api/show":
+            shows.append(req)
+        return ollama(req)
+    A.AI_TRANSPORT["value"] = httpx.MockTransport(counting)
+    for _ in range(3):
+        assert c.get("/api/ai/state").json()["can_think"] is True
+    events(c.post("/api/ai/chat", json={"messages": [{"role": "user", "content": "hi"}]}))
+    assert len(shows) == 1 and seen[-1]["reasoning_effort"] == "none"          # asked once, used by the chat too

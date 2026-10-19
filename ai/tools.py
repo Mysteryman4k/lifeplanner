@@ -47,14 +47,18 @@ TOOLS = [
 ]
 
 PROMPT = """You can manage the student's tasks with tools: list_tasks, add_task, update_task, complete_task and
-delete_task. Only change tasks when the student asks you to. Look tasks up with list_tasks before changing
-them, and use dates as YYYY-MM-DD (today is {today}). Changes appear in the app as cards the student can undo;
-deleting a task, or more than 3 changes at once, waits for the student to confirm in the app, so say that
-and don't claim it's done."""
+delete_task. You don't know their tasks until you call list_tasks: call it before you mention, list or change
+any task, and never make tasks up. Only change tasks when the student asks you to. Use dates as YYYY-MM-DD
+(today is {today}). Changes appear in the app as cards the student can undo; deleting a task, or more than 3
+changes at once, waits for the student to confirm in the app, so say that and don't claim it's done."""
 
 
 def system_addendum() -> str:
-    return PROMPT.format(today=date.today().isoformat())
+    today = date.today()
+    return PROMPT.format(today=f"{today:%A} {today.isoformat()}")      # the weekday helps with "next Friday"
+
+
+DASHES = {c: "-" for c in (0x2010, 0x2011, 0x2012, 0x2013, 0x2014, 0x2015, 0x2212)}     # hyphens, dashes, minus
 
 
 class ToolError(Exception):
@@ -68,9 +72,10 @@ class TaskTools:
         """store: the app's TaskStore. log: ActionLog for recording and undoing changes."""
         self.store, self.log = store, log
 
-    @staticmethod
-    def addendum() -> str:
-        return system_addendum()
+    def addendum(self) -> str:
+        """The tool instructions, with the student's subjects, so a task gets a subject's real name."""
+        names = self.store.subject_names()
+        return system_addendum() + (f"\nThe student's subjects: {'; '.join(names)}." if names else "")
 
     # ── helpers ──
     def _fields(self, args: dict) -> dict:
@@ -78,10 +83,12 @@ class TaskTools:
         for key in ("title", "due_date", "priority", "estimated_hours", "description"):
             if args.get(key) not in (None, ""):
                 out[key] = args[key]
+        if isinstance(out.get("due_date"), str):        # gpt-oss writes 2026‑11‑03 with non-breaking hyphens
+            out["due_date"] = out["due_date"].translate(DASHES).strip()
         if args.get("subject"):
             sid = self.store.subject_id(args["subject"])
             if sid is None:
-                raise ToolError(f"There's no subject called {args['subject']!r}. Leave it out or use one of: "
+                raise ToolError(f"{args['subject']!r} isn't one of the student's subjects. Leave it out or use one of: "
                                 + ", ".join(self.store.subject_names()) + ".")
             out["subject_id"] = sid
         return out

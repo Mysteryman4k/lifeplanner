@@ -175,6 +175,28 @@ def test_more_than_three_changes_ask_first_together(c, fake):
     assert sorted(t for t in tasks(c) if t.startswith("Step")) == ["Step 1", "Step 2", "Step 3"]
 
 
+@pytest.mark.parametrize("said", ["COMP2001", "comp2001", "Data Structures", "  comp2001   data structures "])
+def test_a_subject_by_its_unit_code_or_part_of_its_name(c, fake, said):
+    ready(c)
+    s = c.post("/api/subjects", json={"name": "COMP2001 Data Structures", "color": "#3B6EA8"}).json()
+    c.post("/api/subjects", json={"name": "MATH1131 Calculus", "color": "#A83B3B"})
+    fake.script = [[calls(("add_task", {"title": "Lab report", "subject": said}))], [{"type": "text", "text": "ok"}]]
+    assert any(e["type"] == "action" for e in chat(c))
+    assert tasks(c)["Lab report"]["subject_id"] == s["id"]
+    assert "The student's subjects: COMP2001 Data Structures; MATH1131 Calculus." in fake.rounds[0]["system"]
+
+
+@pytest.mark.parametrize("said", ["COMP", "Data", "2001", "Structures Data"])
+def test_a_subject_that_isnt_one_subjects_whole_words_goes_back_to_the_model(c, fake, said):
+    ready(c)
+    c.post("/api/subjects", json={"name": "COMP2001 Data Structures", "color": "#3B6EA8"})
+    c.post("/api/subjects", json={"name": "COMP3001 Data Mining", "color": "#3B6EA8"})
+    fake.script = [[calls(("add_task", {"title": "Lab report", "subject": said}))], [{"type": "text", "text": "Which one?"}]]
+    assert not [e for e in chat(c) if e["type"] == "action"]
+    assert "Lab report" not in tasks(c)
+    assert "use one of: COMP2001 Data Structures, COMP3001 Data Mining" in json.dumps(fake.rounds[1]["messages"])
+
+
 def test_list_tasks_and_mistakes_go_back_to_the_model(c, fake):
     ready(c)
     c.post("/api/tasks", json={"title": "Stats quiz"})
@@ -184,7 +206,7 @@ def test_list_tasks_and_mistakes_go_back_to_the_model(c, fake):
     ev = chat(c)
     assert not [e for e in ev if e["type"] in ("action", "confirm")]
     told = json.dumps(fake.rounds[1]["messages"])
-    assert "Stats quiz" in told and "no task with id 9999" in told and "no subject called" in told
+    assert "Stats quiz" in told and "no task with id 9999" in told and "isn't one of the student's subjects" in told
     assert "needs a title" in told and "no tool called make_coffee" in told
     assert "Bad subject" not in tasks(c)
 
@@ -267,3 +289,35 @@ def test_openai_tool_calls_round_trip_including_ollama_style_arguments(c, A):
     assert bodies[0]["tools"][0]["function"]["name"] == "list_tasks"
     msgs = bodies[1]["messages"]
     assert msgs[-3]["tool_calls"][0]["id"] == "call_a" and msgs[-2]["role"] == "tool" and msgs[-1]["tool_call_id"] == "call_b"
+
+
+def test_the_model_is_told_to_look_tasks_up_and_the_weekday(c, fake):
+    """gpt-oss once listed made-up tasks instead of calling list_tasks; "next Friday" needs the weekday."""
+    from datetime import date
+    ready(c)
+    fake.script = [[{"type": "text", "text": "ok"}]]
+    chat(c, "what's on my list?")
+    system = " ".join(fake.rounds[0]["system"].split())
+    assert "call it before you mention, list or change any task, and never make tasks up" in system
+    assert f"today is {date.today():%A} {date.today().isoformat()}" in system
+
+
+@pytest.mark.parametrize("due", ["2026\u201111\u201103", "2026\u201311\u201303", " 2026-11-03 "])
+def test_a_date_with_typographic_dashes_is_understood(c, fake, due):
+    """gpt-oss writes dates with non-breaking hyphens; without this the model needs another (slow) round."""
+    ready(c)
+    fake.script = [[calls(("add_task", {"title": "Revise heaps", "due_date": due}))], [{"type": "text", "text": "ok"}]]
+    assert any(e["type"] == "action" for e in chat(c))
+    assert tasks(c)["Revise heaps"]["due_date"] == "2026-11-03"
+
+
+def test_subjects_that_differ_only_in_case(c, fake):
+    ready(c)
+    upper = c.post("/api/subjects", json={"name": "Physics", "color": "#3B6EA8"}).json()
+    c.post("/api/subjects", json={"name": "physics", "color": "#3B6EA8"})
+    fake.script = [[calls(("add_task", {"title": "Prac", "subject": "Physics"}),
+                          ("add_task", {"title": "Exam", "subject": "PHYSICS"}))], [{"type": "text", "text": "ok"}]]
+    chat(c)
+    assert tasks(c)["Prac"]["subject_id"] == upper["id"]           # exactly as written
+    assert "Exam" not in tasks(c)                                   # either one: the model is shown both names
+    assert "isn't one of the student's subjects" in json.dumps(fake.rounds[1]["messages"])

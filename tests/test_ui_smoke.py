@@ -543,6 +543,30 @@ def test_reply_formatting_rules(server, page):
     assert md("* * *") == "<hr>" and md("-- not a rule") == "<p>-- not a rule</p>"
     assert md("- a" + nl + "- b") == "<ul><li>a</li><li>b</li></ul>"
     assert "&lt;img" in md("<img src=x onerror=alert(1)>")
+    # What real local models write (gemma4, gpt-oss): every heading level, quotes, steps with sub-points and gaps
+    assert md("#### Step 2a" + nl + "##### Detail") == "<h6>Step 2a</h6><h6>Detail</h6>"
+    assert md("> **Tip:**" + nl + "> - visit left first" + nl + "> - then the root") == \
+        "<blockquote><p><strong>Tip:</strong></p><ul><li>visit left first</li><li>then the root</li></ul></blockquote>"
+    assert md("1. Sort" + nl + "   - stable" + nl + "   Uses O(n) space" + nl + nl + "2. Pick the middle") == \
+        "<ol><li>Sort<ul><li>stable</li></ul><p>Uses O(n) space</p></li><li>Pick the middle</li></ol>"
+    assert md("1. Read" + nl + "Then this paragraph." + nl + "2. Write") == \
+        '<ol><li>Read</li></ol><p>Then this paragraph.</p><ol start="2"><li>Write</li></ol>'      # numbering goes on
+    steps = md("1. Run it:" + nl + "   ```python" + nl + "   print(1)" + nl + "   ```" + nl + "2. Check the output")
+    assert steps.startswith("<ol><li>Run it:<pre") and steps.endswith("</pre></li><li>Check the output</li></ol>")
+    assert md("**Mean of every element *except* the first.**") == \
+        "<p><strong>Mean of every element <em>except</em> the first.</strong></p>"
+    assert md("&gt; not a quote: a > b") == "<p>&amp;gt; not a quote: a &gt; b</p>"
+    assert md("> First part" + nl + "> continued here" + nl + ">" + nl + "> New paragraph") == \
+        "<blockquote><p>First part<br>continued here</p><p>New paragraph</p></blockquote>"     # lines join, a gap splits
+    assert md("> First" + nl + "> ---" + nl + "> Second" + nl + "> ***") == \
+        "<blockquote><p>First</p><hr><p>Second</p><hr></blockquote>"                          # a rule stays a rule
+    assert md("1. Inspect" + nl + "   > Check the input" + nl + "2. Continue") == \
+        "<ol><li>Inspect<blockquote><p>Check the input</p></blockquote></li><li>Continue</li></ol>"
+    assert md("| Day | Plan |" + nl + "|---|---|" + nl + "| Mon | read<br>notes |") == (
+        '<div class="chat-table-wrap"><table class="chat-table"><thead><tr><th>Day</th><th>Plan</th></tr></thead>'
+        "<tbody><tr><td>Mon</td><td>read<br>notes</td></tr></tbody></table></div>")
+    assert md("<u>Review</u> x<sup>2</sup> H<sub>2</sub>O <b>no</b> <br onclick=x>") == \
+        "<p><u>Review</u> x<sup>2</sup> H<sub>2</sub>O &lt;b&gt;no&lt;/b&gt; &lt;br onclick=x&gt;</p>"      # only bare tags
 
 
 def test_closing_write_notes_stops_the_request(server, page):
@@ -657,6 +681,8 @@ def test_maths_code_and_diagrams_in_replies(server, page):
         f + "mermaid", "sequenceDiagram", "  Student->>App: Ask", "  App-->>Student: Answer", f,
         f + "mermaid", "flowchart LR", "  A --> [[[", f,
         f + "mermaid", "graph TD", "    A[Stack: []] --> B(Push 5);", "    B --> C[Stack: [5]];", "    C --> D{Top: 5}", f,
+        f + "mermaid", "sequenceDiagram", "  Client->>Server: SYN", "  Server-->>Client: SYN-ACK; ready #9829;",
+        "  Client->>Server: ACK;", f,
         f + "mermaid", "flowchart LR", '  A["<img src=x onerror=window.pwned=1>"] --> B',
         '  click A href "javascript:window.pwned=1"', f,
         r'<img src=x onerror="window.pwned=1"> and $\href{javascript:window.pwned=1}{x}$',
@@ -675,7 +701,7 @@ def test_maths_code_and_diagrams_in_replies(server, page):
     page.keyboard.press("Enter")
     page.wait_for_selector(".chat-msg.ai .chat-tools")
     page.wait_for_selector(".chat-msg.ai .diagram-svg svg")
-    page.wait_for_function("document.querySelectorAll('.chat-msg.ai .chat-diagram:not(.drawing)').length === 5")
+    page.wait_for_function("document.querySelectorAll('.chat-msg.ai .chat-diagram:not(.drawing)').length === 6")
     msg = page.locator(".chat-msg.ai").first
 
     asked = json.loads([r for r in A.fake_net_seen if r.url.path.endswith("/chat/completions")][-1].content)
@@ -684,8 +710,11 @@ def test_maths_code_and_diagrams_in_replies(server, page):
     assert "It costs $5 and $10 at the shop." in msg.inner_text()            # prices aren't maths
     assert msg.locator(".code-head", has_text="python").count() == 1
     assert msg.locator("pre code .hljs-keyword", has_text="def").count() == 1
-    assert msg.locator(".diagram-svg svg").count() == 4                       # the injection attempt draws as text
+    assert msg.locator(".diagram-svg svg").count() == 5                       # the injection attempt draws as text
     assert msg.locator(".diagram-src summary", has_text="labels put in quotes").count() == 1   # A[Stack: [5]] repaired
+    tidied = msg.locator(".chat-diagram", has=page.locator(".diagram-src summary", has_text="semicolons in its text escaped"))
+    assert tidied.count() == 1 and "SYN-ACK; ready" in tidied.locator(".diagram-svg").inner_text()   # drawn as ;
+    assert tidied.locator(".diagram-src code").text_content().endswith("Client: SYN-ACK#59; ready #9829;\n  Client->>Server: ACK")
     broken = msg.locator(".chat-diagram", has_text="couldn't be drawn")
     assert broken.count() == 1 and broken.locator("[data-action=diagram-retry]").count() == 1
     assert page.evaluate("window.pwned") is None
@@ -697,7 +726,7 @@ def test_maths_code_and_diagrams_in_replies(server, page):
             page.screenshot(path=os.path.join(os.environ["EUT_SHOTS"], f"stage5-{name}.png"))
         page.emulate_media(color_scheme="dark")
         page.evaluate("chatRefresh()")
-        page.wait_for_function("document.querySelectorAll('.chat-msg.ai .chat-diagram:not(.drawing)').length === 5")
+        page.wait_for_function("document.querySelectorAll('.chat-msg.ai .chat-diagram:not(.drawing)').length === 6")
         page.wait_for_timeout(300)
         page.evaluate("document.querySelector('#chatLog').scrollTop = 120")
         page.screenshot(path=os.path.join(os.environ["EUT_SHOTS"], "stage5-dark.png"))
@@ -729,7 +758,7 @@ def test_maths_code_and_diagrams_in_replies(server, page):
     page.wait_for_selector("#toast.show >> text=Note saved")
     page.evaluate("openNote(state.notes[0].id)")
     page.wait_for_selector("#drawer .note-body .diagram-svg svg")
-    page.wait_for_function("document.querySelectorAll('#drawer .chat-diagram:not(.drawing)').length === 5")
+    page.wait_for_function("document.querySelectorAll('#drawer .chat-diagram:not(.drawing)').length === 6")
     assert page.locator("#drawer .katex-display").count() == 1
     assert page.locator("#drawer [data-action=diagram-retry]").count() == 0
     page.evaluate("closeDrawer()")
@@ -1547,3 +1576,69 @@ def test_design_refresh_details(server, page, tmp_path_factory):
             page.request.delete(f"{server}/api/code/folders/{folder['id']}", headers=tok)
         page.request.put(f"{server}/api/ai/settings", headers=tok, data={"code_enabled": False})
         page.request.post(f"{server}/api/ai/terms/withdraw", headers=tok)
+
+
+def test_think_toggle_in_the_chat(server, page):
+    """Quick replies by default. Think, next to the paperclip, lets a local model think first, and is kept."""
+    import json
+
+    import app as A
+    from ai.providers.ollama import OllamaProvider
+    OllamaProvider.SHOWN.clear()                         # model details are kept for a minute: start fresh
+    tok = {A.TOKEN_HEADER: A.SESSION_TOKEN}
+    terms = page.request.get(f"{server}/api/ai/terms").json()
+    page.request.post(f"{server}/api/ai/terms/agree", headers=tok,
+                      data={"version": terms["version"], "ticks": {k: True for k in terms["ticks"]}})
+    page.request.put(f"{server}/api/ai/settings", headers=tok, data={"provider": "ollama", "model": "gemma4:e4b", "think": False})
+    nl = chr(10)
+    say = lambda text: "data: " + json.dumps({"choices": [{"delta": {"content": text}}]}) + nl + nl  # noqa: E731
+    before = A.fake_net.get("POST localhost/api/show")
+    A.fake_net["POST localhost/api/show"] = (200, {"capabilities": ["completion", "tools", "thinking"],
+                                                   "thinking": {"values": [False, True], "default": True}})
+    A.fake_net["POST localhost/v1/chat/completions"] = (200, [say("Quick answer."), say("Thought it through.")])
+    OllamaProvider.SHOWN.clear()                         # the settings call above asked before this model could think
+
+    def last_request():
+        return [json.loads(r.content) for r in A.fake_net_seen if r.url.path.endswith("/chat/completions")][-1]
+    try:
+        page.goto(f"{server}/#/study")
+        page.reload()
+        page.wait_for_selector("#chatInput")
+        page.evaluate("chatReset(); chatRefresh()")
+        toggle = page.locator(".composer [data-action=chat-think]")
+        assert toggle.get_attribute("aria-pressed") == "false" and "Quick replies" in toggle.get_attribute("title")
+        page.fill("#chatInput", "What is a heap?")
+        page.keyboard.press("Enter")
+        page.locator(".chat-msg.ai", has_text="Quick answer.").wait_for()
+        assert last_request()["reasoning_effort"] == "none"                       # quick: thinking off
+
+        with page.expect_response(lambda r: r.url.endswith("/api/ai/settings") and r.request.method == "PUT"):
+            toggle.click()
+        assert page.locator(".composer [data-action=chat-think]").get_attribute("aria-pressed") == "true"
+        assert page.request.get(f"{server}/api/ai/state").json()["think"] is True  # saved for the next chat
+        page.fill("#chatInput", "Now prove it")
+        page.keyboard.press("Enter")
+        page.locator(".chat-msg.ai", has_text="Thought it through.").wait_for()
+        assert "reasoning_effort" not in last_request()                            # the model's own default
+
+        page.reload()
+        page.wait_for_selector(".composer [data-action=chat-think][aria-pressed=true]")   # still on after a reload
+
+        saves = []
+        page.on("request", lambda r: saves.append(r) if r.method == "PUT" and r.url.endswith("/api/ai/settings") else None)
+        page.evaluate("Promise.all([ACTIONS['chat-think'](), ACTIONS['chat-think']()])")    # a double click
+        page.wait_for_selector(".composer [data-action=chat-think][aria-pressed=false]:not([disabled])")
+        assert len(saves) == 1 and page.request.get(f"{server}/api/ai/state").json()["think"] is False
+
+        A.fake_net["POST localhost/api/show"] = (200, {"capabilities": ["completion", "tools"]})
+        OllamaProvider.SHOWN.clear()
+        page.reload()
+        page.wait_for_selector("#chatInput")
+        assert page.locator("[data-action=chat-think]").count() == 0             # a model that doesn't think: no toggle
+    finally:
+        if before is None:
+            A.fake_net.pop("POST localhost/api/show", None)
+        else:
+            A.fake_net["POST localhost/api/show"] = before
+        OllamaProvider.SHOWN.clear()
+        page.request.put(f"{server}/api/ai/settings", headers=tok, data={"think": False})

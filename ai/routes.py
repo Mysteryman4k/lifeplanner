@@ -33,6 +33,7 @@ class AISettings(BaseModel):
     terms_agreed_at: str = ""
     run_notice: bool = False                              # the one-time "only run code you trust" notice was read
     keep_chats_days: KeepChats = 0                        # saved chats not continued for this long are deleted (0: kept)
+    think: bool = False                                   # the chat's Think toggle: a local model thinks before replying
 
 
 class AISettingsUpdate(BaseModel):
@@ -42,6 +43,7 @@ class AISettingsUpdate(BaseModel):
     model: str = Field(default=None, max_length=200)
     base_url: str = Field(default=None, max_length=500)
     keep_chats_days: KeepChats = None
+    think: bool = None
 
 
 class Agreement(BaseModel):
@@ -85,6 +87,7 @@ class ChatIn(BaseModel):
     action: Optional[Literal["videos"]] = None                 # a study reply's own action (Videos)
     attachment: Optional[AttachmentIn] = None                  # an attached file, sent with each question
     summary: str = Field(default="", max_length=8000)          # older messages that no longer go with it, summarised
+    think: Optional[bool] = None                               # the Think toggle when it was sent (else the setting)
 
 
 class SummariseIn(BaseModel):
@@ -129,6 +132,13 @@ def register(app, get_setting, put_setting, transport_hook=lambda: None, task_co
             raise HTTPException(403, "Read and agree to the terms of use first.")
         return s
 
+    def can_think(s: AISettings) -> bool:
+        """Whether the chat shows the Think toggle: a local model that can think before replying (Ollama says
+        which). Cloud models answer quickly either way."""
+        if s.provider != "ollama" or not s.model:
+            return False
+        return bool(get_provider("ollama", transport=transport_hook()).thinking_levels(s.model))
+
     def public_state(s: AISettings) -> dict:
         ok = agreed(s)
         provider = s.provider if s.provider in PRESETS else ""
@@ -142,6 +152,7 @@ def register(app, get_setting, put_setting, transport_hook=lambda: None, task_co
             "code_enabled": ok and s.code_enabled,
             "run_notice": s.run_notice,
             "keep_chats_days": s.keep_chats_days,
+            "think": s.think, "can_think": ok and can_think(s),
             "provider": provider, "model": s.model, "base_url": s.base_url,
             "key": keys.hint(provider) if provider and (PRESETS[provider]["needs_key"] or provider == "custom") else None,
             "providers": {k: {x: v[x] for x in ("name", "needs_key", "key_url", "limit_url", "about", "base_url")}
@@ -309,6 +320,7 @@ def register(app, get_setting, put_setting, transport_hook=lambda: None, task_co
             system_text += "\n\n" + prompts.summary_block(c.summary)
         base = (s.base_url or None) if s.provider == "custom" else None
         provider = get_provider(s.provider, key=keys.get(s.provider), base_url=base, transport=transport_hook())
+        provider.think = s.think if c.think is None else c.think     # quick replies unless the student chose Think
         # Task tools when the app provides them, the mode is a conversation, and the model can use tools
         can_use_tools = provider.supports_tools(s.model) is not False
         if code:                                         # the code workspace proposes file changes

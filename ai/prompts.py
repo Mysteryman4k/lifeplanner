@@ -19,8 +19,8 @@ How your replies are shown:
 - Maths: LaTeX between $...$ inline, or $$...$$ on its own lines for display.
 - Code: fenced blocks with the language name, e.g. ```python.
 - Diagrams: a fenced ```mermaid block (flowchart, sequenceDiagram, classDiagram, stateDiagram-v2, erDiagram or
-  mindmap). Keep diagrams small (under 25 nodes) and always put node labels in double quotes,
-  e.g. A["Stack: [5, 10]"] --> B["Pop (O(1))"]."""
+  mindmap), which the app draws; never ASCII art. Keep diagrams small (under 25 nodes) and always put node
+  labels in double quotes, e.g. A["Stack: [5, 10]"] --> B["Pop (O(1))"]. Never use ; inside a label or message."""
 
 MODES = {
     "explain": "Mode: Explain. Explain the concept step by step at the student's level, with a short example. "
@@ -49,8 +49,9 @@ STUDY_ACTIONS = {
 
 FORMATS = {
     "notes": "Format: notes. Use headings and short bullet points; no diagram unless asked.",
-    "diagram": "Format: diagram. Answer mainly with one Mermaid diagram, plus a sentence or two explaining it.",
-    "both": "Format: notes and diagram. Give short notes with headings and include one Mermaid diagram.",
+    "diagram": "Format: diagram. Answer mainly with one diagram in a ```mermaid block (not ASCII art), plus a "
+               "sentence or two explaining it.",
+    "both": "Format: notes and diagram. Give short notes with headings and include one diagram in a ```mermaid block.",
     "maths": "Format: maths. Show the working step by step with the maths in LaTeX.",
     "code": "Format: code. Show a short, commented code example in a fenced block, then explain it briefly.",
 }

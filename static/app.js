@@ -996,22 +996,31 @@ function chatMarkdown(src) {
     .replace(/`([^`\n]+)`/g, (_, code) => keep(spans, `<code>${esc(code)}</code>`, '\u0001'))
     .replace(/\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]/g, (_, a, b) => keep(spans, maths(a ?? b, true), '\u0001'))
     .replace(/\\\((.+?)\\\)|\$(?=[^\s$])([^$\n]*?[^\s$\\])\$(?!\d)/g, (_, a, b) => keep(spans, maths(a ?? b, false), '\u0001'));
-  text = esc(text);
+  // Some models (gpt-oss) write a few HTML tags: <br> in table cells, <u>, <sup>, <sub>. Only those exact tags,
+  // with no attributes, become formatting again after escaping; any other tag stays as text
+  text = esc(text).replace(/&lt;br\s*\/?&gt;/gi, '<br>').replace(/&lt;(\/?)(u|sup|sub)&gt;/gi, (_, end, tag) => `<${end}${tag.toLowerCase()}>`);
   const inline = s => s
-    .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*\*(?=\S)(.+?)\*\*/g, '<strong>$1</strong>')            // may hold *italics* of its own
     .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
     .replace(/\[([^\]\n]+)\]\((https:\/\/www\.youtube\.com\/results\?search_query=[^\s)"<>]+)\)/g,
       `<a class="link" href="$2" target="_blank" rel="noopener noreferrer">${icon('external', 13)}$1</a>`)
     .replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, '$1 ($2)');                 // any other link stays plain text
-  const out = [];
-  let list = null;
-  const closeList = () => { if (list) { out.push(`</${list}>`); list = null; } };
-  const lines = text.split('\n');
+  const html = markdownLines(text.split('\n'), inline, blocks)
+    .replace(/\u0000(\d+)\u0000/g, (_, i) => blocks[+i]).replace(/\u0001(\d+)\u0001/g, (_, i) => spans[+i]);
+  return window.DOMPurify ? DOMPurify.sanitize(html, PURIFY) : html;
+}
+
+/** chatMarkdown's block level, on escaped lines: tables, quotes (their lines are rendered the same way inside),
+ *  headings, rules and lists. Lists nest by indentation, a numbered list split by a paragraph or code goes on
+ *  from its number, and a code block indented under a list item stays in it. */
+function markdownLines(lines, inline, blocks) {
+  const out = [], lists = [];                      // the open lists, innermost last: { tag, indent }
+  const closeLists = (indent = -1) => { while (lists.length && lists[lists.length - 1].indent > indent) out.push(`</li></${lists.pop().tag}>`); };
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     let m;
     if (line.includes('|') && (lines[i + 1] || '').includes('|') && TABLE_RULE.test(lines[i + 1])) {   // not a --- rule
-      closeList();
+      closeLists();
       const head = tableCells(line), aligns = tableCells(lines[i + 1]).map(c => /^:-+:$/.test(c) ? 'center' : /-:$/.test(c) ? 'right' : '');
       const al = j => aligns[j] ? ` class="al-${aligns[j]}"` : '';
       const rows = [];
@@ -1021,17 +1030,49 @@ function chatMarkdown(src) {
         `<tbody>${rows.map(r => `<tr>${head.map((_, j) => `<td${al(j)}>${inline(r[j] ?? '')}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`);
       continue;
     }
-    if ((m = line.match(/^\u0000(\d+)\u0000$/))) { closeList(); out.push(blocks[+m[1]]); }
-    else if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) { closeList(); out.push('<hr>'); }
-    else if ((m = line.match(/^(#{1,3})\s+(.*)$/))) { closeList(); out.push(`<h${m[1].length + 2}>${inline(m[2])}</h${m[1].length + 2}>`); }
-    else if ((m = line.match(/^\s*[-*]\s+(.*)$/))) { if (list !== 'ul') { closeList(); out.push('<ul>'); list = 'ul'; } out.push(`<li>${inline(m[1])}</li>`); }
-    else if ((m = line.match(/^\s*\d+[.)]\s+(.*)$/))) { if (list !== 'ol') { closeList(); out.push('<ol>'); list = 'ol'; } out.push(`<li>${inline(m[1])}</li>`); }
-    else if (!line.trim()) { closeList(); }
-    else { closeList(); out.push(`<p>${inline(line)}</p>`); }
+    if (/^\s*&gt;/.test(line)) {                   // a quote (> is escaped by now): its lines without the >
+      const indent = line.match(/^\s*/)[0].replace(/\t/g, '    ').length;
+      closeLists(lists.length && indent > lists[0].indent ? indent - 1 : -1);   // indented under an item: stays in it
+      const inner = [], prose = s => s.trim() && !/^\s*([-*+]|\d+[.)])\s|^#{1,6}\s|^\s*&gt;|\u0000|\||^\s*([-*_])(\s*\2){2,}\s*$/.test(s);
+      for (; i < lines.length && /^\s*&gt;/.test(lines[i]); i++) {
+        const text = lines[i].replace(/^\s*&gt;\s?/, ''), prev = inner[inner.length - 1];
+        if (prose(text) && prev !== undefined && prose(prev)) inner[inner.length - 1] = `${prev}<br>${text.trim()}`;  // one paragraph
+        else inner.push(text);
+      }
+      i--;
+      out.push(`<blockquote>${markdownLines(inner, inline, blocks)}</blockquote>`);
+      continue;
+    }
+    if ((m = line.match(/^(\s*)\u0000(\d+)\u0000\s*$/))) {
+      if (!lists.length || m[1].length <= lists[0].indent) closeLists();
+      out.push(blocks[+m[2]]);                     // indented under a list item: it stays in the item
+      continue;
+    }
+    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) { closeLists(); out.push('<hr>'); continue; }
+    if ((m = line.match(/^(\s*)(?:([-*+])|(\d+)[.)])\s+(.*)$/))) {
+      const indent = m[1].replace(/\t/g, '    ').length, tag = m[2] ? 'ul' : 'ol';
+      closeLists(indent);
+      const top = lists[lists.length - 1];
+      if (top && top.indent === indent && top.tag === tag) { out.push(`</li><li>${inline(m[4])}`); continue; }
+      if (top && top.indent === indent) out.push(`</li></${lists.pop().tag}>`);
+      const start = tag === 'ol' && +m[3] > 1 ? ` start="${+m[3]}"` : '';
+      out.push(`<${tag}${start}><li>${inline(m[4])}`);
+      lists.push({ tag, indent });
+      continue;
+    }
+    if (!line.trim()) continue;                    // a blank line keeps a list open: "1." … blank … "2." is one list
+    const indent = line.match(/^\s*/)[0].replace(/\t/g, '    ').length;
+    if (lists.length && indent > lists[0].indent) {   // text indented under an item: it belongs to that item
+      closeLists(indent - 1);
+      out.push(`<p>${inline(line.trim())}</p>`);
+      continue;
+    }
+    closeLists();
+    if ((m = line.match(/^(#{1,6})\s+(.*)$/))) { const h = Math.min(m[1].length + 2, 6); out.push(`<h${h}>${inline(m[2])}</h${h}>`); }
+    else out.push(`<p>${inline(line)}</p>`);
   }
-  closeList();
-  const html = out.join('').replace(/\u0000(\d+)\u0000/g, (_, i) => blocks[+i]).replace(/\u0001(\d+)\u0001/g, (_, i) => spans[+i]);
-  return window.DOMPurify ? DOMPurify.sanitize(html, PURIFY) : html;
+  closeLists();
+  return out.join('');
 }
 
 const TABLE_RULE = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;      // a table's --- row (any number of dashes)
@@ -1130,6 +1171,20 @@ function quoteLabels(src) {
   }).join('\n');
 }
 
+/** Sequence diagrams: a ; inside a message or note ends the line there ("SYN-ACK; open" breaks the diagram).
+ *  Write each as #59;, which draws as ;, and drop one that only ends a line. Used only after a diagram has failed
+ *  to draw, like quoteLabels. */
+function escapeSemicolons(src) {
+  const lines = src.split('\n');
+  if (!/^\s*sequenceDiagram\b/.test(lines[0] || '')) return null;
+  return lines.map((line, n) => {
+    const at = line.indexOf(':');
+    if (!n || at < 0) return line;
+    const text = line.slice(at + 1).replace(/(#\w+;)|;(\s*)$|;/g, (m, entity, end) => entity || (end === undefined ? '#59;' : ''));
+    return line.slice(0, at + 1) + text;
+  }).join('\n');
+}
+
 async function drawDiagram(el) {
   const code = $('code', el);
   if (!code) return;
@@ -1159,17 +1214,20 @@ async function drawDiagram(el) {
       }
     };
     result = await render(src);
-    // Small models often leave brackets unquoted inside labels (A[Stack: [5]]): try again with every label quoted
-    const fixed = result.error && quoteLabels(src);
-    if (fixed && fixed !== src) {
+    // Small models often leave brackets unquoted inside labels (A[Stack: [5]]), or put a ; in a sequence diagram's
+    // message: try again with that tidied
+    const repairs = [[quoteLabels, 'labels put in quotes'], [escapeSemicolons, 'semicolons in its text escaped']];
+    for (const [repair, note] of result.error ? repairs : []) {
+      const fixed = repair(src);
+      if (!fixed || fixed === src) continue;
       const second = await render(fixed);
-      if (second.svg) result = { ...second, source: fixed };
+      if (second.svg) { result = { ...second, source: fixed, note }; break; }
     }
     if (!result.transient) DIAGRAMS.set(key, result);
   }
   if (!el.isConnected) return;
   el.classList.remove('drawing');
-  const source = `<details class="diagram-src"><summary>Diagram source${result.source ? ' (labels put in quotes so it could be drawn)' : ''}</summary>
+  const source = `<details class="diagram-src"><summary>Diagram source${result.source ? ` (${result.note} so it could be drawn)` : ''}</summary>
     <pre class="chat-code"><code>${esc(result.source || src)}</code></pre></details>`;
   if (result.svg) {
     el.innerHTML = `<div class="diagram-svg">${result.svg}</div>${source}`;
@@ -1230,7 +1288,8 @@ function chatMessage(m, i) {
   const live = c.streaming && i === c.messages.length - 1;
   const last = !live && i === c.messages.length - 1 && !c.streaming;
   return `<div class="chat-msg ai ${live ? 'live' : ''} ${last ? 'last' : ''}" data-i="${i}">
-    <div class="chat-text">${m.content ? chatMarkdown(m.content) : (live ? `<span class="chat-typing" aria-label="Thinking"><i></i><i></i><i></i></span>${c.file ? '<span class="muted small"> Reading the file…</span>' : ''}` : '')}</div>
+    <div class="chat-text">${m.content ? chatMarkdown(m.content) : (live ? `<span class="chat-typing" aria-label="Thinking"><i></i><i></i><i></i></span>${c.file ? '<span class="muted small"> Reading the file…</span>'
+      : m.think ? '<span class="muted small"> Thinking first…</span>' : ''}` : '')}</div>
     ${(m.cards || []).map((card, n) => chatCard(card, i, n)).join('')}
     ${m.error ? `<div class="chat-error">${icon('alert', 15)}${esc(m.error)}</div>` : ''}
     ${m.stopped ? '<div class="small muted">Stopped.</div>' : ''}
@@ -1291,6 +1350,9 @@ function chatShell(inPanel) {
         <div class="composer-bar">
           <button class="icon-btn sm chat-attach" type="button" data-action="chat-attach" aria-label="Attach a file" title="Attach a PDF, PowerPoint (.pptx), Word (.docx) or text file. You can also drop one here." ${c.streaming || c.attaching ? 'disabled' : ''}>${icon('paperclip', 16)}</button>
           <input type="file" id="chatFile" accept="${FILE_TYPES}" hidden>
+          ${a.can_think ? `<button class="think-toggle ${a.think ? 'on' : ''}" type="button" data-action="chat-think" aria-pressed="${a.think ? 'true' : 'false'}"
+            title="${a.think ? 'Think first is on: the model thinks before it answers. Slower, and can help with hard maths and debugging. Click for quick replies.'
+              : 'Quick replies. Click to let the model think before it answers: slower, and can help with hard maths and debugging.'}" ${c.streaming || state.thinkSaving ? 'disabled' : ''}>${icon('bulb', 14)}Think</button>` : ''}
           <span class="composer-hint">Enter to send · Shift+Enter for a new line</span>
           ${c.streaming
             ? `<button class="send-btn stop" type="button" data-action="chat-stop" aria-label="Stop" title="Stop">${icon('stop', 15)}</button>`
@@ -1380,7 +1442,8 @@ async function chatSend(text, extra = {}) {
     if (c.streaming || c.code !== folderId || !current()) return;
     codeMarkErrors(text);
   }
-  c.messages.push({ role: 'user', content: text }, { role: 'assistant', content: '' });
+  const think = !!(state.ai?.can_think && state.ai?.think);        // the Think toggle; quick replies otherwise
+  c.messages.push({ role: 'user', content: text }, { role: 'assistant', content: '', ...(think ? { think } : {}) });
   const asked = c.messages[c.messages.length - 2];
   c.streaming = true;
   c.controller = new AbortController();
@@ -1401,9 +1464,9 @@ async function chatSend(text, extra = {}) {
     const file = c.file ? { attachment: { name: c.file.name, included: chatFileIncluded(c.file), text: chatFileText(c.file) } } : {};
     if (c.summary && convo.some(m => m.summarised)) file.summary = c.summary;   // in place of the summarised ones
     const payload = folderId
-      ? { mode: 'code', format: c.format || 'auto', messages: history, ...file,
+      ? { mode: 'code', format: c.format || 'auto', messages: history, think, ...file,
           code: { folder_id: folderId, files: (codeState().files || []).map(f => f.path), ...extra } }
-      : { mode: extra.mode || c.mode, format: c.format || 'auto', messages: history, ...file, ...(c.taskId ? { task_id: c.taskId } : {}), ...(extra.action ? { action: extra.action } : {}) };
+      : { mode: extra.mode || c.mode, format: c.format || 'auto', messages: history, think, ...file, ...(c.taskId ? { task_id: c.taskId } : {}), ...(extra.action ? { action: extra.action } : {}) };
     await streamChat(payload, c.controller.signal, ev => {
       if (!current()) return false;
       if (ev.type === 'files') { asked.files = ev.files; asked.leftOut = ev.left_out; chatRefresh(); return true; }
@@ -2719,6 +2782,16 @@ const ACTIONS = {
     renderNav();                                    // Recent chats no longer marks the old one as open
   },
   'chat-mode'(el) { if (!chatState().streaming) { chatState().mode = el.dataset.mode; chatRefresh(); } },
+  async 'chat-think'() {                          // kept as a setting, so the next chat starts the same way
+    if (chatState().streaming || !state.ai || state.thinkSaving) return;
+    const on = !state.ai.think;
+    state.ai = { ...state.ai, think: on };
+    state.thinkSaving = true;                     // one save at a time, so the last click is what's kept
+    chatRefresh({ keepDraft: true });
+    try { await aiSettings({ think: on }); }
+    catch (e) { state.ai = { ...state.ai, think: !on }; toast(e.message, 'error'); }
+    finally { state.thinkSaving = false; chatRefresh({ keepDraft: true }); }
+  },
   'chat-attach'() {
     const input = $('#chatFile', chatRoot() || document);
     if (input) { input.value = ''; input.click(); }

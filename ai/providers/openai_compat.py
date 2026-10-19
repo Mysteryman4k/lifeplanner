@@ -16,10 +16,14 @@ class OpenAICompatProvider(Provider):
         items = data.get("data", []) if isinstance(data, dict) else []
         return sorted(m["id"] for m in items if isinstance(m, dict) and m.get("id"))
 
+    def request_options(self, model: str) -> dict:
+        """Extra settings for this provider's chat requests (Ollama: how much the model thinks first)."""
+        return {}
+
     def stream_chat(self, model: str, system: str, messages: list, tools: list = None):
         import json
         body = {"model": model, "stream": True, "stream_options": {"include_usage": True},
-                "messages": [{"role": "system", "content": system}, *messages]}
+                "messages": [{"role": "system", "content": system}, *messages], **self.request_options(model)}
         if tools:
             body["tools"] = [{"type": "function", "function": {"name": t["name"], "description": t["description"],
                                                                 "parameters": t["parameters"]}} for t in tools]
