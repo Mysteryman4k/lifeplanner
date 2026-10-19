@@ -226,14 +226,19 @@ const ROUTES = {
   study: { label: 'Study assistant', icon: 'spark' },
   code: { label: 'Code workspace', icon: 'code' },
   settings: { label: 'Settings', icon: 'settings' },
+  more: { label: 'More', icon: 'more' },
 };
 const aiOn = () => !!state.ai?.assistant_enabled;
 const codeOn = () => !!state.ai?.code_enabled;
+/** The Android and iPhone app (mobile/): the same screens, with a More tab and the phone's own ways to save and remind. */
+const onPhone = () => !!state.info.mobile;
 const route = () => {
   const r = location.hash.replace(/^#\/?/, '').split('?')[0];
-  if ((r === 'study' && !aiOn()) || (r === 'code' && !codeOn())) return 'today';   // AI features are invisible while off
+  if ((r === 'study' && !aiOn()) || (r === 'code' && !codeOn()) || (r === 'more' && !onPhone())) return 'today';   // AI features are invisible while off
   return ROUTES[r] ? r : 'today';
 };
+/** The phone's tabs: the fourth is the study assistant when it's on, otherwise Money. Everything else is under More. */
+const phoneTabs = () => ['today', 'tasks', 'calendar', aiOn() ? 'study' : 'money', 'more'];
 
 function renderNav() {
   const r = route();
@@ -251,14 +256,16 @@ function renderNav() {
     ${aiOn() || codeOn() ? `<div class="nav-label">Study <span class="preview-badge sm">Preview</span></div>${aiOn() ? item('study') : ''}${codeOn() ? item('code') : ''}${recentChats()}` : ''}
     <div class="nav-label">Track</div>${['jobs', 'money'].map(item).join('')}`;
   $('#navFoot').innerHTML = item('settings');
-  $('#tabbar').innerHTML = ['today', 'tasks', 'calendar', 'jobs', 'money'].map(k =>
-    `<a class="tab ${r === k ? 'active' : ''}" href="#/${k}">${icon(ROUTES[k].icon, 22)}<span>${ROUTES[k].label}</span></a>`).join('');
+  const tabs = onPhone() ? phoneTabs() : ['today', 'tasks', 'calendar', 'jobs', 'money'];
+  const current = tabs.includes(r) ? r : onPhone() ? 'more' : r;          // a screen under More lights up More
+  $('#tabbar').innerHTML = tabs.map(k =>
+    `<a class="tab ${current === k ? 'active' : ''}" href="#/${k}" ${current === k ? 'aria-current="page"' : ''}>${icon(ROUTES[k].icon, 22)}<span>${k === 'study' ? 'Study' : ROUTES[k].label}</span>${counts[k] && onPhone() ? `<span class="tab-count">${counts[k].n}</span>` : ''}</a>`).join('');
 }
 
 function setHeader(title, eyebrow = '', actions = '') {
   $('#pageTitle').textContent = title;
   $('#eyebrow').textContent = eyebrow;
-  const gear = route() !== 'settings'
+  const gear = route() !== 'settings' && !onPhone()          // on the phone, Settings is under More
     ? `<a class="icon-btn mobile-only" href="#/settings" aria-label="Settings">${icon('settings', 20)}</a>` : '';
   $('#headerActions').innerHTML = actions + gear;
 }
@@ -653,6 +660,23 @@ const VIEWS = {
     if (k.run?.status === 'running') codePoll();
   },
 
+  more() {
+    setHeader('More');
+    const follow = state.jobs.filter(j => ACTIVE_JOB.has(j.status) && j.follow_up_date && j.follow_up_date <= todayStr()).length;
+    const active = state.jobs.filter(j => ACTIVE_JOB.has(j.status)).length;
+    const budgetLeft = state.budgets.reduce((t, b) => t + b.monthly_limit - b.spent, 0);
+    const tabs = phoneTabs();
+    const row = (key, note = '') => tabs.includes(key) ? '' : `<a class="more-row" href="#/${key}">${icon(ROUTES[key].icon, 20)}<span>${ROUTES[key].label}</span>${note ? `<span class="more-note">${note}</span>` : ''}${icon('chevronRight', 16)}</a>`;
+    const group = (title, rows) => rows.join('') ? `<section class="more-group"><h2>${title}</h2><div class="card">${rows.join('')}</div></section>` : '';
+    $('#content').innerHTML = `<div class="more-list">
+      ${group('Plan', [row('subjects', plural(state.subjects.length, 'subject'))])}
+      ${group('Track', [row('jobs', follow ? plural(follow, 'follow-up') + ' due' : plural(active, 'active application')),
+        row('money', state.budgets.length ? `${budgetLeft < 0 ? '−' : ''}${money(Math.abs(budgetLeft), true)} left` : '')])}
+      ${aiOn() || codeOn() ? group('Study <span class="preview-badge sm">Preview</span>', [aiOn() ? row('study') : '', codeOn() ? row('code') : '']) : ''}
+      ${group('App', [row('settings', esc(state.info.version || ''))])}
+    </div>`;
+  },
+
   settings() {
     setHeader('Settings', 'Make it yours');
     const ap = window.__appearance || DEFAULT_APPEARANCE;
@@ -668,10 +692,10 @@ const VIEWS = {
               <span class="pill accent">3 due today</span>
               <button class="btn btn-primary btn-sm" type="button" tabindex="-1">${icon('plus', 15)}New task</button>
             </div>
-            <div class="appearance-head"><div><div class="setting-title">Light or dark</div><div class="setting-desc">System follows your computer's setting.</div></div>
+            <div class="appearance-head"><div><div class="setting-title">Light or dark</div><div class="setting-desc">System follows your ${onPhone() ? 'phone' : 'computer'}'s setting.</div></div>
               <div class="segmented">${mode('system', 'System', 'monitor')}${mode('light', 'Light', 'sun')}${mode('dark', 'Dark', 'moon')}</div></div>
-            <div class="appearance-head"><div><div class="setting-title">Intro animation</div><div class="setting-desc">Plays when the desktop app opens. Turn off for a quicker, plain loading screen.</div></div>
-              <button class="switch ${state.startup.intro ? 'on' : ''}" role="switch" aria-checked="${state.startup.intro}" data-action="toggle-intro" aria-label="Intro animation"><i></i></button></div>
+            ${onPhone() ? '' : `<div class="appearance-head"><div><div class="setting-title">Intro animation</div><div class="setting-desc">Plays when the desktop app opens. Turn off for a quicker, plain loading screen.</div></div>
+              <button class="switch ${state.startup.intro ? 'on' : ''}" role="switch" aria-checked="${state.startup.intro}" data-action="toggle-intro" aria-label="Intro animation"><i></i></button></div>`}
           </div>
           <div class="appearance">
             <div class="appearance-head"><div class="setting-title">Colour theme</div><span class="small muted">${esc(THEMES[ap.theme]?.name || '')}</span></div>
@@ -702,10 +726,10 @@ const VIEWS = {
         <div class="card">${taskTypesCard()}</div>
         <h2>Your data</h2>
         <div class="card">
-          <div class="setting"><div><div class="setting-title">Saved on this computer</div><div class="setting-desc path">${esc(state.info.data_file || '')}</div></div>${icon('database', 20)}</div>
-          <div class="setting"><div><div class="setting-title">Back up</div><div class="setting-desc">${plural(state.tasks.length, 'task')}, ${plural(state.jobs.length, 'application')}, ${state.subjects.length} subjects${state.backups?.latest ? '. A copy is also saved automatically each day you open the app (the last 10 are kept).' : ''}</div></div>
-            ${btn('export', 'Download backup', 'download', 'btn-ghost btn-sm keep-label')}</div>
-          <div class="setting"><div><div class="setting-title">Restore from a backup</div><div class="setting-desc">Replaces everything with a backup file. Your current data is saved first, just in case.</div></div>
+          <div class="setting"><div><div class="setting-title">Saved on this ${onPhone() ? 'phone' : 'computer'}</div><div class="setting-desc ${onPhone() ? '' : 'path'}">${esc(state.info.data_file || '')}</div></div>${icon('database', 20)}</div>
+          <div class="setting"><div><div class="setting-title">Back up</div><div class="setting-desc">${plural(state.tasks.length, 'task')}, ${plural(state.jobs.length, 'application')}, ${state.subjects.length} subjects${state.backups?.latest ? '. A copy is also saved automatically each day you open the app (the last 10 are kept).' : ''}${onPhone() ? ' Save the file to Drive or Files, or send it to your computer.' : ''}</div></div>
+            ${onPhone() ? btn('export', 'Save backup', 'share', 'btn-ghost btn-sm keep-label') : btn('export', 'Download backup', 'download', 'btn-ghost btn-sm keep-label')}</div>
+          <div class="setting"><div><div class="setting-title">Restore from a backup</div><div class="setting-desc">Replaces everything with a backup file${onPhone() ? ', from this phone or the desktop app' : ''}. Your current data is saved first, just in case.</div></div>
             ${btn('import', 'Restore…', 'upload', 'btn-ghost btn-sm keep-label')}<input type="file" id="importFile" accept=".json,application/json" hidden></div>
         </div>
         <h2>Money</h2>
@@ -715,11 +739,11 @@ const VIEWS = {
           <div class="setting"><div><div class="setting-title">Monthly budget</div><div class="setting-desc">${state.budgets.length ? `${plural(state.budgets.length, 'category', 'categories')}, ${money(state.budgets.reduce((t, b) => t + b.monthly_limit, 0), true)} a month` : 'Not set up yet'}</div></div>
             ${btn('budget-plan', state.budgets.length ? 'Edit budgets' : 'Set up budget', 'money', 'btn-ghost btn-sm keep-label')}</div>
         </div>
-        <h2>Updates</h2>
-        <div class="card">${updatesCard()}</div>
+        ${onPhone() ? '' : `<h2>Updates</h2>
+        <div class="card">${updatesCard()}</div>`}
         <h2>About</h2>
         <div class="card">
-          <div class="setting"><div><div class="setting-title">${esc(state.info.name || 'EasyUniTrack')} ${esc(state.info.version || '')}</div><div class="setting-desc">Student planner, job tracker and money manager</div></div></div>
+          <div class="setting"><div><div class="setting-title">${esc(state.info.name || 'EasyUniTrack')} ${esc(state.info.version || '')}</div><div class="setting-desc">Student planner, job tracker and money manager${onPhone() ? `. Updates come from ${state.info.platform === 'ios' ? 'the App Store' : 'Google Play'}.` : ''}</div></div></div>
           <div class="setting"><div><div class="setting-title">Made by Mysteryman4k</div><div class="setting-desc">© 2026 Mysteryman4k. All rights reserved.</div></div>
             <a class="link" href="https://github.com/Mysteryman4k/lifeplanner" target="_blank" rel="noopener">GitHub ${icon('external', 14)}</a></div>
         </div>
@@ -730,15 +754,15 @@ const VIEWS = {
 function remindersCard() {
   const r = state.reminders, a = state.autostart;
   return `
-    <div class="setting"><div><div class="setting-title">Daily reminder</div><div class="setting-desc">A notification with what's due today, what's overdue and job follow-ups. Only sent on days with something to do, while EasyUniTrack is open (it can be minimised).</div></div>
+    <div class="setting"><div><div class="setting-title">Daily reminder</div><div class="setting-desc">A notification with what's due today, what's overdue and job follow-ups. Only sent on days with something to do${onPhone() ? ', even when the app is closed' : ', while EasyUniTrack is open (it can be minimised)'}.</div></div>
       <button class="switch ${r.daily ? 'on' : ''}" role="switch" aria-checked="${r.daily}" data-action="toggle-reminders" aria-label="Daily reminder"><i></i></button></div>
-    ${r.daily ? `<div class="setting"><div><div class="setting-title">Time</div><div class="setting-desc">If the app opens after this time, you get it then.</div></div>
+    ${r.daily ? `<div class="setting"><div><div class="setting-title">Time</div><div class="setting-desc">${onPhone() ? 'Each day at this time.' : 'If the app opens after this time, you get it then.'}</div></div>
       <div class="row-gap"><input class="input" type="time" id="reminderTime" value="${esc(r.time)}" aria-label="Reminder time">
       ${btn('test-reminder', 'Send test', 'bell', 'btn-ghost btn-sm keep-label')}</div></div>` : ''}
-    <div class="setting"><div><div class="setting-title">Start with Windows</div><div class="setting-desc">${a.supported
+    ${onPhone() ? '' : `<div class="setting"><div><div class="setting-title">Start with Windows</div><div class="setting-desc">${a.supported
       ? 'Opens EasyUniTrack minimised when you sign in, so reminders arrive without you opening it.'
       : 'Available in the installed Windows app.'}</div></div>
-      <button class="switch ${a.enabled ? 'on' : ''}" role="switch" aria-checked="${a.enabled}" data-action="toggle-autostart" aria-label="Start with Windows" ${a.supported ? '' : 'disabled'}><i></i></button></div>`;
+      <button class="switch ${a.enabled ? 'on' : ''}" role="switch" aria-checked="${a.enabled}" data-action="toggle-autostart" aria-label="Start with Windows" ${a.supported ? '' : 'disabled'}><i></i></button></div>`}`;
 }
 
 function taskTypesCard() {
@@ -3134,6 +3158,11 @@ const ACTIONS = {
   async export() {
     try {
       const data = await api('/api/export');
+      if (onPhone()) {                     // the share sheet: save to Files or Drive, or send it to your computer
+        const name = `${(state.info.name || 'easyunitrack').toLowerCase()}-backup-${todayStr()}.json`;
+        if (await window.EUT_NATIVE.saveFile(name, JSON.stringify(data, null, 2))) toast('Backup saved');
+        return;
+      }
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
@@ -3197,7 +3226,7 @@ const ACTIONS = {
   async 'test-reminder'() {
     try {
       const r = await api('/api/reminders/test', { method: 'POST' });
-      toast(r.shown ? 'Test notification sent' : "The notification couldn't be shown. Check that notifications are on in Windows Settings.", r.shown ? '' : 'error');
+      toast(r.shown ? 'Test notification sent' : `The notification couldn't be shown. Check that notifications are on in ${onPhone() ? "your phone's settings for EasyUniTrack" : 'Windows Settings'}.`, r.shown ? '' : 'error');
     } catch (e) { toast(e.message, 'error'); }
   },
   async 'toggle-autostart'() {
@@ -3421,5 +3450,5 @@ function finishIntro() {
   render();
   finishIntro();
   api('/api/diag/client-ready', { method: 'POST' }).catch(() => {});   // recorded in the log, checked by CI
-  checkForUpdates(false);
+  if (!onPhone()) checkForUpdates(false);                              // the phone's app store updates it
 })();

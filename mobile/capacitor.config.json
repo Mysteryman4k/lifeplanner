@@ -1,0 +1,25 @@
+{
+  "appId": "com.mysteryman4k.easyunitrack",
+  "appName": "EasyUniTrack",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": false,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": false
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchAutoHide": false,
+      "backgroundColor": "#F9F9F9",
+      "androidScaleType": "CENTER_INSIDE",
+      "showSpinner": false
+    },
+    "LocalNotifications": {
+      "smallIcon": "ic_stat_notify",
+      "iconColor": "#1F2328"
+    },
+    "CapacitorSQLite": {
+      "androidIsEncryption": false
+    }
+  }
+}
