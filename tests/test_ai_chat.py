@@ -270,3 +270,22 @@ def test_model_details_are_kept_so_a_stuck_ollama_cant_hold_up_settings(c, A):
         assert c.get("/api/ai/state").json()["can_think"] is True
     events(c.post("/api/ai/chat", json={"messages": [{"role": "user", "content": "hi"}]}))
     assert len(shows) == 1 and seen[-1]["reasoning_effort"] == "none"          # asked once, used by the chat too
+
+
+def test_a_request_the_service_refuses_shows_its_reason_without_keys(c, A):
+    """DeepSeek answers an unknown model with a 400 that names the models it has: show that, not "try again
+    later". Anything that looks like a key, and the request id, are taken out first."""
+    ready(c, "deepseek", "no-such-model")
+    c.put("/api/ai/key", json={"provider": "deepseek", "key": "sk-test-0123456"})
+    reason = ("The supported API model names are deepseek-flash, deepseek-v4-pro, but you passed no-such-model. "
+              "Key sk-test-0123456 and sk-other-ABCDEF were seen. (request_id: 2ca00518-e339)")
+    A.AI_TRANSPORT["value"] = httpx.MockTransport(
+        lambda req: httpx.Response(400, json={"error": {"message": reason, "type": "invalid_request_error"}}))
+    ev = events(c.post("/api/ai/chat", json={"messages": [{"role": "user", "content": "hi"}]}))
+    err = next(e for e in ev if e["type"] == "error")["message"]
+    assert err == ("DeepSeek couldn't answer: The supported API model names are deepseek-flash, deepseek-v4-pro, but "
+                   "you passed no-such-model. Key [key] and [key] were seen.")
+    assert "sk-" not in json.dumps(ev) and "request_id" not in err
+    A.AI_TRANSPORT["value"] = httpx.MockTransport(lambda req: httpx.Response(400, text="<html>Bad request</html>"))
+    ev = events(c.post("/api/ai/chat", json={"messages": [{"role": "user", "content": "hi"}]}))
+    assert next(e for e in ev if e["type"] == "error")["message"] == "DeepSeek returned an error (400). Try again later."

@@ -262,7 +262,7 @@ def test_anthropic_tool_use_round_trip(c, A):
         return httpx.Response(200, text=first if len(bodies) == 1 else second)
     A.AI_TRANSPORT["value"] = httpx.MockTransport(handler)
     ev = chat(c, "add an essay plan task")
-    assert "".join(e.get("text", "") for e in ev) == "Adding it. Done."
+    assert "".join(e.get("text", "") for e in ev) == "Adding it. \n\nDone."      # its own paragraph after the tool call
     assert any(e["type"] == "action" for e in ev) and "Essay plan" in tasks(c)
     assert bodies[0]["tools"][0]["input_schema"]
     assistant, results = bodies[1]["messages"][-2:]
@@ -321,3 +321,12 @@ def test_subjects_that_differ_only_in_case(c, fake):
     assert tasks(c)["Prac"]["subject_id"] == upper["id"]           # exactly as written
     assert "Exam" not in tasks(c)                                   # either one: the model is shown both names
     assert "isn't one of the student's subjects" in json.dumps(fake.rounds[1]["messages"])
+
+
+def test_text_after_a_tool_call_starts_a_new_paragraph(c, fake):
+    """DeepSeek says what it's about to do, looks the tasks up, then answers: "planner.I can see" ran together."""
+    ready(c)
+    fake.script = [[{"type": "text", "text": "I'll look at your planner."}, calls(("list_tasks", {}))],
+                   [{"type": "text", "text": "I can see "}, {"type": "text", "text": "no tasks."}]]
+    text = "".join(e.get("text", "") for e in chat(c) if e["type"] == "text")
+    assert text == "I'll look at your planner.\n\nI can see no tasks."

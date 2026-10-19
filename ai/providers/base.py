@@ -159,8 +159,31 @@ class Provider:
         if status == 429:
             raise ProviderError(f"{name} says you've hit a rate or spending limit. Wait a little, or check your "
                                 "account's credit and limits.")
+        explained = self.service_message(body) if status in (400, 422) else ""
+        if explained:                             # a request it can't take (an unknown model, say): it says why
+            raise ProviderError(f"{name} couldn't answer: {explained}")
         if status >= 400:
             raise ProviderError(f"{name} returned an error ({status}). Try again later.")
+
+    def service_message(self, body: str) -> str:
+        """The service's own explanation in an error reply ({"error": {"message": ...}}), kept short, without its
+        request id, and with anything that looks like a key taken out (it's shown to the student)."""
+        import json
+        import re
+        try:
+            data = json.loads(body)
+        except ValueError:
+            return ""
+        err = data.get("error") if isinstance(data, dict) else None
+        msg = err.get("message") if isinstance(err, dict) else err
+        if not isinstance(msg, str):
+            return ""
+        if self.key:
+            msg = msg.replace(self.key, "[key]")
+        msg = re.sub(r"\s*\(request[_ ]id:[^)]*\)", "", msg, flags=re.I)
+        msg = re.sub(r"\b(?:sk|pk|key|api[_-]?key)[-_][A-Za-z0-9_-]{6,}", "[key]", msg, flags=re.I)
+        msg = " ".join(msg.split())
+        return msg if len(msg) <= 240 else msg[:239] + "…"
 
     def get(self, path: str, headers: dict = None) -> dict:
         return self.request("GET", path, headers=headers)
