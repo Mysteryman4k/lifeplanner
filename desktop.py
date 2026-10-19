@@ -236,7 +236,7 @@ def main():
         width=1280,
         height=820,
         min_size=(380, 600),
-        background_color="#140F16" if dark else "#FFF7F2",
+        background_color="#101011" if dark else "#F9F9F9",          # the Plain theme, until the app draws
         text_select=True,
         minimized=minimized,
     )

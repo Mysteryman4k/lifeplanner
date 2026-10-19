@@ -24,6 +24,7 @@ PATCH for fixes. Pushing a tag like `v3.2.0` publishes that version's section as
 ### Changed
 
 - The "This PC" check mentions larger, fast models like gpt-oss:20b on PCs with 24 GB of memory or more
+- A new app icon in the Plain look: the same check-and-arrow mark, white on a near-black tile, in place of the orange-to-pink gradient. It's used for the window, taskbar, Start menu, installer, Store package and browser tab, and the window's colour while it opens matches the Plain theme too
 
 ## [4.0.0-beta.2] - 2026-10-16
 
