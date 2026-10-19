@@ -1,5 +1,5 @@
 """Adapter for anything OpenAI-compatible: OpenAI, DeepSeek, custom services (chat arrives in stage 2)."""
-from .base import Provider, ProviderError
+from .base import CUT_OFF, Provider, ProviderError
 
 
 class OpenAICompatProvider(Provider):
@@ -22,16 +22,18 @@ class OpenAICompatProvider(Provider):
 
     def stream_chat(self, model: str, system: str, messages: list, tools: list = None):
         import json
+        self.chat_model = model                       # named in the message if the service doesn't know it
         body = {"model": model, "stream": True, "stream_options": {"include_usage": True},
                 "messages": [{"role": "system", "content": system}, *messages], **self.request_options(model)}
         if tools:
             body["tools"] = [{"type": "function", "function": {"name": t["name"], "description": t["description"],
                                                                 "parameters": t["parameters"]}} for t in tools]
         usage = {"type": "usage", "input": 0, "output": 0}
-        text, calls = "", {}                          # index -> {"id", "name", "arguments"}
+        text, calls, stop = "", {}, ""                # calls: index -> {"id", "name", "arguments"}
         for data in self.stream_lines("/chat/completions", self.headers(), body):
             ev = json.loads(data)
             for choice in ev.get("choices") or []:
+                stop = choice.get("finish_reason") or stop
                 delta = choice.get("delta") or {}
                 if delta.get("content"):
                     text += delta["content"]
@@ -48,6 +50,9 @@ class OpenAICompatProvider(Provider):
                 usage["input"] = ev["usage"].get("prompt_tokens", 0)
                 usage["output"] = ev["usage"].get("completion_tokens", 0)
         yield usage
+        if stop == "length":                          # say so, rather than end mid-sentence without a word
+            yield {"type": "error", "message": CUT_OFF}
+            return                                    # a tool call cut off part way is never run
         if calls:
             out, native = [], []
             for n, c in sorted(calls.items()):

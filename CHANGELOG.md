@@ -9,6 +9,7 @@ PATCH for fixes. Pushing a tag like `v3.2.0` publishes that version's section as
 ### Added
 
 - Quick replies from local models: models in Ollama that think before answering (like gemma4 and gpt-oss) now answer straight away, which on a PC without a graphics card cuts the wait for the first word from up to a minute to a few seconds. A Think button next to the paperclip in the chat lets the model think first when you want it to (slower, and can help with hard maths and debugging). It's remembered for your next chats, and only shows for models that can think
+- Quick replies and Think work with Claude too. Claude 5 models (like Claude Haiku 5.5) think before every answer unless asked not to; replies are now quick unless you turn on Think, using whatever each model allows (thinking off, its lowest setting, or low effort for models that always think)
 
 ### Fixed
 
@@ -20,6 +21,9 @@ PATCH for fixes. Pushing a tag like `v3.2.0` publishes that version's section as
 - A few simple HTML tags some models write (line breaks in tables, underline, superscript and subscript) show as formatting rather than as tags
 - When the assistant says what it's about to do, looks something up and then answers, the answer starts a new paragraph instead of running on from the sentence before
 - When a provider refuses a request (for example, a model name it doesn't have), its own reason is shown, like "The supported API model names are …", instead of "Try again later". Anything that looks like a key is removed from the message first
+- With Claude, a reply that adds a task or proposes a code change while thinking keeps working: Claude's thinking is passed back unchanged with the result, as the API requires
+- If Anthropic doesn't recognise the model chosen in Settings, the message names it and asks you to choose another, instead of asking you to check a base URL
+- A reply that reaches its length limit now says so ("Ask the assistant to carry on"), instead of ending mid-sentence without a word. Claude replies also have more room, since thinking counts towards the limit
 
 ### Changed
 
