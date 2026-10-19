@@ -5,6 +5,8 @@ import initSqlJs from 'sql.js';
 import { createApi, type Api } from './api';
 import type { Ctx, Platform } from './api/context';
 import { autoBackup } from './api/system';
+import { pdfJsReader } from './ai/files';
+import { cleanUpRecords } from './ai/routes';
 import { Database } from './db/db';
 import { initDb } from './db/schema';
 import { SqlJsDriver } from './db/sqljs';
@@ -15,20 +17,36 @@ declare const __APP_VERSION__: string;
 const native = Capacitor.isNativePlatform();
 const realFetch = window.fetch.bind(window);
 
+/** pdf.js, loaded the first time a PDF is attached (it's large, and most sessions never need it). */
+const readPdf = pdfJsReader(async () => {
+  const url = '/static/vendor/pdfjs/pdf.min.mjs';
+  const pdfjs = await import(/* @vite-ignore */ url);
+  pdfjs.GlobalWorkerOptions.workerSrc = '/static/vendor/pdfjs/pdf.worker.min.mjs';
+  return pdfjs;
+});
+
 async function start(): Promise<{ api: Api; ctx: Ctx }> {
   let db: Database;
   let platform: Platform;
   if (native) {
-    const [{ NativeDriver }, n] = await Promise.all([import('./db/native'), import('./platform/native')]);
+    const [{ NativeDriver }, n, { nativeStreamFetch }, { SecureStorage }] = await Promise.all([
+      import('./db/native'), import('./platform/native'), import('./platform/streamfetch'), import('@aparajita/capacitor-secure-storage')]);
     db = new Database(await NativeDriver.open());
+    await SecureStorage.setKeyPrefix('easyunitrack_');
     platform = {
       name: Capacitor.getPlatform() as 'android' | 'ios',
       dataLabel: 'On this phone, in the app\'s private storage. Removing the app removes it, so keep a backup.',
       region: n.region,
       notify: n.notifications.show,
       backups: n.nativeBackups,
-      secrets: { get: async () => null, set: async () => undefined, remove: async () => undefined },
-      fetch: realFetch,
+      // AI keys: encrypted with a key kept in the Android Keystore (the iPhone's Keychain), never in the database
+      secrets: {
+        get: k => SecureStorage.getItem(k),
+        set: (k, v) => SecureStorage.setItem(k, v),
+        remove: async k => { await SecureStorage.removeItem(k); },
+      },
+      fetch: Capacitor.getPlatform() === 'android' ? nativeStreamFetch() : realFetch,
+      readPdf,
     };
   } else {
     const w = await import('./platform/web');
@@ -43,6 +61,7 @@ async function start(): Promise<{ api: Api; ctx: Ctx }> {
       backups: w.webBackups,
       secrets: w.webSecrets,
       fetch: realFetch,
+      readPdf,
     };
   }
   await initDb(db, __APP_VERSION__);
@@ -50,6 +69,7 @@ async function start(): Promise<{ api: Api; ctx: Ctx }> {
   platform.remindersChanged = () => scheduleReminders(ctx, false);
   const api = createApi(ctx);
   void autoBackup(ctx);
+  void cleanUpRecords(ctx).catch(e => console.error('Clearing old AI records failed', e));
   return { api, ctx };
 }
 

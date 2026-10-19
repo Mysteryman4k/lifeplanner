@@ -239,6 +239,9 @@ const route = () => {
 };
 /** The phone's tabs: the fourth is the study assistant when it's on, otherwise Money. Everything else is under More. */
 const phoneTabs = () => ['today', 'tasks', 'calendar', aiOn() ? 'study' : 'money', 'more'];
+/** Where this copy keeps AI keys, and what to call the device, in the words of each platform. */
+const keyStore = () => onPhone() ? "this phone's secure storage" : 'Windows Credential Manager';
+const thisDevice = () => onPhone() ? 'this phone' : 'this PC';
 
 function renderNav() {
   const r = route();
@@ -899,6 +902,7 @@ function aiCard() {
   if (!a.terms.agreed) {
     const desc = a.terms.needs_reagreement
       ? 'The terms of use have been updated. Read and agree to the new version to keep using the AI features.'
+      : onPhone() ? 'An AI tutor for your units, using your own AI provider. Off until you turn it on.'
       : 'An AI tutor for your units and a coding helper, using your own AI provider or a free model on this PC. Off until you turn it on.';
     return `<div class="setting"><div><div class="setting-title">AI study assistant and code workspace</div><div class="setting-desc">${desc}</div></div>
       ${btn('ai-start', a.terms.needs_reagreement ? 'Read new terms' : 'Learn more', 'spark', 'btn-primary btn-sm keep-label')}</div>`;
@@ -916,8 +920,8 @@ function aiCard() {
   return `
     <div class="setting"><div><div class="setting-title">Study assistant</div><div class="setting-desc">Explain, practise and quiz yourself on your units with an AI tutor.</div></div>
       <button class="switch ${a.assistant_enabled ? 'on' : ''}" role="switch" aria-checked="${a.assistant_enabled}" data-action="toggle-ai-assistant" aria-label="Study assistant"><i></i></button></div>
-    <div class="setting"><div><div class="setting-title">Code workspace</div><div class="setting-desc">Help with code in folders you link. Code only runs when you click Run.</div></div>
-      <button class="switch ${a.code_enabled ? 'on' : ''}" role="switch" aria-checked="${a.code_enabled}" data-action="toggle-ai-code" aria-label="Code workspace"><i></i></button></div>
+    ${onPhone() ? '' : `<div class="setting"><div><div class="setting-title">Code workspace</div><div class="setting-desc">Help with code in folders you link. Code only runs when you click Run.</div></div>
+      <button class="switch ${a.code_enabled ? 'on' : ''}" role="switch" aria-checked="${a.code_enabled}" data-action="toggle-ai-code" aria-label="Code workspace"><i></i></button></div>`}
     ${a.code_enabled ? codeFoldersSetting() : ''}
     <div class="setting"><div><div class="setting-title">Keep chats</div><div class="setting-desc">Saved chats you haven't continued for this long are deleted. Suggested code changes, their backups and the record of changes to your tasks are cleared after 90 days.</div></div>
       <select class="select" id="aiKeepChats" style="max-width:220px" aria-label="Keep chats">${KEEP_CHATS.map(([v, l]) => opt(v, l, a.keep_chats_days || 0)).join('')}</select></div>
@@ -927,7 +931,7 @@ function aiCard() {
     </div></div>
     ${p === 'custom' ? `<div class="setting"><div><div class="setting-title">Base URL</div><div class="setting-desc">The service's OpenAI-compatible address, for example https://openrouter.ai/api/v1</div></div>
       <input class="input" id="aiBaseUrl" type="url" value="${esc(a.base_url)}" placeholder="https://" style="max-width:300px" aria-label="Base URL"></div>` : ''}
-    ${needsKey ? `<div class="setting"><div><div class="setting-title">API key</div><div class="setting-desc">${a.key ? `Saved in Windows Credential Manager (${esc(a.key)}). Paste a new key to replace it.` : 'Stored in Windows Credential Manager on this PC, never in your backups.'}</div></div>
+    ${needsKey ? `<div class="setting"><div><div class="setting-title">API key</div><div class="setting-desc">${a.key ? `Saved in ${keyStore()} (${esc(a.key)}). Paste a new key to replace it.` : `Stored in ${keyStore()}${onPhone() ? '' : ' on this PC'}, never in your backups.`}</div></div>
       <div class="row-gap"><input class="input" id="aiKey" type="password" autocomplete="off" spellcheck="false" placeholder="${a.key ? 'Paste a new key' : 'Paste your API key'}" style="width:220px" aria-label="API key">
       ${btn('ai-save-key', 'Save', 'check', 'btn-ghost btn-sm keep-label')}${a.key ? btn('ai-remove-key', 'Remove', 'trash', 'btn-danger-ghost btn-sm keep-label') : ''}</div></div>` : ''}
     ${preset ? `<div class="setting"><div style="min-width:0"><div class="setting-title">Model</div>
@@ -935,9 +939,9 @@ function aiCard() {
       <div class="row-gap">${models.length ? `<select class="select" id="aiModel" style="max-width:260px" aria-label="Model">${models.map(m => opt(m, (state.aiCloud || []).includes(m) ? `${m} (Ollama cloud: data leaves this PC)` : m, a.model)).join('')}</select>` : ''}
       ${btn('ai-test', state.aiTesting ? 'Testing…' : 'Test connection', 'refresh', 'btn-ghost btn-sm keep-label', state.aiTesting ? 'disabled' : '')}</div></div>` : ''}
     ${p === 'ollama' ? `<div class="setting"><div><div class="setting-title">This PC</div><div class="setting-desc">${sys ? `${esc(sys.advice)} ${sys.ollama.running ? `Ollama ${esc(sys.ollama.version)} is running.` : 'Ollama isn\'t running.'}` : 'Checking…'}</div></div>${icon('monitor', 20)}</div>` : ''}
-    <div class="setting"><div><div class="setting-title">Terms of use</div><div class="setting-desc">Agreed to version ${esc(a.terms.agreed_version)} on ${esc(fmt(a.terms.agreed_at.slice(0, 10), { day: 'numeric', month: 'short', year: 'numeric' }))}. Saved only on this PC.</div></div>
+    <div class="setting"><div><div class="setting-title">Terms of use</div><div class="setting-desc">Agreed to version ${esc(a.terms.agreed_version)} on ${esc(fmt(a.terms.agreed_at.slice(0, 10), { day: 'numeric', month: 'short', year: 'numeric' }))}. Saved only on ${thisDevice()}.</div></div>
       <div class="row-gap">${btn('ai-view-terms', 'View', 'shield', 'btn-ghost btn-sm keep-label')}${btn('ai-withdraw', 'Turn off', 'power', 'btn-ghost btn-sm keep-label')}</div></div>
-    <div class="setting"><div><div class="setting-title">Remove all AI data</div><div class="setting-desc">Deletes your saved API keys, chats, linked code folders (not the folders themselves), suggested changes and their backups, and your AI settings and agreement. Your notes and planner data aren't touched.</div></div>
+    <div class="setting"><div><div class="setting-title">Remove all AI data</div><div class="setting-desc">${onPhone() ? 'Deletes your saved API keys, chats, and your AI settings and agreement.' : 'Deletes your saved API keys, chats, linked code folders (not the folders themselves), suggested changes and their backups, and your AI settings and agreement.'} Your notes and planner data aren't touched.</div></div>
       ${btn('ai-remove-all', 'Remove', 'trash', 'btn-danger-ghost btn-sm keep-label')}</div>`;
 }
 
@@ -1373,7 +1377,7 @@ function chatShell(inPanel) {
           <textarea class="composer-input" id="chatInput" rows="1" maxlength="20000" placeholder="${folder ? 'Ask about this code, or paste an error message' : task ? 'Ask about this task' : c.file ? 'Ask about the attached file' : 'Ask a question, or paste something to work through'}" aria-label="Message" ${c.streaming ? 'disabled' : ''}></textarea></div>
         <div class="composer-bar">
           <button class="icon-btn sm chat-attach" type="button" data-action="chat-attach" aria-label="Attach a file" title="Attach a PDF, PowerPoint (.pptx), Word (.docx) or text file. You can also drop one here." ${c.streaming || c.attaching ? 'disabled' : ''}>${icon('paperclip', 16)}</button>
-          <input type="file" id="chatFile" accept="${FILE_TYPES}" hidden>
+          <input type="file" id="chatFile" accept="${onPhone() ? `${FILE_TYPES},${PHONE_CODE_TYPES}` : FILE_TYPES}" hidden>
           ${a.can_think ? `<button class="think-toggle ${a.think ? 'on' : ''}" type="button" data-action="chat-think" aria-pressed="${a.think ? 'true' : 'false'}"
             title="${a.think ? 'Think first is on: the model thinks before it answers. Slower, and can help with hard maths and debugging. Click for quick replies.'
               : 'Quick replies. Click to let the model think before it answers: slower, and can help with hard maths and debugging.'}" ${c.streaming || state.thinkSaving ? 'disabled' : ''}>${icon('bulb', 14)}Think</button>` : ''}
@@ -1751,6 +1755,8 @@ function quizChoices(text) {
 // ── Attached files: a PDF, PowerPoint, Word or text file is read on this PC (ai/files.py), and the text of the
 // pages, slides or sections chosen goes with each question ──
 const FILE_TYPES = '.pdf,.pptx,.docx,.txt,.md,.markdown';
+// On the phone, code files go into a study chat too (the desktop's code workspace links whole folders instead)
+const PHONE_CODE_TYPES = '.py,.java,.c,.h,.cpp,.hpp,.cc,.cs,.js,.ts,.jsx,.tsx,.go,.rs,.kt,.swift,.rb,.php,.sql,.html,.css,.json,.xml,.yaml,.yml,.sh,.r,.m,.scala,.dart';
 const FILE_MAX = 30 * 1024 * 1024;               // MAX_UPLOAD in ai/files.py
 const CHARS_PER_TOKEN = 3.7;                     // for the estimate shown (English prose)
 const FILE_ASKS = {
@@ -2992,12 +2998,12 @@ const ACTIONS = {
     try {
       state.ai = await api('/api/ai/key', { method: 'PUT', body: { provider: state.ai.provider, key } });
       state.aiTest = null;
-      toast('Key saved in Windows Credential Manager');
+      toast(`Key saved in ${keyStore()}`);
       stillRender();
     } catch (e) { toast(e.message, 'error'); }
   },
   async 'ai-remove-key'() {
-    if (!(await confirmDialog('Remove this API key?', 'It\'s deleted from Windows Credential Manager. You can add it again any time.', 'Remove'))) return;
+    if (!(await confirmDialog('Remove this API key?', `It's deleted from ${keyStore()}. You can add it again any time.`, 'Remove'))) return;
     try { state.ai = await api(`/api/ai/key/${state.ai.provider}`, { method: 'DELETE' }); state.aiTest = null; stillRender(); }
     catch (e) { toast(e.message, 'error'); }
   },
@@ -3286,7 +3292,8 @@ document.addEventListener('click', e => {
 document.addEventListener('keydown', e => {
   if (e.target.id === 'noteTopicInput' && e.key === 'Enter') { e.preventDefault(); noteTopicWrite(); return; }
   if (e.target.id === 'runCommand' && e.key === 'Enter' && !e.isComposing) { e.preventDefault(); ACTIONS['code-run'](); return; }
-  if (e.target.id === 'chatInput' && e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+  // On a phone the keyboard's return key starts a new line; the send button sends
+  if (e.target.id === 'chatInput' && e.key === 'Enter' && !e.shiftKey && !e.isComposing && !onPhone()) {
     e.preventDefault(); chatSend(e.target.value);
   }
 });

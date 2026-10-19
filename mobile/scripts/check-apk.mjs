@@ -9,6 +9,7 @@ const version = readFileSync(new URL('../../VERSION', import.meta.url), 'utf8').
 const need = [
   'assets/public/index.html', 'assets/public/mobile.js', 'assets/public/mobile.css', 'assets/public/static/app.js',
   'assets/public/static/styles.css', 'assets/public/static/vendor/katex/katex.min.js', 'assets/capacitor.config.json',
+  'assets/public/static/vendor/pdfjs/pdf.min.mjs', 'assets/public/static/vendor/pdfjs/pdf.worker.min.mjs', 'assets/public/static/vendor/sql-wasm.wasm',
   'res/mipmap-anydpi-v26/ic_launcher.xml', 'AndroidManifest.xml', 'classes.dex',
 ];
 const missing = need.filter(f => !list.includes(f));

@@ -103,3 +103,63 @@ describe('backups on the phone', () => {
     expect((await c.post('/api/tasks', { title: 'Still works', subject_id: 999 })).status).toBe(400);   // foreign keys back on
   });
 });
+
+describe('streamed requests through the Android plugin', async () => {
+  const { nativeStreamFetch } = await import('../src/platform/streamfetch');
+
+  /** A stand-in for StreamFetchPlugin.java: replies with the given status and pieces. */
+  function fakePlugin(status: number, pieces: string[], fail?: 'before' | 'during') {
+    const listeners: Record<string, ((e: any) => void)[]> = { chunk: [], end: [] };
+    const cancelled: string[] = [];
+    const started: any[] = [];
+    const plugin = {
+      async addListener(event: string, fn: (e: any) => void) { listeners[event].push(fn); return { remove: async () => undefined }; },
+      async cancel({ id }: { id: string }) { cancelled.push(id); },
+      async start(o: any) {
+        started.push(o);
+        if (fail === 'before') throw new Error('network');
+        // The first piece can arrive before start() resolves in the app: it must not be lost
+        listeners.chunk.forEach(f => f({ id: o.id, data: btoa(pieces[0]) }));
+        setTimeout(() => {
+          for (const p of pieces.slice(1)) listeners.chunk.forEach(f => f({ id: o.id, data: btoa(p) }));
+          listeners.end.forEach(f => f({ id: o.id, error: fail === 'during' ? 'network' : undefined }));
+        }, 5);
+        return { status, headers: { 'content-type': 'text/event-stream' } };
+      },
+    };
+    return { plugin, cancelled, started };
+  }
+
+  it('gives a fetch()-like Response whose body arrives in pieces', async () => {
+    const { plugin, started } = fakePlugin(200, ['data: 1\n', '\ndata: 2\n\n']);
+    const res = await nativeStreamFetch(plugin as any)('https://api.openai.com/v1/chat/completions',
+      { method: 'POST', headers: { Authorization: 'Bearer k' }, body: '{"a":1}' });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('data: 1\n\ndata: 2\n\n');
+    expect(started[0]).toMatchObject({ method: 'POST', headers: { authorization: 'Bearer k' }, body: '{"a":1}' });
+  });
+
+  it('fails like fetch() when the request can\'t be made, and when the connection drops', async () => {
+    await expect(nativeStreamFetch(fakePlugin(200, ['x'], 'before').plugin as any)('https://x.test')).rejects.toThrow(TypeError);
+    const res = await nativeStreamFetch(fakePlugin(200, ['a', 'b'], 'during').plugin as any)('https://x.test');
+    await expect(res.text()).rejects.toThrow();
+  });
+
+  it('stops the request when the student taps Stop', async () => {
+    const fake = fakePlugin(200, ['a', 'b', 'c']);
+    const ctrl = new AbortController();
+    const res = await nativeStreamFetch(fake.plugin as any)('https://x.test', { signal: ctrl.signal });
+    ctrl.abort();
+    await expect(res.text()).rejects.toThrow(/abort/i);
+    expect(fake.cancelled).toHaveLength(1);
+  });
+
+  it('works with the providers end to end: a key error comes back in plain words', async () => {
+    const { getProvider } = await import('../src/ai/providers');
+    const fake = fakePlugin(401, ['{"error":{"message":"invalid x-api-key"}}']);
+    const p = getProvider('anthropic', { key: 'sk-ant-12345678', fetch: nativeStreamFetch(fake.plugin as any) });
+    const events: unknown[] = [];
+    await expect((async () => { for await (const e of p.streamChat('m', 's', [{ role: 'user', content: 'hi' }])) events.push(e); })())
+      .rejects.toThrow(/key wasn't accepted/);
+  });
+});

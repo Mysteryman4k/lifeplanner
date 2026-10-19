@@ -1,5 +1,6 @@
 /* What the API needs from the phone, and helpers shared by the route files. */
 import type { Database } from '../db/db';
+import type { PdfReader } from '../ai/files';
 import { HttpError } from '../http';
 import { parse, type Model } from '../validate';
 
@@ -31,6 +32,8 @@ export interface Platform {
   };
   /** Network access for the AI providers (tests pass a fake). */
   fetch: typeof fetch;
+  /** Reads a PDF's pages for attachments (pdf.js). */
+  readPdf?: PdfReader;
 }
 
 export interface Ctx {

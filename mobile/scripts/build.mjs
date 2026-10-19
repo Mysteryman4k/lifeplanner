@@ -19,6 +19,11 @@ mkdirSync(OUT, { recursive: true });
 cpSync(join(ROOT, 'static'), join(OUT, 'static'), { recursive: true, filter: src => !src.endsWith('splash.html') });
 cpSync(join(MOBILE, 'node_modules', 'sql.js', 'dist', 'sql-wasm.wasm'), join(OUT, 'static', 'vendor', 'sql-wasm.wasm'));
 cpSync(join(MOBILE, 'web', 'mobile.css'), join(OUT, 'mobile.css'));
+// pdf.js reads attached PDFs on the phone (loaded only when one is attached)
+for (const f of ['pdf.min.mjs', 'pdf.worker.min.mjs']) {
+  cpSync(join(MOBILE, 'node_modules', 'pdfjs-dist', 'legacy', 'build', f), join(OUT, 'static', 'vendor', 'pdfjs', f));
+}
+cpSync(join(MOBILE, 'node_modules', 'pdfjs-dist', 'LICENSE'), join(OUT, 'static', 'vendor', 'pdfjs', 'LICENSE'));
 
 await build({
   entryPoints: [join(MOBILE, 'src', 'main.ts')],

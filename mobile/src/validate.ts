@@ -10,7 +10,7 @@ class Invalid extends Error {
 }
 
 export interface Rule {
-  kind: 'str' | 'int' | 'float' | 'bool' | 'lit' | 'date' | 'list' | 'model';
+  kind: 'str' | 'int' | 'float' | 'bool' | 'lit' | 'date' | 'list' | 'model' | 'dict';
   /** null is allowed (Optional[...]). */
   nullable?: boolean;
   /** No default: the field must be sent. */
@@ -18,8 +18,8 @@ export interface Rule {
   default?: unknown;
   minLen?: number; maxLen?: number; pattern?: string;
   ge?: number; gt?: number; le?: number;
-  values?: readonly string[];
-  item?: Rule; maxItems?: number;
+  values?: readonly (string | number)[];
+  item?: Rule; maxItems?: number; minItems?: number;
   model?: Model;
   /** Runs after the type check, like a Pydantic field_validator (throw ValueError-style messages). */
   check?: (v: any) => any;
@@ -28,8 +28,8 @@ export interface Rule {
 export type Model = Record<string, Rule>;
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
-const quoteList = (vals: readonly string[]) => {
-  const q = vals.map(v => `'${v}'`);
+const quoteList = (vals: readonly (string | number)[]) => {
+  const q = vals.map(v => (typeof v === 'number' ? String(v) : `'${v}'`));
   return q.length > 1 ? `${q.slice(0, -1).join(', ')} or ${q[q.length - 1]}` : q[0];
 };
 
@@ -90,13 +90,16 @@ function one(rule: Rule, v: unknown, loc: Loc, errors: ErrorItem[]): unknown {
         else throw new Invalid('bool_parsing', 'Input should be a valid boolean, unable to interpret input');
         break;
       case 'lit':
-        if (typeof v !== 'string' || !rule.values!.includes(v)) {
+        if ((typeof v !== 'string' && typeof v !== 'number') || !rule.values!.includes(v)) {
           throw new Invalid('literal_error', `Input should be ${quoteList(rule.values!)}`);
         }
         out = v;
         break;
       case 'list': {
         if (!Array.isArray(v)) throw new Invalid('list_type', 'Input should be a valid list');
+        if (rule.minItems !== undefined && v.length < rule.minItems) {
+          throw new Invalid('too_short', `List should have at least ${plural(rule.minItems, 'item')} after validation, not ${v.length}`);
+        }
         if (rule.maxItems !== undefined && v.length > rule.maxItems) {
           throw new Invalid('too_long', `List should have at most ${plural(rule.maxItems, 'item')} after validation, not ${v.length}`);
         }
@@ -105,6 +108,10 @@ function one(rule: Rule, v: unknown, loc: Loc, errors: ErrorItem[]): unknown {
       }
       case 'model':
         return parseInto(rule.model!, v, loc, errors).data;
+      case 'dict':
+        if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Invalid('dict_type', 'Input should be a valid dictionary');
+        out = v;
+        break;
     }
     if (rule.check) out = rule.check(out);
     return out;
@@ -160,7 +167,7 @@ export function sent<T = Record<string, any>>(model: Model, input: unknown): T {
 export const str = (o: Partial<Rule> = {}): Rule => ({ kind: 'str', default: '', ...o });
 export const optStr = (o: Partial<Rule> = {}): Rule => ({ kind: 'str', nullable: true, default: null, ...o });
 export const name = (o: Partial<Rule> = {}): Rule => ({ kind: 'str', required: true, minLen: 1, maxLen: 120, ...o });
-export const lit = (values: readonly string[], o: Partial<Rule> = {}): Rule => ({ kind: 'lit', values, ...o });
+export const lit = (values: readonly (string | number)[], o: Partial<Rule> = {}): Rule => ({ kind: 'lit', values, ...o });
 export const int = (o: Partial<Rule> = {}): Rule => ({ kind: 'int', ...o });
 export const optInt = (o: Partial<Rule> = {}): Rule => ({ kind: 'int', nullable: true, default: null, ...o });
 export const float = (o: Partial<Rule> = {}): Rule => ({ kind: 'float', ...o });

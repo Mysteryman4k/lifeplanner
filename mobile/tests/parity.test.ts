@@ -311,10 +311,10 @@ describe('the phone answers every route the screens call', () => {
     });
     const calls = [...appJs.matchAll(/api\(\s*[`'](\/api\/[^`'?]*)[^`']*[`'](?:\s*\+[^,)]*)?\s*(?:,\s*\{\s*method:\s*'([A-Z]+)')?/g)];
     expect(calls.length).toBeGreaterThan(20);
-    // The AI and code routes come with the assistant (stage 3)
+    // The code workspace's routes are the desktop's alone: it works with project folders on a computer
     const missing = calls
       .map(m => ({ path: m[1].replace(/\$\{[^}]+\}/g, '1'), method: m[2] || 'GET' }))
-      .filter(c => !c.path.startsWith('/api/ai/') && !c.path.startsWith('/api/code/'))
+      .filter(c => !c.path.startsWith('/api/code/') || (c.path === '/api/code/folders' && c.method === 'GET'))
       .filter(c => !routes.some(r => r.method === c.method && r.rx.test(c.path)))
       .map(c => `${c.method} ${c.path}`);
     expect(missing).toEqual([]);

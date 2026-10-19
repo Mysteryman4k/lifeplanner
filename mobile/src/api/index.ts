@@ -2,6 +2,7 @@
    (the desktop's `with db()`: committed when it succeeds, rolled back when it fails). */
 import { Router, type Handler } from '../http';
 import type { Ctx } from './context';
+import { registerAi } from '../ai/routes';
 import { registerSystem } from './system';
 import { registerTasks } from './tasks';
 import { registerTrack } from './track';
@@ -25,6 +26,7 @@ export function createApi(ctx: Ctx) {
   registerTasks(router, ctx);
   registerTrack(router, ctx);
   registerSystem(router, ctx);
+  registerAi(router, ctx);
   return router;
 }
 
