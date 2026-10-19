@@ -37,3 +37,7 @@ dist/
 .pytest_cache/
 .ruff_cache/
 *.log
+
+# Phone app (mobile/): dependencies and the built web files (npm run build)
+mobile/node_modules/
+mobile/www/

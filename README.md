@@ -43,6 +43,13 @@ AI replies can be wrong, and you're responsible for following your university's 
 
 EasyUniTrack has no accounts, ads or tracking. Your planner stays on your computer; the optional AI features send what you ask to the AI provider you choose (with a model running on your PC in Ollama, nothing leaves your PC). See the [privacy policy](PRIVACY.md).
 
+## Android (preview)
+
+The same planner on your phone, built from the same screens: everything stays on the phone, reminders arrive
+while the app is closed, and backups move between your phone and computer. The study assistant works with your
+own Anthropic, OpenAI or DeepSeek account. It's not on Google Play yet; see [mobile/README.md](mobile/README.md)
+to build it.
+
 ## Install (Windows)
 
 1. Go to the [latest release](https://github.com/Mysteryman4k/lifeplanner/releases/latest) and download **EasyUniTrack-Setup-x.y.z.exe**.
@@ -157,6 +164,7 @@ static/app.js       Views, forms and state
 static/icons.js     Line icons and the logo
 static/fonts/       Outfit, Plus Jakarta Sans, Bricolage Grotesque, DM Sans, Space Grotesk, Fraunces (SIL Open Font License)
 tests/              API, update and browser smoke tests
+mobile/             The Android (and later iPhone) app: the same screens on a backend that runs on the phone
 tools/              bump_version.py, release_notes.py, check_contrast.js, smoke_desktop.py (start-up test)
 ```
 
