@@ -1871,7 +1871,7 @@ def manifest():
         "name": APP_NAME, "short_name": APP_NAME,
         "description": "Student planner, job tracker and money manager",
         "start_url": "/", "display": "standalone",
-        "background_color": "#FFF7F2", "theme_color": "#D2461A",
+        "background_color": "#F9F9F9", "theme_color": "#1F2328",
         "icons": [{"src": f"/static/icon-{n}.png", "sizes": f"{n}x{n}", "type": "image/png"} for n in sizes],
     }
 
