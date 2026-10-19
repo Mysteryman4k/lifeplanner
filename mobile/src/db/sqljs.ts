@@ -36,8 +36,17 @@ export class SqlJsDriver implements Driver {
   async commit() { this.db.exec('COMMIT'); }
   async rollback() { this.db.exec('ROLLBACK'); }
 
+  private savedSchema = -1;
+
   async saved() {
-    if (this.onSave) await this.onSave(this.bytes());
+    if (!this.onSave) return;
+    // export() reopens the connection, so total_changes() counts the rows written since the last save. It doesn't
+    // count new tables or columns, which change the schema version instead. Neither changed: nothing to save
+    const changes = Number(this.db.exec('SELECT total_changes()')[0].values[0][0]);
+    const schema = Number(this.db.exec('PRAGMA schema_version')[0].values[0][0]);
+    if (!changes && schema === this.savedSchema) return;
+    await this.onSave(this.bytes());
+    this.savedSchema = schema;
   }
 
   /** The whole file. sql.js reopens its connection to export, which resets the foreign keys setting. */

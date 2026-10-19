@@ -757,7 +757,7 @@ const VIEWS = {
 function remindersCard() {
   const r = state.reminders, a = state.autostart;
   return `
-    <div class="setting"><div><div class="setting-title">Daily reminder</div><div class="setting-desc">A notification with what's due today, what's overdue and job follow-ups. Only sent on days with something to do${onPhone() ? ', even when the app is closed' : ', while EasyUniTrack is open (it can be minimised)'}.</div></div>
+    <div class="setting"><div><div class="setting-title">Daily reminder</div><div class="setting-desc">A notification with what's due today, what's overdue and job follow-ups. Only sent on days with something to do${onPhone() ? ", even when the app is closed. Opening the app plans the next two weeks, so open it at least every two weeks to keep them coming" : ', while EasyUniTrack is open (it can be minimised)'}.</div></div>
       <button class="switch ${r.daily ? 'on' : ''}" role="switch" aria-checked="${r.daily}" data-action="toggle-reminders" aria-label="Daily reminder"><i></i></button></div>
     ${r.daily ? `<div class="setting"><div><div class="setting-title">Time</div><div class="setting-desc">${onPhone() ? 'Each day at this time.' : 'If the app opens after this time, you get it then.'}</div></div>
       <div class="row-gap"><input class="input" type="time" id="reminderTime" value="${esc(r.time)}" aria-label="Reminder time">
@@ -1381,7 +1381,7 @@ function chatShell(inPanel) {
           ${a.can_think ? `<button class="think-toggle ${a.think ? 'on' : ''}" type="button" data-action="chat-think" aria-pressed="${a.think ? 'true' : 'false'}"
             title="${a.think ? 'Think first is on: the model thinks before it answers. Slower, and can help with hard maths and debugging. Click for quick replies.'
               : 'Quick replies. Click to let the model think before it answers: slower, and can help with hard maths and debugging.'}" ${c.streaming || state.thinkSaving ? 'disabled' : ''}>${icon('bulb', 14)}Think</button>` : ''}
-          <span class="composer-hint">Enter to send · Shift+Enter for a new line</span>
+          <span class="composer-hint">${onPhone() ? 'Tap the arrow to send' : 'Enter to send · Shift+Enter for a new line'}</span>
           ${c.streaming
             ? `<button class="send-btn stop" type="button" data-action="chat-stop" aria-label="Stop" title="Stop">${icon('stop', 15)}</button>`
             : `<button class="send-btn" type="submit" aria-label="Send" title="Send" ${chatFileBlocked() ? 'disabled' : ''}>${icon('up', 16)}</button>`}
@@ -3166,7 +3166,7 @@ const ACTIONS = {
       const data = await api('/api/export');
       if (onPhone()) {                     // the share sheet: save to Files or Drive, or send it to your computer
         const name = `${(state.info.name || 'easyunitrack').toLowerCase()}-backup-${todayStr()}.json`;
-        if (await window.EUT_NATIVE.saveFile(name, JSON.stringify(data, null, 2))) toast('Backup saved');
+        if (await window.EUT_NATIVE.saveFile(name, JSON.stringify(data, null, 2))) toast('Backup handed over: check it arrived where you sent it');
         return;
       }
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });

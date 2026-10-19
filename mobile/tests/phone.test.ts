@@ -29,6 +29,14 @@ describe('daily reminders', () => {
     expect(plan).toHaveLength(14);
   });
 
+  it('plans from the time it is given, not the clock', async () => {
+    at('2026-10-19T07:00:00');
+    const c = await makeApp();
+    await c.post('/api/tasks', { title: 'Essay', due_date: '2026-10-25' });
+    const plan = await c.db.tx(() => planReminders(c.db, new Date(2026, 9, 24, 21, 0)));
+    expect(plan[0].at).toEqual(new Date(2026, 9, 25, 8, 30));        // the 24th's time had passed: from the 25th
+  });
+
   it('starts tomorrow once today\'s time has passed, and plans none when turned off or nothing is due', async () => {
     at('2026-10-19T09:00:00');
     const c = await makeApp();
@@ -56,6 +64,27 @@ describe('daily reminders', () => {
     const r = (await c.post('/api/reminders/test')).json;
     expect(r.shown).toBe(true);
     expect(c.platform.notified).toEqual([{ title: 'Nothing due today', body: "You're all caught up. Reminders will look like this." }]);
+  });
+});
+
+describe('the browser preview\'s saved file', () => {
+  it('is only written again when something changed', async () => {
+    const SQL = await (await import('sql.js')).default();
+    const { SqlJsDriver } = await import('../src/db/sqljs');
+    const { Database } = await import('../src/db/db');
+    let saves = 0;
+    const db = new Database(await SqlJsDriver.open(SQL, null, async () => { saves++; }));
+    await db.tx(() => db.exec('CREATE TABLE t (x)'));
+    await db.tx(() => db.run('INSERT INTO t VALUES (1)'));
+    expect(saves).toBe(2);
+    await db.tx(() => db.all('SELECT * FROM t'));
+    await db.tx(() => db.all('SELECT * FROM t'));
+    expect(saves).toBe(2);                                             // reads don't rewrite the whole file
+    await db.tx(() => db.run('UPDATE t SET x = 2'));
+    expect(saves).toBe(3);
+    await db.tx(() => db.exec('ALTER TABLE t ADD COLUMN y'));            // a new column with no rows written is saved too
+    expect(saves).toBe(4);
+    expect(await db.tx(() => db.run('INSERT INTO t VALUES (NULL, 1)'))).toMatchObject({ changes: 1 });
   });
 });
 
@@ -143,6 +172,24 @@ describe('streamed requests through the Android plugin', async () => {
     await expect(nativeStreamFetch(fakePlugin(200, ['x'], 'before').plugin as any)('https://x.test')).rejects.toThrow(TypeError);
     const res = await nativeStreamFetch(fakePlugin(200, ['a', 'b'], 'during').plugin as any)('https://x.test');
     await expect(res.text()).rejects.toThrow();
+  });
+
+  it('drops what arrives for a stopped request instead of keeping it', async () => {
+    const listeners: Record<string, ((e: any) => void)[]> = { chunk: [], end: [] };
+    let lastId = '';
+    const plugin = {
+      async addListener(event: string, fn: (e: any) => void) { listeners[event].push(fn); return { remove: async () => undefined }; },
+      async cancel() { /* the native side keeps sending for a moment */ },
+      async start(o: any) { lastId = o.id; return { status: 200, headers: {} }; },
+    };
+    const doFetch = nativeStreamFetch(plugin as any);
+    const ctrl = new AbortController();
+    const res = await doFetch('https://x.test', { signal: ctrl.signal });
+    ctrl.abort();
+    await expect(res.text()).rejects.toThrow(/abort/i);
+    listeners.chunk.forEach(f => f({ id: lastId, data: btoa('late') }));
+    listeners.end.forEach(f => f({ id: lastId, error: 'network' }));
+    expect(doFetch.buffered()).toBe(0);
   });
 
   it('stops the request when the student taps Stop', async () => {

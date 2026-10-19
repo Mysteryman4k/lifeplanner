@@ -80,6 +80,8 @@ export abstract class Provider {
   async thinkingLevels(_model: string): Promise<(string | boolean)[]> { return []; }
 
   displayName() { return PRESETS[this.id]?.name ?? this.id; }
+  /** Redirects aren't followed (a key must only go to the address chosen), so one means the address is wrong. */
+  redirected() { return new ProviderError(`${this.displayName()} sent the request somewhere else. Check the base URL.`); }
   unreachableMessage() { return `Couldn't reach ${this.displayName()}. Check your internet connection.`; }
 
   async testConnection(model = ''): Promise<TestResult> {
@@ -161,6 +163,7 @@ export abstract class Provider {
       clearTimeout(timer);
     }
     if (res.status >= 400) this.raiseForStatus(res.status, name, text.slice(0, 2000));
+    if (res.status < 200 || res.status >= 300) throw this.redirected();
     try {
       return JSON.parse(text);
     } catch {
@@ -194,6 +197,7 @@ export abstract class Provider {
         throw new ProviderError(this.unreachableMessage());
       }
       if (res.status >= 400) this.raiseForStatus(res.status, name, (await res.text()).slice(0, 2000));
+      if (res.status < 200 || res.status >= 300) throw this.redirected();
       if (!res.body) throw new ProviderError(`${name} sent a reply EasyUniTrack couldn't read. Check the base URL.`);
       const reader = res.body.getReader();
       const dec = new TextDecoder();

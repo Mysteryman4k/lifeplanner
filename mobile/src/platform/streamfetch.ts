@@ -13,26 +13,28 @@ interface StreamFetchPlugin {
 
 type Sink = { chunk(bytes: Uint8Array): void; end(error?: string): void };
 
-export function nativeStreamFetch(plugin: StreamFetchPlugin = registerPlugin<StreamFetchPlugin>('StreamFetch')): typeof fetch {
+export function nativeStreamFetch(plugin: StreamFetchPlugin = registerPlugin<StreamFetchPlugin>('StreamFetch')): typeof fetch & { buffered(): number } {
   const sinks = new Map<string, Sink>();
-  const early = new Map<string, { chunks: Uint8Array[]; end?: { error?: string } }>();    // events before start() resolved
+  const starting = new Set<string>();                    // start() sent, its stream not made yet
+  const early = new Map<string, { chunks: Uint8Array[]; end?: { error?: string } }>();    // their events so far
   let listening: Promise<unknown> | null = null;
   const listen = () => (listening ??= Promise.all([
     plugin.addListener('chunk', e => {
-      const bytes = Uint8Array.from(atob(e.data), ch => ch.charCodeAt(0));
       const sink = sinks.get(e.id);
+      if (!sink && !starting.has(e.id)) return;           // stopped or finished: the rest is dropped
+      const bytes = Uint8Array.from(atob(e.data), ch => ch.charCodeAt(0));
       if (sink) sink.chunk(bytes);
       else (early.get(e.id) ?? early.set(e.id, { chunks: [] }).get(e.id)!).chunks.push(bytes);
     }),
     plugin.addListener('end', e => {
       const sink = sinks.get(e.id);
       if (sink) sink.end(e.error);
-      else (early.get(e.id) ?? early.set(e.id, { chunks: [] }).get(e.id)!).end = { error: e.error };
+      else if (starting.has(e.id)) (early.get(e.id) ?? early.set(e.id, { chunks: [] }).get(e.id)!).end = { error: e.error };
     }),
   ]));
   let n = 0;
 
-  return (async (input: RequestInfo | URL, init: RequestInit = {}) => {
+  const doFetch = (async (input: RequestInfo | URL, init: RequestInit = {}) => {
     await listen();
     const id = `r${Date.now()}-${n++}`;
     const signal = init.signal;
@@ -41,16 +43,20 @@ export function nativeStreamFetch(plugin: StreamFetchPlugin = registerPlugin<Str
     let head: { status: number; headers: Record<string, string> };
     const onAbort = () => { void plugin.cancel({ id }); };
     signal?.addEventListener('abort', onAbort);
+    starting.add(id);
     try {
       head = await plugin.start({ id, url: String(input), method: init.method ?? 'GET', headers,
         body: typeof init.body === 'string' ? init.body : undefined });
     } catch (e) {
+      starting.delete(id);
+      early.delete(id);
       signal?.removeEventListener('abort', onAbort);
       if (signal?.aborted) throw new DOMException('The user aborted a request.', 'AbortError');
       throw new TypeError(`Network request failed (${(e as Error)?.message ?? 'network'})`);
     }
     const body = new ReadableStream<Uint8Array>({
       start(c) {
+        starting.delete(id);
         const finish = (error?: string) => {
           sinks.delete(id);
           signal?.removeEventListener('abort', onAbort);
@@ -71,4 +77,6 @@ export function nativeStreamFetch(plugin: StreamFetchPlugin = registerPlugin<Str
     });
     return new Response(body, { status: head.status, headers: head.headers });
   }) as typeof fetch;
+  // How many requests have events waiting for their stream (tests check stopped ones leave none behind)
+  return Object.assign(doFetch, { buffered: () => early.size + starting.size });
 }

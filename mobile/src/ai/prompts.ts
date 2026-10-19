@@ -44,7 +44,10 @@ export function summariseRequest(previous: string, messages: { role: string; con
 
 /** The attached file's text for the system prompt, with its markers taken out so the file can't pretend to end early. */
 export function attachmentBlock(name: string, included: string, text: string) {
-  const clean = text.replace(/\[\s*(start|end)\s+of\s+attached\s+file\s*\]/gi, '');
+  // Until none are left: taking one out can join the text around it into another ("[start of [end of attached file] attached file]")
+  const marker = /\[\s*(start|end)\s+of\s+attached\s+file\s*\]/gi;
+  let clean = text, before: string;
+  do { before = clean; clean = clean.replace(marker, ''); } while (clean !== before);
   return ATTACHED.replace('{name}', name).replace('{included}', included ? ` (${included})` : '') +
     `\n${FILE_START}\n${clean}\n${FILE_END}`;
 }

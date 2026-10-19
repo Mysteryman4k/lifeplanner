@@ -2,7 +2,7 @@
    isn't running then, so the next two weeks of reminders are handed to the system ahead of time, each
    saying what's due that day. They're worked out again whenever the app opens or anything changes. */
 import type { Database } from './db/db';
-import { addDays, hhmm, today } from './dates';
+import { addDays, hhmm, ymd } from './dates';
 import { getSetting, type Digest } from './api/context';
 import { ReminderSettings, buildDigest } from './api/system';
 
@@ -16,7 +16,7 @@ export async function planReminders(db: Database, now = new Date()): Promise<Pla
   const settings = await getSetting<{ daily: boolean; time: string }>(db, 'reminders', ReminderSettings);
   if (!settings.daily) return [];
   const [h, m] = settings.time.split(':').map(Number);
-  const start = hhmm(now) < settings.time ? today() : addDays(today(), 1);      // today's time has passed: from tomorrow
+  const start = hhmm(now) < settings.time ? ymd(now) : addDays(ymd(now), 1);    // today's time has passed: from tomorrow
   const out: Planned[] = [];
   for (let i = 0; i < DAYS_AHEAD; i++) {
     const day = addDays(start, i);

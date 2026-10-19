@@ -23,8 +23,10 @@ tests/                Vitest: the API, parity with the desktop server, the phone
 
 Everything in the planner works as on the desktop, and a backup from either restores on the other. On the phone:
 
-- **Tabs:** Today, Tasks, Calendar, Money (Study once the assistant is on) and More (Subjects, Jobs, Settings)
-- **Reminders** arrive even while the app is closed, at the time you choose
+- **Tabs:** Today, Tasks, Calendar, Money and More (Subjects, Jobs, Settings). Once the assistant is on, Study
+  takes Money's place in the tab bar and Money moves to More
+- **Reminders** arrive even while the app is closed, at the time you choose: the next two weeks are scheduled
+  each time the app opens
 - **Backups** go to the share sheet (Drive, Files, email…); restore picks a file from the phone
 - **The study assistant** works with Anthropic, OpenAI, DeepSeek or another OpenAI-compatible service. Keys are
   kept in the phone's secure storage (Android Keystore). Code files can be attached to a chat
