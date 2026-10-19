@@ -178,11 +178,14 @@ class Provider:
         msg = err.get("message") if isinstance(err, dict) else err
         if not isinstance(msg, str):
             return ""
-        if self.key:
-            msg = msg.replace(self.key, "[key]")
-        msg = re.sub(r"\s*\(request[_ ]id:[^)]*\)", "", msg, flags=re.I)
-        msg = re.sub(r"\b(?:sk|pk|key|api[_-]?key)[-_][A-Za-z0-9_-]{6,}", "[key]", msg, flags=re.I)
         msg = " ".join(msg.split())
+        if self.key:                                  # the saved key, even split across lines
+            msg = re.sub(r"\s*".join(map(re.escape, self.key)), "[key]", msg)
+        msg = re.sub(r"\s*\(request[_ ]id:[^)]*\)", "", msg, flags=re.I)
+        msg = re.sub(r"\b(?:sk|pk|key|api[_-]?key)[-_][A-Za-z0-9_-]{6,}|\bAIza[0-9A-Za-z_-]{20,}|\bBearer\s+\S+",
+                     "[key]", msg, flags=re.I)
+        # Any other long token mixing letters and digits (hex keys, opaque tokens); model names are far shorter
+        msg = re.sub(r"\b(?=[A-Za-z0-9_-]*\d)(?=[A-Za-z0-9_-]*[A-Za-z])[A-Za-z0-9_-]{32,}", "[key]", msg)
         return msg if len(msg) <= 240 else msg[:239] + "…"
 
     def get(self, path: str, headers: dict = None) -> dict:
