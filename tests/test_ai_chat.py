@@ -395,3 +395,51 @@ def test_a_model_the_service_doesnt_know_is_named(c, A):
     ev = events(c.post("/api/ai/chat", json={"messages": [{"role": "user", "content": "hi"}]}))
     assert next(e for e in ev if e["type"] == "error")["message"] == (
         "Anthropic doesn't recognise the model chosen in Settings (model: no-such-model). Choose another one in Settings.")
+
+
+def test_a_404_that_doesnt_name_the_model_keeps_the_address_message(c, A):
+    ready(c, "deepseek", "deepseek-flash")
+    c.put("/api/ai/key", json={"provider": "deepseek", "key": "sk-test-0123456"})
+    A.AI_TRANSPORT["value"] = httpx.MockTransport(lambda req: httpx.Response(
+        404, json={"error": {"message": "model endpoint not found"}}))
+    ev = events(c.post("/api/ai/chat", json={"messages": [{"role": "user", "content": "hi"}]}))
+    assert next(e for e in ev if e["type"] == "error")["message"] == \
+        "DeepSeek doesn't recognise that address or model. Check the base URL and model."
+
+
+def test_think_appears_once_the_claude_key_is_saved(c, A):
+    """Choosing a Claude model before saving the key mustn't keep Think hidden afterwards."""
+    from ai.providers.anthropic import AnthropicProvider
+    AnthropicProvider.MODELS.clear()
+    agree(c)
+    claude(A, claude_caps(["adaptive", "disabled"]), [])
+    assert c.put("/api/ai/settings", json={"provider": "anthropic", "model": "claude-model"}).json()["can_think"] is False
+    assert c.put("/api/ai/key", json={"provider": "anthropic", "key": "sk-ant-12345678"}).json()["can_think"] is True
+
+
+@pytest.mark.parametrize("provider", ["anthropic", "deepseek"])
+def test_a_tool_call_cut_off_by_the_length_limit_is_never_run(c, A, provider):
+    from ai.providers.anthropic import AnthropicProvider
+    from ai.providers.base import CUT_OFF
+    AnthropicProvider.MODELS.clear()
+    ready(c, provider, "m")
+    c.put("/api/ai/key", json={"provider": provider, "key": "sk-test-0123456"})
+    before = c.get("/api/tasks").json()
+    if provider == "anthropic":
+        tool = {"type": "tool_use", "id": "t1", "name": "add_task"}
+        half = {"type": "input_json_delta", "partial_json": '{"title": "Ha'}
+        cut = sse({"type": "content_block_start", "index": 0, "content_block": tool},
+                  {"type": "content_block_delta", "index": 0, "delta": half},
+                  {"type": "message_delta", "delta": {"stop_reason": "max_tokens"}, "usage": {"output_tokens": 8192}})
+    else:
+        call = {"index": 0, "id": "t1", "function": {"name": "add_task", "arguments": '{"title": "Ha'}}
+        cut = sse({"choices": [{"delta": {"tool_calls": [call]}, "finish_reason": "length"}]})
+    asked = []
+
+    def service(req):
+        asked.append(req.url.path)
+        return httpx.Response(200, json={"capabilities": {}}) if "/models/" in req.url.path else httpx.Response(200, text=cut)
+    A.AI_TRANSPORT["value"] = httpx.MockTransport(service)
+    ev = events(c.post("/api/ai/chat", json={"messages": [{"role": "user", "content": "add a task"}]}))
+    assert {"type": "error", "message": CUT_OFF} in ev and not [e for e in ev if e["type"] in ("action", "confirm")]
+    assert c.get("/api/tasks").json() == before and len([p for p in asked if "/models/" not in p]) == 1   # no second round

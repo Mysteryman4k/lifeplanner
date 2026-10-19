@@ -1,4 +1,5 @@
 """Anthropic Messages API adapter (chat arrives in stage 2)."""
+import hashlib
 import time
 
 import httpx
@@ -26,14 +27,16 @@ class AnthropicProvider(Provider):
         return [m["id"] for m in data.get("data", []) if m.get("id")]
 
     def model_info(self, model: str) -> dict:
-        key = (self.base_url, model, self._transport)
+        headers = self.headers()                      # no key yet: says so, and nothing is remembered
+        # Per key too (a short hash, not the key), so saving a different key asks again
+        key = (self.base_url, model, self._transport, hashlib.sha256(self.key.encode()).hexdigest()[:16])
         hit = AnthropicProvider.MODELS.get(key)
         if hit and time.monotonic() < hit[0]:
             if isinstance(hit[1], ProviderError):
                 raise hit[1]
             return hit[1]
         try:
-            data = self.request("GET", f"/v1/models/{model}", headers=self.headers(),
+            data = self.request("GET", f"/v1/models/{model}", headers=headers,
                                 timeout=httpx.Timeout(6.0, connect=3.0))
         except ProviderError as e:
             AnthropicProvider.MODELS[key] = (time.monotonic() + self.MODEL_FAILED_TTL, e)
@@ -76,6 +79,7 @@ class AnthropicProvider(Provider):
 
     def stream_chat(self, model: str, system: str, messages: list, tools: list = None):
         import json
+        self.chat_model = model                       # named in the message if Anthropic doesn't know it
         body = {"model": model, "max_tokens": MAX_TOKENS, "system": system, "messages": messages, "stream": True,
                 **self.request_options(model)}
         if tools:
@@ -119,6 +123,7 @@ class AnthropicProvider(Provider):
         yield usage
         if stop == "max_tokens":                      # say so, rather than end mid-sentence without a word
             yield {"type": "error", "message": CUT_OFF}
+            return                                    # a tool call cut off part way is never run
         calls, content = [], []
         for _, b in sorted(blocks.items()):
             if b["type"] == "tool_use":

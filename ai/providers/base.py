@@ -156,8 +156,8 @@ class Provider:
         if status in (401, 403):
             raise ProviderError("That key wasn't accepted. Check it was copied in full, and that it's still active.")
         if status == 404:
-            explained = self.service_message(body)
-            if "model" in explained.lower():      # Anthropic: {"error": {"message": "model: claude-x"}}
+            explained, model = self.service_message(body), getattr(self, "chat_model", "")
+            if model and model.lower() in explained.lower():     # Anthropic: {"error": {"message": "model: claude-x"}}
                 raise ProviderError(f"{name} doesn't recognise the model chosen in Settings ({explained}). "
                                     "Choose another one in Settings.")
             raise ProviderError(f"{name} doesn't recognise that address or model. Check the base URL and model.")

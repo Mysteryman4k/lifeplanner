@@ -22,6 +22,7 @@ class OpenAICompatProvider(Provider):
 
     def stream_chat(self, model: str, system: str, messages: list, tools: list = None):
         import json
+        self.chat_model = model                       # named in the message if the service doesn't know it
         body = {"model": model, "stream": True, "stream_options": {"include_usage": True},
                 "messages": [{"role": "system", "content": system}, *messages], **self.request_options(model)}
         if tools:
@@ -51,6 +52,7 @@ class OpenAICompatProvider(Provider):
         yield usage
         if stop == "length":                          # say so, rather than end mid-sentence without a word
             yield {"type": "error", "message": CUT_OFF}
+            return                                    # a tool call cut off part way is never run
         if calls:
             out, native = [], []
             for n, c in sorted(calls.items()):
