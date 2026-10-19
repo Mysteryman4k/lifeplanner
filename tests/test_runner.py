@@ -56,9 +56,9 @@ def test_output_input_and_exit_code(folder):
     r = R.Runner().start(1, str(folder), f"{PY} hello.py")
     v = wait(r, lambda r: "Name?" in r.output)
     assert v["output"] == "Name? " and v["status"] == "running"     # the prompt shows before any input
-    r.send("Sean\n")
+    r.send("Alex\n")
     v = wait(r)
-    assert v["status"] == "finished" and v["exit_code"] == 0 and v["output"] == "Name? Hello Sean ✓\n"
+    assert v["status"] == "finished" and v["exit_code"] == 0 and v["output"] == "Name? Hello Alex ✓\n"
     with pytest.raises(RuntimeError):
         r.send("again\n")
     f = wait(R.Runner().start(1, str(folder), f"{PY} fail.py"))
@@ -211,14 +211,14 @@ def test_running_needs_the_run_notice_first(c, proj):
     assert c.get("/api/ai/state").json()["run_notice"] is True
     run = c.post(f"/api/code/folders/{f['id']}/run", json={"command": f"{PY} hello.py"}).json()
     assert run["status"] == "running"
-    assert c.post(f"/api/code/runs/{run['id']}/input", json={"text": "Sean"}).json() == {"ok": True}
+    assert c.post(f"/api/code/runs/{run['id']}/input", json={"text": "Alex"}).json() == {"ok": True}
     for _ in range(200):
         v = c.get(f"/api/code/runs/{run['id']}").json()
         if v["status"] != "running":
             break
         time.sleep(0.05)
-    assert v["status"] == "finished" and v["output"] == "Hi Sean\n"
-    assert c.get(f"/api/code/runs/{run['id']}", params={"since": 3}).json()["output"] == "Sean\n"
+    assert v["status"] == "finished" and v["output"] == "Hi Alex\n"
+    assert c.get(f"/api/code/runs/{run['id']}", params={"since": 3}).json()["output"] == "Alex\n"
     assert c.post(f"/api/code/runs/{run['id']}/input", json={"text": "x"}).status_code == 409
     assert c.get("/api/code/runs/999").status_code == 404
 

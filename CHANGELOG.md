@@ -18,6 +18,8 @@ PATCH for fixes. Pushing a tag like `v3.2.0` publishes that version's section as
 - If Ollama doesn't have the model chosen in Settings, the message names it and says how to download it, instead of asking you to check a base URL
 - The assistant is told it doesn't know your tasks until it looks them up, so it no longer lists made-up tasks. It's also told today's weekday, for requests like "due next Friday", and dates written with typographic dashes are understood
 - A few simple HTML tags some models write (line breaks in tables, underline, superscript and subscript) show as formatting rather than as tags
+- When the assistant says what it's about to do, looks something up and then answers, the answer starts a new paragraph instead of running on from the sentence before
+- When a provider refuses a request (for example, a model name it doesn't have), its own reason is shown, like "The supported API model names are …", instead of "Try again later". Anything that looks like a key is removed from the message first
 
 ### Changed
 

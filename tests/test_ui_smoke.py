@@ -981,10 +981,10 @@ def test_running_code(server, page, tmp_path_factory):
     page.wait_for_selector("#confirm:not([hidden]) >> text=Only run code you trust")         # the Run notice, once
     page.click("#confirmYes")
     page.wait_for_selector("#runText >> text=Name?")
-    page.fill("#runInput input", "Sean")
+    page.fill("#runInput input", "Alex")
     page.keyboard.press("Enter")
     page.wait_for_selector("#runStatus >> text=Finished")
-    assert page.inner_text("#runText").strip() == "Name? Sean\nHello, Sean"
+    assert page.inner_text("#runText").strip() == "Name? Alex\nHello, Alex"
 
     # A server: Keep running, an Open in browser link, then Stop
     page.click(".tree-row >> text=server.py")

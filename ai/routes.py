@@ -340,13 +340,18 @@ def register(app, get_setting, put_setting, transport_hook=lambda: None, task_co
                 sent = {"type": "files", "files": code["sent"], "left_out": code["left_out"]}
                 yield f"data: {json.dumps(sent)}\n\n"
             try:
+                said = False                             # text already sent in an earlier round
                 for _ in range(MAX_TOOL_ROUNDS):
-                    calls = None
+                    calls, fresh = None, True
                     for ev in provider.stream_chat(s.model, system_text, messages, tools.schema if tools else None):
                         if ev["type"] == "tool_calls":
                             calls = ev
-                        else:
-                            yield f"data: {json.dumps(ev)}\n\n"
+                            continue
+                        if ev["type"] == "text" and ev["text"]:
+                            if said and fresh:           # text after a tool call starts its own paragraph
+                                ev = {**ev, "text": "\n\n" + ev["text"].lstrip()}
+                            said, fresh = True, False
+                        yield f"data: {json.dumps(ev)}\n\n"
                     if not calls or not tools:
                         break
                     results, app_events = tools.run_round(calls["calls"], state)
