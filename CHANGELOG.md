@@ -6,6 +6,18 @@ PATCH for fixes. Pushing a tag like `v3.2.0` publishes that version's section as
 
 ## [Unreleased]
 
+### Added
+
+- EasyUniTrack for Android (preview, not yet on Google Play). The same planner on your phone: Today, tasks,
+  calendar, subjects and notes, jobs and money, with the same colour themes and text styles. Everything is kept
+  on the phone, with no account. A More tab holds Subjects, Jobs and Settings
+- Daily reminders on the phone arrive at the time you choose even while the app is closed
+- Backups from the phone go to the share sheet (save to Drive or Files, or send them to your computer), and a
+  backup from the desktop app restores on the phone, and the other way round
+- The study assistant on the phone (preview): Explain, Practise, Quiz me and Check my attempt, maths, diagrams,
+  saved chats, task changes with Undo, and attached PDFs, slides, Word files and code files. It works with
+  Anthropic, OpenAI, DeepSeek or another OpenAI-compatible service; your key is kept in the phone's secure storage
+
 ## [4.0.0-beta.3] - 2026-10-19
 
 The third beta of version 4. Installed copies don't update to betas: download it from this page if you'd like to try it. Your data is backed up automatically before version 4 first opens it.

@@ -1,0 +1,27 @@
+/* The phone app's own touches on top of the desktop's styles.css (which already lays out small screens).
+   Loaded only in the phone app (see scripts/build.mjs). */
+
+/* No text selection or grey flash when tapping controls, like other phone apps */
+button, .tab, .nav-item, .task, .job, .closed-row, .more-row { -webkit-tap-highlight-color: transparent; -webkit-user-select: none; user-select: none; }
+html { -webkit-text-size-adjust: 100%; }
+body { overscroll-behavior-y: none; }
+
+/* The More screen: everything that isn't a tab */
+.more-list { display: grid; gap: 18px; }
+.more-group h2 { margin: 0 4px 8px; font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+.more-row { display: flex; align-items: center; gap: 14px; min-height: 52px; padding: 0 16px; color: var(--text); border-top: 1px solid var(--line); }
+.more-row:first-child { border-top: 0; }
+.more-row .ic { color: var(--muted); }
+.more-row span:first-of-type { flex: 1; font-size: 15.5px; }
+.more-row .more-note { color: var(--muted); font-size: 13.5px; }
+
+@media (max-width: 760px) {
+  /* Inputs at 16px, so the phone doesn't zoom in when one is tapped */
+  input, select, textarea { font-size: 16px; }
+  .tab { min-height: 44px; justify-content: center; }
+}
+
+/* A count on a tab (overdue tasks, follow-ups due) */
+.tab { position: relative; }
+.tab-count { position: absolute; top: 2px; left: calc(50% + 6px); min-width: 17px; height: 17px; padding: 0 5px; border-radius: 9px;
+  background: var(--danger); color: #fff; font-size: 10.5px; font-weight: 750; line-height: 17px; text-align: center; }

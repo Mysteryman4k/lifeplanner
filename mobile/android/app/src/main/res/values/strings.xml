@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">EasyUniTrack</string>
+    <string name="title_activity_main">EasyUniTrack</string>
+    <string name="package_name">com.mysteryman4k.easyunitrack</string>
+    <string name="custom_url_scheme">com.mysteryman4k.easyunitrack</string>
+</resources>
